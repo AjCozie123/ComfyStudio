@@ -1,0 +1,8 @@
+# personal files (PIN, library, settings, uploaded workflows) never go to GitHub
+data/
+dist/
+__pycache__/
+*.pyc
+*.bak_*
+*.log
+*.part

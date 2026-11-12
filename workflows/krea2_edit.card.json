@@ -1,0 +1,165 @@
+{
+ "id": "krea2_edit",
+ "name": "Krea 2 Edit · Image edit",
+ "family": "Krea 2",
+ "task": "edit",
+ "media": "image",
+ "builtin": true,
+ "description": "Edits Picture 1 from a plain instruction, at Picture 1's own shape (1 MP working size, saved back at its size). Picture 2 (optional) is a person to place into Picture 1's scene. LoRA: General Edit V2 for any edit, Identity Edit V2 / v1.2 to restage a person.",
+ "source": "ComfyUI official template",
+ "picture_min": 1,
+ "picture_max": 2,
+ "profile": "krea2",
+ "supports_loras": true,
+ "lora_hint": [
+  "krea2",
+  "krea"
+ ],
+ "sampling_note": "Krea 2 Edit (Turbo): 10 steps, CFG 1, euler / simple. 8 steps = stronger adherence, 12 = more face detail. Raw model: 40 steps, CFG 3.5. Removals work best on Raw.",
+ "prompt_style": "plain",
+ "slots": {
+  "prompt": [
+   {
+    "node": "pos",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "images": [
+   {
+    "node": "img1",
+    "input": "image",
+    "label": "Picture 1"
+   },
+   {
+    "node": "img2",
+    "input": "image",
+    "label": "Picture 2",
+    "if_missing": {
+     "delete": [
+      "enc2",
+      "img2",
+      "work2"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "patch",
+       "source_latent_b"
+      ],
+      [
+       "patch",
+       "source_image_b"
+      ],
+      [
+       "pos",
+       "image_b"
+      ],
+      [
+       "neg",
+       "image_b"
+      ]
+     ]
+    }
+   }
+  ],
+  "seed": [
+   {
+    "node": "ks",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "ks",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "ks",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "ks",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "ks",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "models": [
+   {
+    "node": "unet",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "krea2_turbo_int8_convrot.safetensors",
+    "title": "Image model"
+   },
+   {
+    "node": "edit_lora",
+    "input": "lora_name",
+    "label": "Edit LoRA",
+    "kind": "lora",
+    "class_type": "LoraLoaderModelOnly",
+    "value": "krea2_general_edit_v2.safetensors",
+    "title": "Edit LoRA",
+    "only": [
+     "identity_edit_v",
+     "general_edit_v"
+    ]
+   },
+   {
+    "node": "clip",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3vl_4b_fp8_scaled.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "vae",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "qwen_image_vae.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "save",
+   "kind": "image",
+   "class_type": "SaveImage"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "steps": 10,
+  "cfg": 1.0,
+  "sampler": "euler",
+  "scheduler": "simple",
+  "denoise": 1.0
+ },
+ "needs": {},
+ "mp_max": 4,
+ "edit_kind": "krea_edit",
+ "assist": false,
+ "pe_task": "edit",
+ "edit_tips": "Write the edit as one plain instruction: 'Change her outfit to a red raincoat.'"
+}

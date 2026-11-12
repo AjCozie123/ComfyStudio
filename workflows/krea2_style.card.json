@@ -1,0 +1,164 @@
+{
+ "id": "krea2_style",
+ "name": "Krea 2 Turbo · Style from pictures",
+ "family": "Krea 2",
+ "task": "edit",
+ "media": "image",
+ "builtin": true,
+ "description": "A new picture in the style of Picture 1 (and 2). Describe the subject; the pictures set the look.",
+ "source": "ComfyUI official template",
+ "picture_min": 1,
+ "picture_max": 2,
+ "profile": "krea2",
+ "supports_loras": true,
+ "lora_hint": [
+  "krea2",
+  "krea"
+ ],
+ "sampling_note": "Krea 2 Turbo: 8 steps, CFG 1, euler / simple (the official template). Raw model: 28 steps, CFG 3.5. Krea 2 Edit: 10 steps on Turbo, 40 steps CFG 3.5 on Raw.",
+ "prompt_style": "plain",
+ "slots": {
+  "prompt": [
+   {
+    "node": "30:52",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "images": [
+   {
+    "node": "69",
+    "input": "image",
+    "label": "Picture 1"
+   },
+   {
+    "node": "cs_img2",
+    "input": "image",
+    "label": "Picture 2",
+    "if_missing": {
+     "delete": [
+      "cs_img2"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "30:52",
+       "image2"
+      ]
+     ]
+    }
+   }
+  ],
+  "seed": [
+   {
+    "node": "30:63",
+    "input": "noise_seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "30:60",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "30:57",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "30:59",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "30:60",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "width": [
+   {
+    "node": "30:61",
+    "input": "width",
+    "label": "Width"
+   },
+   {
+    "node": "30:64",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "30:61",
+    "input": "height",
+    "label": "Height"
+   },
+   {
+    "node": "30:64",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
+  "models": [
+   {
+    "node": "30:10",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "krea2_turbo_int8_convrot.safetensors",
+    "title": "Image model"
+   },
+   {
+    "node": "30:11",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3vl_4b_fp8_scaled.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "30:12",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "qwen_image_vae.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "29",
+   "kind": "image",
+   "class_type": "SaveImage"
+  }
+ ],
+ "defaults": {
+  "seed": 355028178891957,
+  "steps": 8,
+  "cfg": 1,
+  "sampler": "euler",
+  "scheduler": "simple",
+  "width": 1024,
+  "height": 1024,
+  "denoise": 1
+ },
+ "needs": {},
+ "mp_max": 4,
+ "inpaint": false,
+ "edit_kind": "style",
+ "assist": false,
+ "pe_task": "t2i"
+}

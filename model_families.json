@@ -1,0 +1,208 @@
+{
+ "_about": "Known model families. An uploaded workflow is matched by its model file names; the profile fills in what the workflow file can't say (LoRA support, picture limits, video frame rules, a sampling hint). Values here never overwrite the workflow's own steps/CFG/sampler. Sampling numbers come from the owner's tested PC Launcher setups; leave a field out when it isn't known rather than guessing.",
+ "families": [
+  {
+   "id": "minimax_h3_image",
+   "name": "MiniMax H3",
+   "media": "image",
+   "match": [
+    "minimax_h3_image",
+    "h3_image"
+   ],
+   "supports_loras": true,
+   "max_pictures": 16,
+   "mp_options": [
+    2,
+    4,
+    8
+   ],
+   "sampling_note": "MiniMax H3 image: 6 steps, CFG 1, euler / simple (distilled). 8 steps also works well."
+  },
+  {
+   "id": "minimax_h3_video",
+   "name": "MiniMax H3",
+   "media": "video",
+   "match": [
+    "minimax_h3_fl2va",
+    "minimax_h3_ref2va",
+    "h3_fl2va",
+    "h3_ref2va"
+   ],
+   "supports_loras": true,
+   "fps": 24,
+   "max_seconds": 10,
+   "sampling_note": "MiniMax H3 video: 8 steps with the turbo LoRA, CFG 1.5."
+  },
+  {
+   "id": "krea2",
+   "name": "Krea 2",
+   "media": "image",
+   "match": [
+    "krea2",
+    "krea_2",
+    "krea-2"
+   ],
+   "supports_loras": true,
+   "max_pictures": 4,
+   "mp_options": [
+    1,
+    2
+   ],
+   "sampling_note": "Krea 2 Turbo: 8 steps, CFG 1, euler / simple (the official template). Raw model: 28 steps, CFG 3.5. Krea 2 Edit: 10 steps on Turbo, 40 steps CFG 3.5 on Raw."
+  },
+  {
+   "id": "qwen_image",
+   "name": "Qwen Image",
+   "media": "image",
+   "match": [
+    "qwen_image",
+    "qwen-image",
+    "qwenimage"
+   ],
+   "supports_loras": true,
+   "max_pictures": 3,
+   "mp_options": [
+    1,
+    2
+   ],
+   "sampling_note": "Qwen Image (2.1 / Edit): uses the workflow's own steps and CFG. Edit models take up to 3 pictures."
+  },
+  {
+   "id": "flux2_klein",
+   "name": "FLUX.2 Klein",
+   "media": "image",
+   "match": [
+    "klein9",
+    "klein_9b",
+    "klein-9b",
+    "flux2_klein",
+    "flux-2-klein",
+    "flux2-klein",
+    "klein4b",
+    "klein_4b"
+   ],
+   "supports_loras": true,
+   "max_pictures": 4,
+   "mp_options": [
+    1,
+    2
+   ],
+   "sampling_note": "FLUX.2 Klein 9B: 4 steps, CFG 1, euler (distilled). Edits use the pictures as references."
+  },
+  {
+   "id": "flux3_klein",
+   "name": "FLUX.3 Klein",
+   "media": "image",
+   "match": [
+    "flux3",
+    "flux.3",
+    "flux-3",
+    "flux_3"
+   ],
+   "supports_loras": false,
+   "max_pictures": 4,
+   "mp_options": [
+    1,
+    2
+   ],
+   "sampling_note": "FLUX.3 Klein: distilled 16 steps, CFG 1, er_sde. Base model: 25 steps, CFG 3.5, euler."
+  },
+  {
+   "id": "moss",
+   "name": "MOSS",
+   "media": "image",
+   "match": [
+    "moss",
+    "kromoss"
+   ],
+   "supports_loras": true,
+   "max_pictures": 0,
+   "mp_options": [
+    1,
+    1.5,
+    2
+   ],
+   "sampling_note": "MOSS SFT: 25 steps, CFG 2.5, er_sde. KroMOSS and MOSS Base: 50 steps, CFG 3, euler. Turbo model, or the 8-step DMD2 LoRA: 8 steps, CFG 1, euler. Best at 1-2 MP."
+  },
+  {
+   "id": "flux1",
+   "name": "FLUX.1",
+   "media": "image",
+   "match": [
+    "flux1",
+    "flux1-dev",
+    "flux1-schnell",
+    "flux_dev",
+    "flux-dev"
+   ],
+   "supports_loras": true,
+   "max_pictures": 1,
+   "mp_options": [
+    1,
+    2
+   ]
+  },
+  {
+   "id": "sdxl",
+   "name": "SDXL",
+   "media": "image",
+   "match": [
+    "sdxl",
+    "sd_xl",
+    "pony",
+    "illustrious",
+    "noobai"
+   ],
+   "supports_loras": true,
+   "max_pictures": 1,
+   "mp_options": [
+    1
+   ]
+  },
+  {
+   "id": "ltx",
+   "name": "LTX Video",
+   "media": "video",
+   "match": [
+    "ltx"
+   ],
+   "supports_loras": true,
+   "fps": 25,
+   "frame_rule": "8n+1",
+   "max_seconds": 10,
+   "sampling_note": "LTX 2.x distilled: the workflow's own sigmas decide the steps; CFG 1."
+  },
+  {
+   "id": "wan",
+   "name": "Wan",
+   "media": "video",
+   "match": [
+    "wan2",
+    "wan_2",
+    "wan-2",
+    "wan21",
+    "wan22",
+    "wan2.1",
+    "wan2.2"
+   ],
+   "supports_loras": true,
+   "fps": 16,
+   "frame_rule": "4n+1",
+   "max_seconds": 10
+  },
+  {
+   "id": "hunyuan_video",
+   "name": "Hunyuan Video",
+   "media": "video",
+   "match": [
+    "hunyuan_video",
+    "hunyuanvideo",
+    "hunyuan-video"
+   ],
+   "supports_loras": true,
+   "fps": 24,
+   "frame_rule": "4n+1",
+   "max_seconds": 8
+  }
+ ]
+}

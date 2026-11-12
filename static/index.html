@@ -1,0 +1,877 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <script>
+  /* client error reporter: script errors + a heartbeat for 40 s after load go to data/client.log on the PC */
+  (function () {
+    function send(t, m) {
+      try {
+        var x = new XMLHttpRequest(); x.open("POST", "/api/clientlog", true);
+        x.setRequestHeader("Content-Type", "application/json");
+        x.send(JSON.stringify({ t: t, m: String(m).slice(0, 2000), ua: navigator.userAgent, w: window.innerWidth, h: window.innerHeight,
+          c: document.body ? document.body.className : "(no body)", s: window.__bootStep || "" }));
+      } catch (e) {}
+    }
+    window.__clientLog = send;
+    window.addEventListener("error", function (e) { send("error", (e.message || "") + " @" + String(e.filename || "").split("/").pop() + ":" + e.lineno + ":" + e.colno); });
+    window.addEventListener("unhandledrejection", function (e) { var r = e.reason; send("promise", (r && (r.stack || r.message)) || r); });
+    var n = 0, hb = setInterval(function () { send("hb", n++); if (n > 20) clearInterval(hb); }, 2000);
+    send("boot", location.href);
+  })();
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0e0e0f">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Comfy Studio">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Comfy Studio</title>
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="stylesheet" href="/static/app.css?v=20261112v">
+</head>
+<body class="cs media-image mode-t2i view-create">
+
+  <!-- ============ Top bar ============ -->
+  <header class="topbar">
+    <button type="button" class="brand" id="brand" aria-label="Comfy Studio, go to Create">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="brand-name">Comfy Studio</span>
+    </button>
+    <nav class="views topnav" aria-label="App section">
+      <button type="button" class="is-on" data-view="create">Create</button>
+      <button type="button" data-view="library">Library</button>
+      <button type="button" data-view="workflows" title="Workflows" aria-label="Workflows">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3.5" width="7" height="6" rx="1.6"/><rect x="14" y="14.5" width="7" height="6" rx="1.6"/><rect x="14" y="3.5" width="7" height="6" rx="1.6"/><path d="M10 6.5h4M17.5 9.5v5"/></svg><span class="nav-label">Workflows</span>
+      </button>
+    </nav>
+    <div id="status" class="status" data-state="checking" role="status" title="ComfyUI connection">Checking…</div>
+  </header>
+
+  <!-- ============ Create view ============ -->
+  <main id="view-create" class="page create-page">
+    <section id="hero" class="hero">
+      <h1>What should we imagine?</h1>
+      <p>Describe an image below. Add pictures with <b>+</b> to edit or combine them.</p>
+    </section>
+
+    <section id="stage" class="stage hidden" aria-live="polite">
+      <p id="stage-empty" class="hidden"></p>
+      <!-- Progress is shown in the dock above the composer; these stay for the app logic. -->
+      <div id="progress-wrap" class="progress-wrap hidden">
+        <div class="progress"><i id="bar"></i></div>
+        <p id="progress-text"></p>
+        <p id="progress-step" class="hidden"></p>
+        <button type="button" id="live-frame" class="hidden" aria-label="Open live preview"><img id="live" alt="Live preview"></button>
+        <button type="button" id="cancel" class="hidden">Cancel</button>
+      </div>
+      <div id="result" class="result hidden">
+        <div class="result-media">
+          <button type="button" id="result-frame" class="result-frame" aria-label="Open result full screen">
+            <img id="single" alt="Result">
+          </button>
+          <video id="single-video" class="result-video hidden" controls playsinline loop preload="metadata"></video>
+          <div id="compare" class="compare-hold hidden">
+            <div class="compare-stack" id="compare-stack">
+              <img id="after" alt="Result">
+              <img id="before" alt="Original">
+            </div>
+            <p class="compare-hint" id="compare-hint">Hold to see the original</p>
+          </div>
+        </div>
+        <div class="result-actions">
+          <button type="button" class="chip-btn hidden" id="result-compare">Compare</button>
+          <button type="button" class="chip-btn" id="result-inpaint">Inpaint</button>
+          <button type="button" class="chip-btn hidden" id="result-upscale">Upscale</button>
+          <button type="button" class="chip-btn" id="result-copy">Copy prompt</button>
+          <a id="dl" class="chip-btn" download>Download</a>
+          <button type="button" class="chip-btn" id="open-library">Library</button>
+          <button type="button" class="chip-btn ghost" id="result-dismiss" aria-label="Hide this result">Hide</button>
+        </div>
+        <div class="folds">
+          <details id="reuse-box" class="reuse-box hidden fold-block" data-fold="reuse">
+            <summary><span class="fold-label">Reuse</span><span class="fold-preview">Prompt, inputs, output, settings</span></summary>
+            <div class="reuse-actions" id="reuse-actions"></div>
+          </details>
+          <details id="sent-prompt-box" class="sent-prompt-box hidden fold-block" data-fold="sent">
+            <summary><span class="fold-label">Prompt sent</span><span class="fold-preview"></span></summary>
+            <p id="sent-prompt-text" class="sent-prompt-text"></p>
+            <p id="sent-prompt-note" class="fold-note"></p>
+          </details>
+          <details id="enhanced-box" class="enhanced-box hidden fold-block" data-fold="enhanced">
+            <summary><span class="fold-label">Enhanced prompt</span><span class="fold-preview"></span></summary>
+            <p id="enhanced-text" class="enhanced-text"></p>
+            <p id="enhanced-note" class="fold-note"></p>
+            <div class="fold-actions">
+              <button type="button" class="chip-btn" id="enhanced-copy">Copy enhanced prompt</button>
+              <button type="button" class="chip-btn" id="enhanced-use">Use in prompt</button>
+            </div>
+          </details>
+          <details id="job-details" class="job-details hidden fold-block" data-fold="job">
+            <summary><span class="fold-label">Job details</span><span class="fold-preview" id="job-details-line"></span></summary>
+            <p id="job-details-text" class="fold-note"></p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section id="recent-strip" class="feed hidden">
+      <div class="feed-head">
+        <h2>Recent</h2>
+        <button type="button" class="link-btn" data-goto="library">See all</button>
+      </div>
+      <div id="recent-row" class="masonry"></div>
+    </section>
+  </main>
+
+  <!-- ============ Library view ============ -->
+  <!-- ============ Workflows view ============ -->
+  <div id="upd-banner" class="upd-banner hidden" role="status">
+    <span class="upd-text"></span>
+    <button type="button" class="chip-btn primary" id="upd-install">Install now</button>
+    <button type="button" class="chip-btn" id="upd-later">Later</button>
+  </div>
+
+  <main id="view-workflows" class="page workflows-page hidden">
+    <div class="wf-head">
+      <div>
+        <h1>Workflows</h1>
+        <p class="muted">Each workflow is an engine. Pick one in Settings, or tap Use.</p>
+      </div>
+      <button type="button" class="send-text" id="wf-upload-btn">+ Upload workflow</button>
+      <input type="file" id="wf-file" accept=".json,application/json" hidden>
+    </div>
+    <div class="hw-bar" id="hw-bar"></div>
+    <div id="wf-list" class="wf-list"></div>
+    <section class="wf-app">
+      <div>
+        <h2>App</h2>
+        <p class="muted" id="wf-app-version">Comfy Studio</p>
+        <p class="muted" id="wf-app-msg"></p>
+        <label class="check-row upd-auto"><input type="checkbox" id="upd-auto"> Install important fixes automatically
+          <span class="muted">(only while nothing is generating; your library, PIN and settings are always kept)</span></label>
+      </div>
+      <div class="wf-actions">
+        <button type="button" class="chip-btn" id="wf-update-check">Check for updates</button>
+        <button type="button" class="chip-btn primary hidden" id="wf-update-apply">Update now</button>
+      </div>
+    </section>
+    <details class="fold-block wf-howto" data-fold="wf-howto">
+      <summary><span class="fold-label">How to add a workflow from ComfyUI</span></summary>
+      <ol class="help-list">
+        <li><b>Get the workflow file.</b> Any ComfyUI workflow saved as a <b>.json</b> file works: one you downloaded, one from
+          the ComfyUI template gallery, or your own (in ComfyUI: <b>Workflow → Save</b> or <b>Export</b>). Grouped nodes
+          (subgraphs) are fine; the app opens them for you. If you set the workflow up in ComfyUI's <b>App Mode</b>,
+          the app uses the controls you chose there.</li>
+        <li><b>Upload it.</b> On this page, tap <b>+ Upload workflow</b> (top right) and choose the file.</li>
+        <li><b>Check the setup screen.</b> The app reads the workflow and lists what it understood under <b>Found</b>
+          (prompt, pictures, size, seed, steps, models and so on). Give it a <b>Name</b>, check <b>Shows up under</b>
+          (for example Image · Text to image), and make sure <b>Prompt box</b> points at the text you normally type into.
+          If something is missing from your PC, it says so and offers to install the needed nodes.</li>
+        <li><b>Save.</b> Tap <b>Save</b>. The new engine appears on this page under its model family, marked <b>Yours</b>.</li>
+        <li><b>Use it.</b> Tap <b>Use</b> on its card. You go to <b>Create</b> with it selected; type a prompt and press the
+          send arrow. The pills below the prompt (Size, Seed, LoRA and so on) now control this workflow.</li>
+        <li><b>Switch back any time</b> with the sliders button next to the send arrow (Settings → Engine), or tap
+          <b>Use</b> on another card here. <b>Delete</b> on a card removes only that uploaded engine.</li>
+      </ol>
+      <p class="help-note">Settings the app doesn't control keep the values saved in the workflow. Built-in prompt
+        enhancers inside a workflow are switched off, because the app's own <b>Enhance</b> pill does that job.</p>
+    </details>
+  </main>
+
+  <main id="view-library" class="page library-page hidden">
+    <div class="lib-toolbar">
+      <div class="seg" id="lib-modes" role="tablist" aria-label="Library filter">
+        <button type="button" class="is-on" data-lib="all">All</button>
+        <button type="button" data-lib="t2i">Created</button>
+        <button type="button" data-lib="edit">Edited</button>
+      </div>
+      <label class="pill toggle-pill fav-filter"><input type="checkbox" id="lib-fav"><span>★ Favourites</span></label>
+      <select id="lib-engine" class="lib-engine hidden" aria-label="Show one engine"></select>
+    </div>
+    <div id="lib-grid" class="lib-grid masonry">
+      <p class="muted" id="lib-empty">Nothing in the library yet. Generate an image and it will show up here.</p>
+    </div>
+  </main>
+
+  <!-- ============ Dock: activity + pills + composer ============ -->
+  <div id="dock" class="dock">
+    <div class="dock-inner">
+      <div id="dock-alert" class="dock-alert hidden" role="alert">
+        <p id="error" class="error"></p>
+        <ul id="dock-fixes" class="dock-fixes hidden"></ul>
+        <button type="button" class="chip-btn primary hidden" id="dock-alert-action"></button>
+        <button type="button" class="icon-btn sm" id="dock-alert-close" aria-label="Dismiss">✕</button>
+      </div>
+      <p id="go-note" class="go-note" aria-live="polite"></p>
+
+      <div id="job-queue" class="job-queue hidden" aria-live="polite"></div>
+
+      <!-- + panel (Grok-style media panel above the composer) -->
+      <div id="add-menu" class="add-panel hidden" role="dialog" aria-label="Add images">
+        <div class="add-head">
+          <div class="add-tabs" role="tablist">
+            <button type="button" class="is-on" id="add-library" role="tab">Library</button>
+            <button type="button" id="add-pc">From my PC</button>
+            <button type="button" id="add-phone">Upload</button>
+          </div>
+          <button type="button" class="icon-btn sm" id="add-close" aria-label="Close">✕</button>
+        </div>
+        <p class="add-sub" id="add-sub">Tap images to attach them. Picture 1 is the one being edited.</p>
+        <div id="add-grid" class="add-grid"></div>
+        <button type="button" id="add-camera" hidden>Camera</button>
+      </div>
+
+      <div class="hud" id="hud">
+        <div class="hud-scroller" id="hud-scroller" role="toolbar" aria-label="Generation settings">
+          <button type="button" class="pill engine-pill" id="engine-pill" aria-haspopup="dialog" title="Engine (model and workflow)">
+            <span class="engine-dot" aria-hidden="true"></span><span id="engine-pill-label">MiniMax H3</span><span class="tune-chip" id="tune-chip">Auto</span>
+          </button>
+          <button type="button" class="pill video-only" id="vsize-pill" aria-haspopup="dialog">
+            <span class="res-icon" id="vsize-icon" aria-hidden="true"></span><strong id="vsize-label">16:9</strong><span class="pill-meta" id="vsize-meta">720p</span>
+          </button>
+          <button type="button" class="pill video-only" id="vlen-pill" aria-haspopup="dialog">
+            <span class="pill-k">Length</span><span id="vlen-label">5s</span>
+          </button>
+          <div class="res-picker image-only" id="res-picker">
+            <button type="button" id="res-trigger" class="pill res-trigger" aria-haspopup="listbox" aria-expanded="false" aria-controls="res-menu">
+              <span class="res-icon" id="res-trigger-icon" aria-hidden="true"></span>
+              <strong id="res-trigger-label">1:1</strong>
+              <span class="pill-meta" id="res-trigger-meta">4 MP</span>
+            </button>
+          </div>
+          <button type="button" class="pill edit-only mm-only" id="kind-pill" aria-haspopup="dialog">
+            <span class="pill-k">Mode</span><span id="kind-pill-label">Edit Picture 1</span>
+          </button>
+          <button type="button" class="pill image-only mm-only" id="quality-pill" aria-haspopup="dialog" aria-expanded="false">
+            <span class="pill-k">Enhance</span><span id="quality-pill-label">Off</span>
+          </button>
+          <button type="button" class="pill" id="camera-open" aria-haspopup="dialog">
+            <span class="pill-k">Camera</span><span id="camera-pill-label">Any</span>
+          </button>
+          <button type="button" class="pill edit-only mm-only" id="roles-pill" aria-haspopup="dialog">
+            <span class="pill-k">Roles</span><span id="roles-pill-label">Auto</span>
+          </button>
+          <button type="button" class="pill edit-only mm-only" id="inpaint-pill" aria-haspopup="dialog">
+            <span class="pill-k">Inpaint</span><span id="inpaint-pill-label">Paint</span>
+          </button>
+          <button type="button" class="pill edit-only mm-only" id="mark-pill" aria-haspopup="dialog">
+            <span class="pill-k">Mark</span><span>Area</span>
+          </button>
+          <button type="button" class="pill" id="lora-pill" aria-haspopup="dialog">
+            <span class="pill-k">LoRA</span><span id="lora-pill-label">None</span>
+          </button>
+          <button type="button" class="pill" id="seed-pill" aria-haspopup="dialog">
+            <span class="pill-k">Seed</span><span id="seed-pill-label">Random</span>
+          </button>
+          <button type="button" class="pill icon-pill" id="help-pill" aria-haspopup="dialog" aria-label="Help and tips">?</button>
+        </div>
+      </div>
+
+      <section class="composer" id="prompt-card">
+        <section id="images" class="refs hidden" aria-label="Pictures">
+          <div id="slots" class="slots"></div>
+          <button type="button" class="link-btn hidden" id="clear-all">Clear</button>
+          <p id="images-lead" class="hidden"></p>
+          <input id="file-add" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/bmp,image/heic,image/heif,.heic,.heif" multiple hidden>
+        </section>
+
+        <section id="media-in" class="media-in hidden" aria-label="Video and audio inputs">
+          <div id="media-in-list" class="media-in-list"></div>
+          <button type="button" class="chip-btn media-add" id="media-add-video">+ Video</button>
+          <button type="button" class="chip-btn media-add" id="media-add-audio">+ Audio</button>
+          <p id="media-in-lead" class="media-in-lead hidden"></p>
+          <input id="media-file" type="file" hidden>
+        </section>
+
+        <div class="prompt-wrap">
+          <textarea id="prompt" rows="1" placeholder="Type to imagine…" enterkeyhint="send"></textarea>
+          <div id="at-picker" class="at-picker hidden" role="listbox" aria-label="Insert an image reference"></div>
+        </div>
+        <p id="prompt-hint" class="hidden"></p>
+        <p id="krea-hint" class="krea-hint hidden" aria-live="polite"></p>
+
+        <div class="composer-extras">
+          <div id="inpaint-chip" class="inpaint-chip hidden">
+            <span class="ip-dot" aria-hidden="true"></span><span>Only the painted area changes</span>
+            <button type="button" class="link-btn" id="inpaint-chip-edit">Edit</button>
+            <button type="button" class="icon-btn sm" id="inpaint-chip-clear" aria-label="Remove the inpaint area">✕</button>
+          </div>
+          <div id="camera-chips" class="camera-chips" hidden></div>
+          <div id="alias-preview" class="alias-preview hidden">
+            <div id="alias-chips" class="alias-chips"></div>
+            <div id="alias-warn" class="alias-warn"></div>
+            <p id="alias-norm" class="alias-norm hidden"></p>
+          </div>
+          <details id="assist-preview" class="assist-preview fold-block hidden" data-fold="assist">
+            <summary><span class="fold-label">Will also send</span><span class="fold-preview" id="assist-preview-line"></span></summary>
+            <p id="assist-preview-text" class="fold-note"></p>
+          </details>
+        </div>
+
+        <div class="composer-bar">
+          <button type="button" class="icon-btn" id="add-images" aria-haspopup="dialog" aria-label="Add images">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+          <div class="seg media-seg" id="media-seg" role="tablist" aria-label="Image or video">
+            <button type="button" class="is-on" data-media="image" role="tab" aria-selected="true" aria-label="Image" title="Image">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4"/></svg><span>Image</span>
+            </button>
+            <button type="button" data-media="video" role="tab" aria-selected="false" aria-label="Video" title="Video">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6" width="13.5" height="12" rx="3"/><path d="M16 10.5l5.5-3v9l-5.5-3z"/></svg><span>Video</span>
+            </button>
+          </div>
+          <div class="modes seg mode-seg image-only" role="tablist" aria-label="Image mode">
+            <button type="button" class="mode is-on" data-mode="t2i" role="tab" aria-selected="true">Create</button>
+            <button type="button" class="mode" data-mode="edit" role="tab" aria-selected="false">Edit</button>
+          </div>
+          <button type="button" class="task-chip video-only" id="vtask-btn" aria-haspopup="dialog" aria-label="Video type">
+            <span id="vtask-icon" aria-hidden="true"></span><span id="vtask-label">Text</span>
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+          </button>
+          <div class="seg vmode-seg video-only" id="vmode-seg" role="tablist" aria-label="Video mode">
+            <button type="button" class="is-on" data-vmode="t2v" role="tab" aria-selected="true" title="Create a video from text">Create</button>
+            <button type="button" data-vmode="i2v" role="tab" aria-selected="false" aria-label="Image to video" title="Image to video">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6.5" width="9" height="11" rx="2.2"/><path d="M5 15l2-2 1.5 1.5"/><path d="M13.5 12h2.5M14.8 10.5l1.5 1.5-1.5 1.5"/><path d="M18 8.5l4 3.5-4 3.5z"/></svg>
+            </button>
+          </div>
+          <span class="grow"></span>
+          <button type="button" class="icon-btn" id="settings-gear" aria-haspopup="dialog" aria-label="Settings" aria-expanded="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+          </button>
+          <button type="button" id="generate" class="send" aria-label="Generate (Enter)">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>
+          </button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ============ Popovers (desktop: anchored menu; phone: bottom sheet) ============ -->
+  <div id="pop-backdrop" class="pop-backdrop hidden"></div>
+  <div id="res-backdrop" class="hidden" hidden></div>
+
+  <div id="res-menu" class="pop res-menu hidden" role="listbox" tabindex="-1" aria-labelledby="res-trigger" hidden>
+    <div class="pop-head"><h3>Size</h3><p class="pop-sub">Aspect ratio and megapixels</p></div>
+    <div id="res-menu-body" class="res-grid"></div>
+    <div id="p1-dial" class="p1-dial">
+      <div class="row-between">
+        <p class="pop-label">Megapixels</p>
+        <button type="button" id="p1-original" class="chip-btn p1-orig is-on" aria-pressed="true">Original</button>
+      </div>
+      <div class="mp-chips" id="p1-mp-chips">
+        <button type="button" data-p1mp="2">2</button>
+        <button type="button" data-p1mp="4">4</button>
+        <button type="button" data-p1mp="8">8</button>
+        <button type="button" data-p1mp="12">12</button>
+        <button type="button" data-p1mp="16">16</button>
+      </div>
+      <div class="mp-row">
+        <input type="range" id="p1-mp-slider" min="1" max="20" step="0.5" value="8" aria-label="Megapixels">
+        <label class="mp-num">MP <input type="number" id="p1-mp-num" min="1" max="20" step="0.5" value="8"></label>
+      </div>
+      <p id="p1-output" class="mp-size">Output: —</p>
+      <details class="pop-help fold-block" data-fold="help-size">
+        <summary><span class="fold-label">About sizes</span></summary>
+        <p id="p1-hint" class="fold-note"></p>
+      </details>
+    </div>
+    <div id="custom-mp" class="hidden">
+      <div id="custom-aspects" class="aspects"></div>
+      <input type="number" id="mp-num" min="1" max="20" step="0.5" value="4">
+      <input type="range" id="mp-slider" min="1" max="20" step="0.5" value="4">
+      <div class="mp-chips" id="mp-chips"></div>
+      <p id="mp-size"></p><p id="mp-hint"></p>
+    </div>
+    <p id="res-note" class="hidden"></p>
+  </div>
+
+  <div id="quality-pop" class="pop hidden" role="dialog" aria-label="Prompt Enhancer" hidden>
+    <div class="pop-head"><h3>Prompt Enhancer</h3><p class="pop-sub">Rewrites your prompt with more detail before sending</p></div>
+    <div class="seg seg-wide pe-modes" id="pe-modes" role="radiogroup" aria-label="Prompt Enhancer">
+      <button type="button" class="is-on" data-pe-mode="off">Off</button>
+      <button type="button" data-pe-mode="fast">Fast</button>
+      <button type="button" data-pe-mode="quality">Quality</button>
+    </div>
+    <input type="checkbox" id="pe" hidden>
+    <p class="pop-note" id="pe-hint">Fast is lighter on an 8 GB card and usually finishes in seconds. Quality is the full enhancer and is slower. Both use extra VRAM and time.</p>
+  </div>
+
+  <div id="kind-pop" class="pop hidden" role="dialog" aria-label="Edit mode" hidden>
+    <div class="pop-head"><h3>How to use your pictures</h3></div>
+    <div class="edit-kind-wrap" id="edit-kind-wrap">
+      <div class="option-list" id="edit-kind" role="radiogroup" aria-label="Edit mode">
+        <button type="button" class="option is-on" data-edit-kind="edit">
+          <strong>Edit Picture 1</strong>
+          <span>Changes Picture 1 and keeps everything else. Other pictures add people, clothes or objects to it.</span>
+        </button>
+        <button type="button" class="option" data-edit-kind="ref">
+          <strong>Reference</strong>
+          <span>Makes a new scene. All pictures are references only. Tag one Background to use it as the setting.</span>
+        </button>
+      </div>
+    </div>
+    <label class="switch-row" id="assist-toggle-wrap">
+      <span><strong>Auto understanding</strong><small id="assist-hint">Adds clear &lt;Picture N&gt; notes so identities and outfits are kept. No extra VRAM.</small></span>
+      <input type="checkbox" id="auto-assist" checked><i class="switch" aria-hidden="true"></i>
+    </label>
+  </div>
+
+  <div id="seed-pop" class="pop hidden" role="dialog" aria-label="Seed" hidden>
+    <div class="pop-head"><h3>Seed</h3><p class="pop-sub">Same seed + same prompt = same image</p></div>
+    <label class="switch-row">
+      <span><strong>Random seed</strong><small>A new variation every time</small></span>
+      <input type="checkbox" id="random-seed" checked><i class="switch" aria-hidden="true"></i>
+    </label>
+    <label class="field">Seed number
+      <input type="number" id="seed" min="0" step="1" value="0" disabled inputmode="numeric">
+    </label>
+    <button type="button" class="chip-btn" id="seed-last">Use last image's seed</button>
+  </div>
+
+  <div id="roles-pop" class="pop hidden" role="dialog" aria-label="Picture roles" hidden>
+    <div class="pop-head"><h3>Picture roles</h3><p class="pop-sub">Tell the model what each picture is for</p></div>
+    <div id="roles-list" class="roles-list"></div>
+  </div>
+
+  <div id="vsize-pop" class="pop hidden" role="dialog" aria-label="Video size" hidden>
+    <div class="pop-head"><h3>Video size</h3><p class="pop-sub">Frame shape and resolution</p></div>
+    <div class="res-grid vsize-grid" id="vsize-grid"></div>
+    <p class="pop-label">Resolution</p>
+    <div class="seg seg-wide" id="vres-seg">
+      <button type="button" data-vres="480p">480p</button>
+      <button type="button" class="is-on" data-vres="720p">720p</button>
+    </div>
+    <p class="pop-note" id="vres-note">720p is the sweet spot on an 8 GB card. 480p is much faster for quick tests.</p>
+  </div>
+
+  <div id="queue-pop" class="pop pop-wide queue-pop hidden" role="dialog" aria-labelledby="queue-title" hidden>
+    <div class="pop-head row-between">
+      <div><h3 id="queue-title">Queue</h3><p class="pop-sub" id="queue-count"></p></div>
+      <button type="button" class="icon-btn sm" id="queue-close" aria-label="Close queue">✕</button>
+    </div>
+    <div id="queue-list" class="queue-list"></div>
+    <div class="queue-actions"><button type="button" class="chip-btn danger" id="queue-cancel-all">Cancel all waiting</button></div>
+  </div>
+
+  <div id="lora-pop" class="pop hidden" role="dialog" aria-label="LoRAs" hidden>
+    <div class="pop-head"><h3>LoRAs</h3><p class="pop-sub" id="lora-sub">Add a LoRA and set how strongly it applies</p></div>
+    <label class="check-row lora-auto-row"><input type="checkbox" id="lora-auto"> Auto-pick LoRAs from my prompt
+      <span class="muted">(only LoRAs made for this engine's model)</span></label>
+    <div id="lora-auto-list" class="lora-auto-list hidden"></div>
+    <div id="lora-list" class="lora-list"></div>
+    <div class="lora-add">
+      <input id="lora-search" class="search-box" placeholder="Search LoRAs by name, folder or trigger word…" autocomplete="off" aria-label="Search LoRAs">
+      <button type="button" class="chip-btn primary" id="lora-add-btn">Add</button>
+    </div>
+    <div id="lora-results" class="lora-results hidden" role="listbox" aria-label="LoRA search results"></div>
+    <p class="pop-note" id="lora-note"></p>
+  </div>
+
+  <div id="upscale-pop" class="pop hidden" role="dialog" aria-label="Upscale video" hidden>
+    <div class="pop-head"><h3>Upscale this video</h3><p class="pop-sub" id="upscale-sub">Only what your PC can run is shown</p></div>
+    <div id="upscale-list" class="option-list"></div>
+  </div>
+
+  <div id="vtask-pop" class="pop hidden" role="dialog" aria-label="Video type" hidden>
+    <div class="pop-head"><h3>What kind of video?</h3><p class="pop-sub" id="vtask-engine">Engine follows Settings</p></div>
+    <div class="option-list" id="vtask-list"></div>
+  </div>
+
+  <div id="vlen-pop" class="pop hidden" role="dialog" aria-label="Video length" hidden>
+    <div class="pop-head"><h3>Length</h3><p class="pop-sub">Longer clips take more time and memory</p></div>
+    <div class="seg seg-wide" id="vlen-seg">
+      <button type="button" class="is-on" data-vlen="5">5s</button>
+      <button type="button" data-vlen="10">10s</button>
+    </div>
+    <label class="vlen-custom">Custom length
+      <input type="number" id="vlen-custom" min="1" max="120" step="1" inputmode="numeric" placeholder="seconds">
+      <span>s</span>
+      <button type="button" class="chip-btn primary" id="vlen-custom-set">Set</button>
+    </label>
+  </div>
+
+  <div id="help-pop" class="pop hidden" role="dialog" aria-label="Help" hidden>
+    <div class="pop-head"><h3>Tips</h3></div>
+    <ul class="help-list" id="help-list"></ul>
+  </div>
+
+  <div id="media-src-pop" class="pop media-src-pop hidden" role="dialog" aria-label="Add from" hidden>
+    <p class="pop-label media-src-title">Add a video</p>
+    <button type="button" class="media-src-btn" id="media-src-pc">From PC</button>
+    <button type="button" class="media-src-btn" id="media-src-device">From this device</button>
+  </div>
+  <div id="media-pc" class="pop pop-wide media-pc hidden" role="dialog" aria-labelledby="media-pc-title" hidden>
+    <div class="pop-head row-between">
+      <h3 id="media-pc-title">Videos on this PC</h3>
+      <button type="button" class="icon-btn sm" id="media-pc-close" aria-label="Close">✕</button>
+    </div>
+    <select id="media-pc-root" class="media-pc-root" aria-label="Folder"></select>
+    <div id="media-pc-grid" class="media-pc-grid"></div>
+  </div>
+
+  <div id="settings-pop" class="pop pop-wide hidden" role="dialog" aria-labelledby="settings-title" hidden>
+    <div class="pop-head row-between">
+      <h3 id="settings-title">Settings</h3>
+      <button type="button" class="icon-btn sm" id="settings-close" aria-label="Close settings">✕</button>
+    </div>
+    <div class="settings-group engine-group">
+      <p class="pop-label">Engine</p>
+      <div class="field-grid">
+        <label class="field">Model family <select id="wf-family"></select></label>
+        <label class="field"><span id="wf-task-label">Workflow</span> <select id="wf-pick"></select></label>
+      </div>
+      <p class="pop-note" id="wf-note">Built-in MiniMax H3. Add more engines on the Workflows page.</p>
+      <div class="tune-row">
+        <span class="tune-label">Settings</span>
+        <div class="seg" id="tune-seg" role="radiogroup" aria-label="Settings mode">
+          <button type="button" class="is-on" data-tune="auto" role="radio" aria-checked="true">Auto</button>
+          <button type="button" data-tune="manual" role="radio" aria-checked="false">Manual</button>
+        </div>
+      </div>
+      <p class="pop-note" id="tune-note">Auto: steps, CFG, sampler and scheduler follow the model you load.</p>
+    </div>
+    <div class="settings-group hidden" id="krea-keepface-group">
+      <p class="pop-label">Krea 2 Edit</p>
+      <label class="check-row"><input type="checkbox" id="krea-keepface"> Keep face</label>
+      <p class="pop-note">Adds "Preserve the exact facial identity." to your instruction (the Krea Edit notes' fix for faces coming out generic). Off by default.</p>
+    </div>
+    <div class="settings-group wf-only" id="wf-negative-group">
+      <p class="pop-label">Negative prompt</p>
+      <textarea id="wf-negative" class="search-box" rows="2" placeholder="Things to avoid (optional)"></textarea>
+    </div>
+    <div class="settings-group">
+      <p class="pop-label">Sampling</p>
+      <div class="field-grid">
+        <label class="field">Steps <input type="number" id="steps" min="1" max="50" value="6" inputmode="numeric"></label>
+        <label class="field">CFG <input type="number" id="cfg" min="0" max="20" step="0.1" value="1" inputmode="decimal"></label>
+        <label class="field">Sampler <select id="sampler_name"></select></label>
+        <label class="field">Scheduler <select id="scheduler"></select></label>
+      </div>
+      <p class="pop-note" id="sampling-note">The distilled model is tuned for 6 steps and CFG 1. 8 steps also works well.</p>
+    </div>
+    <div class="settings-group" id="keep-cloth-group">
+      <p class="pop-label">Keep clothing</p>
+      <label class="check-row"><input type="checkbox" id="keep-clothing" checked> Keep the person's clothing unless my prompt is about clothing</label>
+      <p class="pop-note">For edits that turn, pose, resize or relight someone (and new pictures that describe an outfit), the app adds a
+        short "keep the clothing the same" line in the model's own wording, plus negative words for engines that use them.
+        Prompts that remove, change or describe clothing are never touched. If a LoRA still strips clothes, lower its strength.</p>
+    </div>
+    <div class="settings-group" id="pe-sys-group">
+      <div class="knobs-head">
+        <p class="pop-label">Prompt Enhancer instructions <span class="knobs-count" id="pe-sys-badge"></span></p>
+        <div class="seg" id="pe-sys-mode" role="tablist" aria-label="Which prompts">
+          <button type="button" class="is-on" data-pe-sys="t2i">New</button>
+          <button type="button" data-pe-sys="edit">Edit</button>
+        </div>
+      </div>
+      <p class="pop-note" id="pe-sys-status">The system prompt the enhancer follows for this engine.</p>
+      <textarea id="pe-sys-text" class="search-box pe-sys-text" rows="8" spellcheck="false" aria-label="Prompt Enhancer system prompt"></textarea>
+      <p class="pop-note" id="pe-sys-note"></p>
+      <div class="pe-sys-actions">
+        <button type="button" class="chip-btn primary" id="pe-sys-save">Save for this engine</button>
+        <button type="button" class="chip-btn" id="pe-sys-reset">Back to default</button>
+      </div>
+    </div>
+    <div class="settings-group hidden" id="wf-knobs-group">
+      <div class="knobs-head">
+        <p class="pop-label">All workflow settings <span class="knobs-count" id="wf-knobs-count"></span></p>
+        <button type="button" class="knobs-reset" id="wf-knobs-reset">Reset</button>
+      </div>
+      <p class="pop-note">Manual: every value in this workflow, read from the workflow itself (uploaded ones too). Each one is checked against the node's own limits before it's used.</p>
+      <div id="wf-knobs"></div>
+    </div>
+    <div class="settings-group builtin-only">
+      <p class="pop-label">Models</p>
+      <div class="field-grid one">
+        <label class="field">Diffusion model <select id="unet_name"></select></label>
+        <label class="field">Text encoder <select id="clip_name"></select></label>
+        <label class="field">VAE <select id="vae_name"></select></label>
+        <label class="field">Prompt Enhancer model <select id="pe_clip_name"></select></label>
+      </div>
+    </div>
+    <div class="settings-group wf-only">
+      <p class="pop-label">Models in this workflow</p>
+      <div class="field-grid one" id="wf-models"></div>
+    </div>
+    <div class="settings-group">
+      <p class="pop-label">App</p>
+      <div class="row-between">
+        <span class="pop-note" id="app-version">Comfy Studio</span>
+        <button type="button" class="chip-btn" id="update-check">Check for updates</button>
+      </div>
+      <p class="pop-note" id="update-msg"></p>
+      <button type="button" class="send-text hidden" id="update-apply">Update now</button>
+    </div>
+  </div>
+
+  <!-- legacy hooks kept for app logic -->
+  <div id="quality" hidden></div>
+  <div id="aspects" hidden></div>
+
+  <!-- ============ Sheets ============ -->
+  <div id="pc-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="pc-title">
+    <div class="sheet-backdrop" id="pc-backdrop"></div>
+    <div class="sheet-card sheet-tall">
+      <div class="sheet-top">
+        <div class="sheet-head">
+          <button type="button" class="icon-btn sm" id="pc-close" aria-label="Close">✕</button>
+          <h2 id="pc-title">From this PC</h2>
+          <button type="button" class="send-text hidden" id="pc-confirm">Add</button>
+        </div>
+        <div class="seg seg-wide pc-tabs" id="pc-tabs">
+          <button type="button" class="is-on" data-tab="recent">Recent</button>
+          <button type="button" data-tab="browse">Browse</button>
+          <button type="button" data-tab="search">Search</button>
+        </div>
+        <div id="pc-roots-wrap" class="pc-roots-wrap">
+          <p id="pc-drives-label" class="pop-label">Drives</p>
+          <div id="pc-drives" class="pc-roots pc-drives" role="list"></div>
+          <p id="pc-folders-label" class="pop-label">Folders</p>
+          <div id="pc-roots" class="pc-roots" role="list"></div>
+        </div>
+        <div id="pc-nav" class="pc-nav hidden">
+          <button type="button" id="pc-up" class="chip-btn" disabled>Up</button>
+          <div id="pc-crumbs" class="crumbs"></div>
+        </div>
+        <input id="pc-query" class="search-box" type="search" placeholder="Search this drive or folder by filename" enterkeyhint="search" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="pc-grid" class="pc-grid"></div>
+      <div class="sheet-foot">
+        <p id="pc-msg" class="muted sheet-msg"></p>
+        <button type="button" id="pc-more" class="chip-btn hidden">Load more</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="camera-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="camera-title">
+    <div class="sheet-backdrop" id="camera-backdrop"></div>
+    <div class="sheet-card sheet-tall">
+      <div class="sheet-top">
+        <div class="sheet-head">
+          <button type="button" class="icon-btn sm" id="camera-close" aria-label="Close">✕</button>
+          <h2 id="camera-title">Camera</h2>
+          <button type="button" class="link-btn" id="camera-clear">Clear</button>
+        </div>
+        <p class="sheet-lead" id="camera-lead">Pick one option per group.</p>
+      </div>
+      <div class="camera-body" id="camera-body"></div>
+    </div>
+  </div>
+
+  <div id="mark-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="mark-title">
+    <div class="sheet-backdrop" id="mark-backdrop"></div>
+    <div class="sheet-card">
+      <div class="sheet-top">
+        <div class="sheet-head">
+          <button type="button" class="icon-btn sm" id="mark-close" aria-label="Close">✕</button>
+          <h2 id="mark-title">Mark an area</h2>
+          <button type="button" class="send-text" id="mark-insert" disabled>Insert</button>
+        </div>
+        <p class="sheet-lead">Drag a box on Picture 1. Its position is added to your prompt as words, because this model reads text, not masks.</p>
+      </div>
+      <div class="mark-stage" id="mark-stage">
+        <img id="mark-img" alt="Picture 1">
+        <div id="mark-box" class="mark-box hidden"></div>
+      </div>
+      <p class="mark-out" id="mark-out">No area marked yet.</p>
+    </div>
+  </div>
+
+  <div id="confirm" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-backdrop" id="confirm-backdrop"></div>
+    <div class="sheet-card sheet-small">
+      <h2 id="confirm-title">Delete this image?</h2>
+      <p class="sheet-lead" id="confirm-body">It will be removed from the library and from the Comfy Studio output folder only. Nothing else on the PC is touched.</p>
+      <div class="sheet-actions">
+        <button type="button" class="chip-btn" id="confirm-no">Cancel</button>
+        <button type="button" class="chip-btn danger" id="confirm-yes">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="copy-sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-backdrop" id="copy-backdrop"></div>
+    <div class="sheet-card sheet-small">
+      <h2>Copy this prompt</h2>
+      <p class="sheet-lead">Select the text and copy it.</p>
+      <textarea id="copy-sheet-text" class="search-box" rows="8" readonly></textarea>
+      <div class="sheet-actions">
+        <button type="button" class="chip-btn" id="copy-sheet-try">Copy</button>
+        <button type="button" class="chip-btn" id="copy-sheet-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ Viewers ============ -->
+  <div id="viewer" class="viewer hidden" role="dialog" aria-modal="true">
+    <div class="viewer-stage" id="viewer-stage">
+      <button type="button" class="icon-btn viewer-close" id="viewer-close" aria-label="Close">✕</button>
+      <button type="button" class="nav-btn prev" id="viewer-prev" aria-label="Previous">&#8249;</button>
+      <button type="button" class="nav-btn next" id="viewer-next" aria-label="Next">&#8250;</button>
+      <img id="viewer-img" alt="Library image">
+      <video id="viewer-video" class="hidden" controls playsinline loop preload="metadata"></video>
+      <div id="viewer-compare" class="compare hidden">
+        <img id="viewer-after" alt="After">
+        <div id="viewer-before-clip"><img id="viewer-before" alt="Before"></div>
+        <input id="viewer-split" type="range" min="0" max="100" value="50" aria-label="Before and after">
+      </div>
+    </div>
+    <aside class="viewer-info">
+      <p id="viewer-prompt" class="viewer-prompt"></p>
+      <div class="viewer-actions">
+        <a id="viewer-dl" class="chip-btn" download>Save</a>
+        <button type="button" class="chip-btn" id="viewer-copy">Copy prompt</button>
+        <button type="button" class="chip-btn hidden" id="viewer-edit">Edit this</button>
+        <button type="button" class="chip-btn" id="viewer-inpaint">Inpaint</button>
+        <button type="button" class="chip-btn hidden" id="viewer-upscale">Upscale</button>
+        <button type="button" class="chip-btn hidden" id="viewer-reuse">Reuse settings</button>
+        <button type="button" class="chip-btn hidden" id="viewer-ba">Compare</button>
+        <button type="button" class="chip-btn" id="viewer-fav">Favourite</button>
+        <button type="button" class="chip-btn danger" id="viewer-del">Delete</button>
+      </div>
+      <div class="folds">
+        <details id="viewer-reuse-box" class="reuse-box fold-block" data-fold="viewer-reuse">
+          <summary><span class="fold-label">Reuse</span><span class="fold-preview">Prompt, inputs, output, settings</span></summary>
+          <div class="reuse-actions" id="viewer-reuse-actions"></div>
+        </details>
+        <details id="viewer-enhanced" class="enhanced-box hidden fold-block" data-fold="viewer-enhanced">
+          <summary><span class="fold-label">Enhanced prompt</span><span class="fold-preview"></span></summary>
+          <p id="viewer-enhanced-text" class="enhanced-text"></p>
+        </details>
+        <details id="viewer-sent-box" class="sent-prompt-box hidden fold-block" data-fold="viewer-sent">
+          <summary><span class="fold-label">Prompt sent</span><span class="fold-preview"></span></summary>
+          <p id="viewer-sent-text" class="sent-prompt-text"></p>
+          <p id="viewer-sent-note" class="fold-note"></p>
+        </details>
+        <details id="viewer-job-details" class="job-details hidden fold-block" data-fold="viewer-job">
+          <summary><span class="fold-label">Job details</span><span class="fold-preview" id="viewer-job-details-line"></span></summary>
+          <p id="viewer-meta" class="fold-note"></p>
+        </details>
+      </div>
+    </aside>
+  </div>
+
+  <div id="pc-preview" class="viewer viewer-simple hidden" role="dialog" aria-modal="true">
+    <div class="viewer-stage" id="pc-preview-stage">
+      <button type="button" class="icon-btn viewer-close" id="pc-preview-close" aria-label="Close">✕</button>
+      <button type="button" class="nav-btn prev" id="pc-preview-prev" aria-label="Previous">&#8249;</button>
+      <button type="button" class="nav-btn next" id="pc-preview-next" aria-label="Next">&#8250;</button>
+      <img id="pc-preview-img" alt="">
+    </div>
+    <aside class="viewer-info">
+      <p id="pc-preview-name" class="viewer-prompt"></p>
+      <div class="viewer-actions">
+        <button type="button" class="chip-btn primary" id="pc-preview-select">Select</button>
+        <button type="button" class="chip-btn" id="pc-preview-back">Back</button>
+      </div>
+    </aside>
+  </div>
+
+  <div id="result-fs" class="viewer viewer-simple hidden" role="dialog" aria-modal="true">
+    <div class="viewer-stage">
+      <button type="button" class="icon-btn viewer-close" id="result-fs-close" aria-label="Close">✕</button>
+      <img id="result-fs-img" alt="Result">
+    </div>
+  </div>
+
+  <!-- Inpaint: paint the area to change -->
+  <div id="inpaint-sheet" class="ip-sheet hidden" role="dialog" aria-modal="true" aria-labelledby="ip-title">
+    <div class="ip-top">
+      <button type="button" class="icon-btn" id="ip-close" aria-label="Cancel">✕</button>
+      <div class="ip-titles"><h2 id="ip-title">Paint what to change</h2><p id="ip-hint">Only the painted area is redrawn. The rest stays exactly the same.</p></div>
+      <button type="button" class="send-text" id="ip-done">Done</button>
+    </div>
+    <div class="ip-stage" id="ip-stage">
+      <div class="ip-wrap" id="ip-wrap">
+        <img id="ip-img" alt="Picture 1" draggable="false">
+        <canvas id="ip-canvas"></canvas>
+        <div class="ip-cursor hidden" id="ip-cursor"></div>
+      </div>
+    </div>
+    <div class="ip-split" id="ip-split">
+      <button type="button" class="ip-switch" id="ip-switch" role="switch" aria-checked="false" aria-label="Separate areas">
+        <span class="ip-switch-opt" data-v="auto">Auto</span><span class="ip-switch-opt" data-v="split">Separate</span><i class="ip-switch-thumb"></i>
+      </button>
+      <button type="button" class="ip-newarea hidden" id="ip-newarea" aria-label="Start a new area"><span>+</span> Area</button>
+      <p class="ip-split-note" id="ip-split-note">Touching strokes are one piece.</p>
+    </div>
+    <div class="ip-areas hidden" id="ip-areas" aria-label="Painted areas"></div>
+    <div class="ip-tools">
+      <div class="seg" id="ip-modes" role="radiogroup" aria-label="Tool">
+        <button type="button" class="is-on" data-tool="brush">Brush</button>
+        <button type="button" data-tool="erase">Erase</button>
+        <button type="button" data-tool="box">Box</button>
+      </div>
+      <label class="ip-size"><span>Size</span><input type="range" id="ip-size" min="6" max="160" value="48" aria-label="Brush size"></label>
+      <div class="ip-actions">
+        <button type="button" class="chip-btn" id="ip-undo" aria-label="Undo">↶ Undo</button>
+        <button type="button" class="chip-btn" id="ip-redo" aria-label="Redo">↷ Redo</button>
+        <button type="button" class="chip-btn" id="ip-invert">Invert</button>
+        <button type="button" class="chip-btn" id="ip-clear">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload: check the setup -->
+  <div id="wf-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="wf-sheet-title">
+    <div class="sheet-backdrop" id="wf-sheet-backdrop"></div>
+    <div class="sheet-card sheet-tall">
+      <div class="sheet-top">
+        <div class="sheet-head">
+          <button type="button" class="icon-btn sm" id="wf-sheet-close" aria-label="Close">✕</button>
+          <h2 id="wf-sheet-title">Check the setup</h2>
+          <button type="button" class="send-text" id="wf-save">Save</button>
+        </div>
+      </div>
+      <div class="wf-body" id="wf-body">
+        <div class="field-grid">
+          <label class="field">Name <input id="wf-name" maxlength="80" placeholder="My workflow"></label>
+          <label class="field">Model family <input id="wf-family-in" maxlength="40" list="wf-family-list"></label>
+        </div>
+        <datalist id="wf-family-list"></datalist>
+        <label class="field">Shows up under <select id="wf-task"></select></label>
+        <div class="wf-found" id="wf-found"></div>
+        <div class="wf-missing hidden" id="wf-missing"></div>
+        <div class="field-grid one">
+          <label class="field">Prompt box <select id="wf-prompt-pick"></select></label>
+          <label class="field">Negative prompt <select id="wf-negative-pick"></select></label>
+        </div>
+        <ul class="wf-notes" id="wf-notes"></ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Full-screen before/after compare (used by the result card and the library viewer) -->
+  <div id="compare-fs" class="cmp-fs hidden" role="dialog" aria-modal="true" aria-label="Compare before and after">
+    <div class="cmp-top">
+      <button type="button" class="icon-btn" id="cmp-close" aria-label="Close compare">✕</button>
+      <div class="seg" id="cmp-modes" role="tablist" aria-label="Compare style">
+        <button type="button" class="is-on" data-cmp="slide">Slider</button>
+        <button type="button" data-cmp="side">Side by side</button>
+      </div>
+      <span class="cmp-spacer"></span>
+    </div>
+    <div class="cmp-stage" id="cmp-stage">
+      <div class="cmp-box" id="cmp-box">
+        <img id="cmp-after" alt="After" draggable="false">
+        <div class="cmp-before" id="cmp-before-layer"><img id="cmp-before" alt="Before" draggable="false"></div>
+        <div class="cmp-line" id="cmp-line"><span class="cmp-knob" aria-hidden="true">‹ ›</span></div>
+        <span class="cmp-tag cmp-tag-l">Before</span>
+        <span class="cmp-tag cmp-tag-r">After</span>
+      </div>
+      <div class="cmp-side hidden" id="cmp-side">
+        <figure><img id="cmp-side-before" alt="Before" draggable="false"><figcaption>Before</figcaption></figure>
+        <figure><img id="cmp-side-after" alt="After" draggable="false"><figcaption>After</figcaption></figure>
+      </div>
+    </div>
+    <p class="cmp-hint" id="cmp-hint">Drag anywhere on the image to compare</p>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="/static/app.js?v=20261112v"></script>
+</body>
+</html>

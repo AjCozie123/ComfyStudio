@@ -1,0 +1,241 @@
+{
+ "family": "MiniMax H3",
+ "task": "t2v",
+ "media": "video",
+ "aio_mode": "Fast Text to Video",
+ "all_resolutions": [
+  "480p",
+  "576p",
+  "720p",
+  "832p",
+  "1080p"
+ ],
+ "picture_min": 0,
+ "picture_max": 0,
+ "lengths": [
+  3,
+  5,
+  8,
+  10
+ ],
+ "default_length": 5,
+ "resolutions": [
+  "720p",
+  "832p"
+ ],
+ "default_resolution": "720p",
+ "aspects": [
+  "16:9",
+  "9:16",
+  "1:1",
+  "4:3",
+  "3:4"
+ ],
+ "limits": {
+  "720p": 8,
+  "832p": 5
+ },
+ "needs": {
+  "vram_gb": 8,
+  "ram_gb": 30,
+  "profile": "h3",
+  "note": "Needs ComfyUI started in MiniMax H3 mode (run_comfyui_minimax_h3.bat) and about 30 GB of system RAM."
+ },
+ "prompt_style": "h3",
+ "prompt_trigger": "r34l1sm",
+ "slots": {
+  "seed": [
+   {
+    "node": "4",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "negative": [
+   {
+    "node": "4",
+    "input": "negative_prompt",
+    "label": "Negative prompt"
+   }
+  ],
+  "negative_flag": [
+   {
+    "node": "4",
+    "input": "use_negative",
+    "label": "Use negative"
+   }
+  ],
+  "res_label": {
+   "node": "4",
+   "input": "resolution",
+   "label": "Resolution",
+   "map": {
+    "480p": "480p (0.4 MP)",
+    "576p": "576p (0.6 MP)",
+    "720p": "720p (0.9 MP)",
+    "832p": "832p (1.2 MP)",
+    "1080p": "1080p (2.0 MP)"
+   }
+  },
+  "aspect_label": {
+   "node": "4",
+   "input": "aspect_ratio",
+   "label": "Aspect",
+   "map": {
+    "16:9": "16:9 landscape",
+    "9:16": "9:16 portrait",
+    "1:1": "1:1 square",
+    "4:3": "4:3",
+    "3:4": "3:4",
+    "match": "Match input"
+   }
+  },
+  "models": [
+   {
+    "node": "2",
+    "input": "model_text_image",
+    "label": "Video model (text / image)",
+    "kind": "model",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "2",
+    "input": "model_references",
+    "label": "Reference model",
+    "kind": "model",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "2",
+    "input": "text_encoder",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "2",
+    "input": "video_vae",
+    "label": "Video VAE",
+    "kind": "vae",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "minimax_h3_video_vae_int8_convrot.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "2",
+    "input": "audio_vae",
+    "label": "Audio VAE",
+    "kind": "vae",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "minimax_h3_audio_vae_fp32.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "2",
+    "input": "image_vae",
+    "label": "Image VAE",
+    "kind": "vae",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "minimax_h3_image_vae_fp16.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "2",
+    "input": "speed_lora_name",
+    "label": "Speed LoRA",
+    "kind": "lora",
+    "class_type": "MiniMaxH3AIOModels",
+    "value": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+    "title": "MiniMax H3 models"
+   },
+   {
+    "node": "3",
+    "input": "lora_1",
+    "label": "LoRA 1",
+    "kind": "lora",
+    "class_type": "MiniMaxH3AIOLoras",
+    "value": "None",
+    "title": "LoRAs"
+   },
+   {
+    "node": "3",
+    "input": "lora_2",
+    "label": "LoRA 2",
+    "kind": "lora",
+    "class_type": "MiniMaxH3AIOLoras",
+    "value": "None",
+    "title": "LoRAs"
+   },
+   {
+    "node": "3",
+    "input": "lora_3",
+    "label": "LoRA 3",
+    "kind": "lora",
+    "class_type": "MiniMaxH3AIOLoras",
+    "value": "None",
+    "title": "LoRAs"
+   },
+   {
+    "node": "3",
+    "input": "lora_4",
+    "label": "LoRA 4",
+    "kind": "lora",
+    "class_type": "MiniMaxH3AIOLoras",
+    "value": "None",
+    "title": "LoRAs"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "4",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "steps": [
+   {
+    "node": "5",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "prompt": [
+   {
+    "node": "4",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "seconds": [
+   {
+    "node": "4",
+    "input": "duration_seconds",
+    "label": "Length"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "10",
+   "kind": "video",
+   "class_type": "SaveVideo"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "cfg": 1.5,
+  "steps": 8
+ },
+ "sampling_note": "MiniMax H3 video: 8 steps with the turbo speed LoRA and CFG 1.5. No sampler or scheduler to choose; the AIO node handles them.",
+ "id": "h3_fast_t2v",
+ "name": "MiniMax H3 Fast · Text to video",
+ "description": "Drafts at a quarter size, then refines: sharper 720p-832p on 8 GB.",
+ "builtin": true,
+ "alternative": "ltx23_t2v"
+}

@@ -1,0 +1,418 @@
+{
+ "76": {
+  "inputs": {
+   "image": "bold_outfit_woman.jpeg"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Load Image"
+  }
+ },
+ "9": {
+  "inputs": {
+   "filename_prefix": "Flux2-Klein",
+   "images": [
+    "75:65",
+    0
+   ]
+  },
+  "class_type": "SaveImage",
+  "_meta": {
+   "title": "Save Image"
+  }
+ },
+ "75:61": {
+  "inputs": {
+   "sampler_name": "euler"
+  },
+  "class_type": "KSamplerSelect",
+  "_meta": {
+   "title": "KSamplerSelect"
+  }
+ },
+ "75:64": {
+  "inputs": {
+   "noise": [
+    "75:73",
+    0
+   ],
+   "guider": [
+    "75:63",
+    0
+   ],
+   "sampler": [
+    "75:61",
+    0
+   ],
+   "sigmas": [
+    "75:62",
+    0
+   ],
+   "latent_image": [
+    "75:66",
+    0
+   ]
+  },
+  "class_type": "SamplerCustomAdvanced",
+  "_meta": {
+   "title": "SamplerCustomAdvanced"
+  }
+ },
+ "75:65": {
+  "inputs": {
+   "samples": [
+    "75:64",
+    0
+   ],
+   "vae": [
+    "75:72",
+    0
+   ]
+  },
+  "class_type": "VAEDecode",
+  "_meta": {
+   "title": "VAE Decode"
+  }
+ },
+ "75:73": {
+  "inputs": {
+   "noise_seed": 26416064315367
+  },
+  "class_type": "RandomNoise",
+  "_meta": {
+   "title": "RandomNoise"
+  }
+ },
+ "75:70": {
+  "inputs": {
+   "unet_name": "flux-2-klein-9b-fp8.safetensors",
+   "weight_dtype": "default"
+  },
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "Load Diffusion Model"
+  }
+ },
+ "75:71": {
+  "inputs": {
+   "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+   "type": "flux2",
+   "device": "default"
+  },
+  "class_type": "CLIPLoader",
+  "_meta": {
+   "title": "Load CLIP"
+  }
+ },
+ "75:66": {
+  "inputs": {
+   "batch_size": 1,
+   "width": 1024,
+   "height": 1024
+  },
+  "class_type": "EmptyFlux2LatentImage",
+  "_meta": {
+   "title": "Empty Flux 2 Latent"
+  }
+ },
+ "75:63": {
+  "inputs": {
+   "cfg": 1,
+   "model": [
+    "75:70",
+    0
+   ],
+   "positive": [
+    "cs_rp4",
+    0
+   ],
+   "negative": [
+    "cs_rn4",
+    0
+   ]
+  },
+  "class_type": "CFGGuider",
+  "_meta": {
+   "title": "CFG Guider"
+  }
+ },
+ "75:62": {
+  "inputs": {
+   "steps": 4,
+   "width": 1024,
+   "height": 1024
+  },
+  "class_type": "Flux2Scheduler",
+  "_meta": {
+   "title": "Flux2Scheduler"
+  }
+ },
+ "75:123": {
+  "inputs": {
+   "conditioning": [
+    "75:82",
+    0
+   ],
+   "latent": [
+    "75:124",
+    0
+   ]
+  },
+  "class_type": "ReferenceLatent",
+  "_meta": {
+   "title": "Set Reference Latent"
+  }
+ },
+ "75:80": {
+  "inputs": {
+   "upscale_method": "nearest-exact",
+   "megapixels": 1,
+   "resolution_steps": 1,
+   "image": [
+    "76",
+    0
+   ]
+  },
+  "class_type": "ImageScaleToTotalPixels",
+  "_meta": {
+   "title": "Scale Image to Total Pixels"
+  }
+ },
+ "75:72": {
+  "inputs": {
+   "vae_name": "full_encoder_small_decoder.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load VAE"
+  }
+ },
+ "75:125": {
+  "inputs": {
+   "conditioning": [
+    "75:74",
+    0
+   ],
+   "latent": [
+    "75:124",
+    0
+   ]
+  },
+  "class_type": "ReferenceLatent",
+  "_meta": {
+   "title": "Set Reference Latent"
+  }
+ },
+ "75:74": {
+  "inputs": {
+   "text": "Replace the background with a quiet coastal cliff at overcast sunset. Remove all buildings and streets. Add wind-shaped grass and a distant ocean horizon. Keep the subject\u2019s pose and framing unchanged.",
+   "clip": [
+    "75:71",
+    0
+   ]
+  },
+  "class_type": "CLIPTextEncode",
+  "_meta": {
+   "title": "CLIP Text Encode (Positive Prompt)"
+  }
+ },
+ "75:82": {
+  "inputs": {
+   "conditioning": [
+    "75:74",
+    0
+   ]
+  },
+  "class_type": "ConditioningZeroOut",
+  "_meta": {
+   "title": "Conditioning Zero Out"
+  }
+ },
+ "75:124": {
+  "inputs": {
+   "pixels": [
+    "75:80",
+    0
+   ],
+   "vae": [
+    "75:72",
+    0
+   ]
+  },
+  "class_type": "VAEEncode",
+  "_meta": {
+   "title": "VAE Encode"
+  }
+ },
+ "cs_img2": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  }
+ },
+ "cs_sc2": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "cs_img2",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 1,
+   "resolution_steps": 1
+  }
+ },
+ "cs_enc2": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "cs_sc2",
+    0
+   ],
+   "vae": [
+    "75:72",
+    0
+   ]
+  }
+ },
+ "cs_rp2": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "75:125",
+    0
+   ],
+   "latent": [
+    "cs_enc2",
+    0
+   ]
+  }
+ },
+ "cs_rn2": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "75:123",
+    0
+   ],
+   "latent": [
+    "cs_enc2",
+    0
+   ]
+  }
+ },
+ "cs_img3": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  }
+ },
+ "cs_sc3": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "cs_img3",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 1,
+   "resolution_steps": 1
+  }
+ },
+ "cs_enc3": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "cs_sc3",
+    0
+   ],
+   "vae": [
+    "75:72",
+    0
+   ]
+  }
+ },
+ "cs_rp3": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "cs_rp2",
+    0
+   ],
+   "latent": [
+    "cs_enc3",
+    0
+   ]
+  }
+ },
+ "cs_rn3": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "cs_rn2",
+    0
+   ],
+   "latent": [
+    "cs_enc3",
+    0
+   ]
+  }
+ },
+ "cs_img4": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  }
+ },
+ "cs_sc4": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "cs_img4",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 1,
+   "resolution_steps": 1
+  }
+ },
+ "cs_enc4": {
+  "class_type": "VAEEncode",
+  "inputs": {
+   "pixels": [
+    "cs_sc4",
+    0
+   ],
+   "vae": [
+    "75:72",
+    0
+   ]
+  }
+ },
+ "cs_rp4": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "cs_rp3",
+    0
+   ],
+   "latent": [
+    "cs_enc4",
+    0
+   ]
+  }
+ },
+ "cs_rn4": {
+  "class_type": "ReferenceLatent",
+  "inputs": {
+   "conditioning": [
+    "cs_rn3",
+    0
+   ],
+   "latent": [
+    "cs_enc4",
+    0
+   ]
+  }
+ }
+}

@@ -1,0 +1,132 @@
+{
+ "id": "moss_t2i",
+ "name": "MOSS Image · Text to image",
+ "family": "MOSS",
+ "task": "t2i",
+ "media": "image",
+ "builtin": true,
+ "description": "MOSS Image (int8): reads long scene captions closely. Pick SFT, Base, Turbo or KroMOSS; settings follow the model.",
+ "source": "ComfyUI official template",
+ "picture_min": 0,
+ "picture_max": 0,
+ "profile": "moss",
+ "supports_loras": true,
+ "lora_hint": [
+  "moss"
+ ],
+ "sampling_note": "MOSS SFT: 25 steps, CFG 2.5, er_sde. KroMOSS and MOSS Base: 50 steps, CFG 3, euler. Turbo model, or the 8-step DMD2 LoRA: 8 steps, CFG 1, euler. Best at 1-2 MP.",
+ "prompt_style": "plain",
+ "slots": {
+  "prompt": [
+   {
+    "node": "18:4",
+    "input": "text",
+    "label": "Prompt"
+   }
+  ],
+  "negative": [
+   {
+    "node": "18:5",
+    "input": "text",
+    "label": "Negative prompt"
+   }
+  ],
+  "seed": [
+   {
+    "node": "18:7",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "18:7",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "18:7",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "18:7",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "18:7",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "width": [
+   {
+    "node": "18:6",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "18:6",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
+  "models": [
+   {
+    "node": "18:1",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "moss_image_sft_int8_convrot.safetensors",
+    "title": "Image model"
+   },
+   {
+    "node": "18:2",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3.5_9b_w4a8_gptq.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "18:3",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "flux2-vae_small.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "9",
+   "kind": "image",
+   "class_type": "SaveImage"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "steps": 25,
+  "cfg": 2.5,
+  "sampler": "er_sde",
+  "scheduler": "simple",
+  "width": 1024,
+  "height": 1024,
+  "denoise": 1
+ },
+ "needs": {},
+ "mp_max": 2
+}

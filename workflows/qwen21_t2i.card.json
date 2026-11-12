@@ -1,0 +1,132 @@
+{
+ "id": "qwen21_t2i",
+ "name": "Qwen Image 2.1 · Text to image",
+ "family": "Qwen Image",
+ "task": "t2i",
+ "media": "image",
+ "builtin": true,
+ "description": "Qwen Image 2.1 (int8): great with text in pictures and long, detailed prompts.",
+ "source": "ComfyUI official template",
+ "picture_min": 0,
+ "picture_max": 0,
+ "profile": "qwen_image",
+ "supports_loras": true,
+ "lora_hint": [
+  "qwen"
+ ],
+ "sampling_note": "Qwen Image: the template's own steps and CFG (25 steps, CFG 1 for 2.1; 20 steps, CFG 4 for 2509).",
+ "prompt_style": "plain",
+ "slots": {
+  "prompt": [
+   {
+    "node": "459:452",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "negative": [
+   {
+    "node": "459:452",
+    "input": "negative_prompt",
+    "label": "Negative prompt"
+   }
+  ],
+  "seed": [
+   {
+    "node": "459:458",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "459:458",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "459:458",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "459:458",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "459:458",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "width": [
+   {
+    "node": "459:456",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "459:456",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
+  "models": [
+   {
+    "node": "459:451",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "qwen_image_2.1_int8_convrot.safetensors",
+    "title": "Image model"
+   },
+   {
+    "node": "459:453",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3vl_8b_int8_convrot.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "459:454",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "qwen_image_2.1_vae_bf16.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "461",
+   "kind": "image",
+   "class_type": "SaveImageAdvanced"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "steps": 25,
+  "cfg": 1,
+  "sampler": "euler",
+  "scheduler": "simple",
+  "width": 1024,
+  "height": 1024,
+  "denoise": 1
+ },
+ "needs": {},
+ "mp_max": 4
+}

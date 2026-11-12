@@ -1,0 +1,131 @@
+{
+ "1": {
+  "inputs": {
+   "media_state": "[]"
+  },
+  "class_type": "MiniMaxH3MediaLoader"
+ },
+ "2": {
+  "inputs": {
+   "model_text_image": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+   "model_references": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+   "text_encoder": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "video_vae": "minimax_h3_video_vae_int8_convrot.safetensors",
+   "audio_vae": "minimax_h3_audio_vae_fp32.safetensors",
+   "image_vae": "minimax_h3_image_vae_fp16.safetensors",
+   "speed_lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+   "keep_text_encoder_loaded": false
+  },
+  "class_type": "MiniMaxH3AIOModels"
+ },
+ "3": {
+  "inputs": {
+   "lora_1": "None",
+   "strength_1": 0.8,
+   "lora_2": "None",
+   "strength_2": 0.8,
+   "lora_3": "None",
+   "strength_3": 0.8,
+   "lora_4": "None",
+   "strength_4": 0.8
+  },
+  "class_type": "MiniMaxH3AIOLoras"
+ },
+ "4": {
+  "inputs": {
+   "mode": "Image Editing",
+   "prompt": "",
+   "use_negative": false,
+   "negative_prompt": "blurry, low quality, distorted face, warped hands, extra fingers, morphing, flicker, jitter, watermark, subtitles, text overlay, cartoon, plastic skin, oversaturated, voice-over, narration, muffled audio",
+   "cfg": 1.5,
+   "resolution": "720p (0.9 MP)",
+   "aspect_ratio": "Match input",
+   "duration_seconds": 5,
+   "seed": 0,
+   "inpaint_target": "head",
+   "references": [
+    "1",
+    0
+   ],
+   "settings": [
+    "5",
+    0
+   ],
+   "long_video": [
+    "6",
+    0
+   ],
+   "loras": [
+    "3",
+    0
+   ],
+   "models": [
+    "2",
+    0
+   ]
+  },
+  "class_type": "MiniMaxH3AIO"
+ },
+ "5": {
+  "inputs": {
+   "steps": 8,
+   "speed_lora": true,
+   "speed_lora_strength": 1,
+   "spectrum": true,
+   "refine_strength": "Balanced (3 steps)",
+   "reference_detail": "High",
+   "auto_prompt_format": true
+  },
+  "class_type": "MiniMaxH3AIOSpeed"
+ },
+ "6": {
+  "inputs": {
+   "story": "Handheld phone video, natural light, a sunlit kitchen.\n\nintegrated_multimodal_description: [Shot 1] A young woman with curly dark hair (S1) walks into the kitchen and smiles at the camera. She says: <d>[English] Morning, everyone! Coffee first.</d> The camera follows her at slow speed.\n[Shot 2] At 00:05.000, the camera cuts to a close-up of her hands filling the kettle at the sink.\n[Shot 3] At 00:10.000, she leans on the counter while it boils. The woman (S1) says: <d>[English] Okay. Today is a big day.</d>\n[Shot 4] At 00:15.000, she pours the water into a mug and takes a careful first sip.\n\noverall_soundscape: Small kitchen room tone, her voice close to the phone mic, kettle hiss rising. Not a voice-over.\n\nnon_diegetic_music: N/A",
+   "total_seconds": 20,
+   "seconds_per_clip": "5 s - fastest, most control",
+   "prompt_format": "auto",
+   "seamless": [
+    "7",
+    0
+   ]
+  },
+  "class_type": "MiniMaxH3AIOPlanner"
+ },
+ "7": {
+  "inputs": {
+   "carry_over": "1.6 s (39 frames) - default",
+   "audio_fade": "0.2 s - default",
+   "picture_blend": "full carry-over - default"
+  },
+  "class_type": "MiniMaxH3AIOSeamless"
+ },
+ "8": {
+  "inputs": {
+   "extra_clips": 2,
+   "seconds_per_clip": 5,
+   "clip_1_prompt": "",
+   "clip_2_prompt": "",
+   "clip_3_prompt": "",
+   "clip_4_prompt": "",
+   "clip_5_prompt": "",
+   "clip_6_prompt": ""
+  },
+  "class_type": "MiniMaxH3AIOLongVideo"
+ },
+ "9": {
+  "inputs": {
+   "enabled": false
+  },
+  "class_type": "MiniMaxH3AIOLivePreview"
+ },
+ "11": {
+  "inputs": {
+   "filename_prefix": "images/H3_AIO_edit",
+   "images": [
+    "4",
+    1
+   ]
+  },
+  "class_type": "SaveImage"
+ }
+}

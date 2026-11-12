@@ -1,0 +1,190 @@
+{
+ "id": "qwen_edit2509",
+ "name": "Qwen Image Edit 2509 · Image edit",
+ "family": "Qwen Image",
+ "task": "edit",
+ "media": "image",
+ "builtin": true,
+ "description": "The 2509 editor (Q4). Slower: 20 steps, as the 4-step Lightning LoRA isn't on this PC.",
+ "source": "ComfyUI official template",
+ "picture_min": 1,
+ "picture_max": 3,
+ "profile": "qwen_image",
+ "supports_loras": true,
+ "lora_hint": [
+  "qwen"
+ ],
+ "sampling_note": "Qwen Image: the template's own steps and CFG (25 steps, CFG 1 for 2.1; 20 steps, CFG 4 for 2509).",
+ "prompt_style": "plain",
+ "slots": {
+  "width": [
+   {
+    "node": "cs_lat",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "cs_lat",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
+  "prompt": [
+   {
+    "node": "433:111",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "negative": [
+   {
+    "node": "433:110",
+    "input": "prompt",
+    "label": "Negative prompt"
+   }
+  ],
+  "images": [
+   {
+    "node": "78",
+    "input": "image",
+    "label": "Picture 1"
+   },
+   {
+    "node": "cs_img2",
+    "input": "image",
+    "label": "Picture 2",
+    "if_missing": {
+     "delete": [
+      "cs_img2",
+      "cs_img3"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "433:110",
+       "image2"
+      ],
+      [
+       "433:110",
+       "image3"
+      ],
+      [
+       "433:111",
+       "image2"
+      ],
+      [
+       "433:111",
+       "image3"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "cs_img3",
+    "input": "image",
+    "label": "Picture 3",
+    "if_missing": {
+     "delete": [
+      "cs_img3"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "433:110",
+       "image3"
+      ],
+      [
+       "433:111",
+       "image3"
+      ]
+     ]
+    }
+   }
+  ],
+  "seed": [
+   {
+    "node": "433:3",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "433:3",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "433:3",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "433:3",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "433:3",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "models": [
+   {
+    "node": "433:37",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UnetLoaderGGUF",
+    "value": "Qwen-Image-Edit-2509-Q4_K_M.gguf",
+    "title": "Image model"
+   },
+   {
+    "node": "433:38",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "433:39",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "qwen_image_vae.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "469",
+   "kind": "image",
+   "class_type": "SaveImageAdvanced"
+  }
+ ],
+ "defaults": {
+  "seed": 362225868152841,
+  "steps": 20,
+  "cfg": 4,
+  "sampler": "euler",
+  "scheduler": "simple",
+  "width": 1024,
+  "height": 1024,
+  "denoise": 1
+ },
+ "needs": {},
+ "mp_max": 2
+}

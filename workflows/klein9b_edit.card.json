@@ -1,0 +1,237 @@
+{
+ "id": "klein9b_edit",
+ "name": "FLUX.2 Klein 9B · Image edit",
+ "family": "FLUX.2 Klein",
+ "task": "edit",
+ "media": "image",
+ "builtin": true,
+ "description": "Edits Picture 1 in 4 steps. Pictures 2-4 are references (an outfit, an object, a place).",
+ "source": "ComfyUI official template",
+ "picture_min": 1,
+ "picture_max": 4,
+ "profile": "flux2_klein",
+ "supports_loras": true,
+ "lora_hint": [
+  "flux 2 klein",
+  "flux2",
+  "klein"
+ ],
+ "sampling_note": "FLUX.2 Klein 9B: 4 steps, CFG 1, euler (distilled). Edits use the pictures as references.",
+ "prompt_style": "plain",
+ "slots": {
+  "prompt": [
+   {
+    "node": "75:74",
+    "input": "text",
+    "label": "Prompt"
+   }
+  ],
+  "width": [
+   {
+    "node": "75:66",
+    "input": "width",
+    "label": "Width"
+   },
+   {
+    "node": "75:62",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "75:66",
+    "input": "height",
+    "label": "Height"
+   },
+   {
+    "node": "75:62",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
+  "images": [
+   {
+    "node": "76",
+    "input": "image",
+    "label": "Picture 1"
+   },
+   {
+    "node": "cs_img2",
+    "input": "image",
+    "label": "Picture 2",
+    "if_missing": {
+     "delete": [
+      "cs_enc2",
+      "cs_enc3",
+      "cs_enc4",
+      "cs_img2",
+      "cs_img3",
+      "cs_img4",
+      "cs_sc2",
+      "cs_sc3",
+      "cs_sc4"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "cs_rp2",
+       "latent"
+      ],
+      [
+       "cs_rn2",
+       "latent"
+      ],
+      [
+       "cs_rp3",
+       "latent"
+      ],
+      [
+       "cs_rn3",
+       "latent"
+      ],
+      [
+       "cs_rp4",
+       "latent"
+      ],
+      [
+       "cs_rn4",
+       "latent"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "cs_img3",
+    "input": "image",
+    "label": "Picture 3",
+    "if_missing": {
+     "delete": [
+      "cs_enc3",
+      "cs_enc4",
+      "cs_img3",
+      "cs_img4",
+      "cs_sc3",
+      "cs_sc4"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "cs_rp3",
+       "latent"
+      ],
+      [
+       "cs_rn3",
+       "latent"
+      ],
+      [
+       "cs_rp4",
+       "latent"
+      ],
+      [
+       "cs_rn4",
+       "latent"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "cs_img4",
+    "input": "image",
+    "label": "Picture 4",
+    "if_missing": {
+     "delete": [
+      "cs_enc4",
+      "cs_img4",
+      "cs_sc4"
+     ],
+     "rewire": [],
+     "unset": [
+      [
+       "cs_rp4",
+       "latent"
+      ],
+      [
+       "cs_rn4",
+       "latent"
+      ]
+     ]
+    }
+   }
+  ],
+  "seed": [
+   {
+    "node": "75:73",
+    "input": "noise_seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "75:62",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "75:63",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "75:61",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "models": [
+   {
+    "node": "75:70",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "flux-2-klein-9b-fp8.safetensors",
+    "title": "Image model"
+   },
+   {
+    "node": "75:71",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen_3_8b_fp8mixed.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "75:72",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "full_encoder_small_decoder.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "9",
+   "kind": "image",
+   "class_type": "SaveImage"
+  }
+ ],
+ "defaults": {
+  "seed": 26416064315367,
+  "steps": 4,
+  "cfg": 1,
+  "sampler": "euler",
+  "width": 1024,
+  "height": 1024
+ },
+ "needs": {},
+ "mp_max": 4
+}

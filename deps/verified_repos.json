@@ -1,0 +1,8 @@
+{
+  "note": "Official Hugging Face repos for model files the built-in engines use that ComfyUI's templates don't link. Only files matching 'pattern' are added, with their real names from the repo's file list.",
+  "repos": [
+    {"repo": "conradlocke/krea2-identity-edit", "directory": "loras", "pattern": "^krea2_.*edit.*\\.safetensors$"},
+    {"repo": "yijunwang2/krea2-anypaint", "directory": "loras", "pattern": "^krea2_anypaint.*\\.safetensors$"},
+    {"repo": "QuantStack/Qwen-Image-Edit-2509-GGUF", "directory": "diffusion_models", "pattern": "^Qwen-Image-Edit-2509-Q\\d.*\\.gguf$"}
+  ]
+}

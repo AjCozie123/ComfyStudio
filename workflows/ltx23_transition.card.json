@@ -1,0 +1,181 @@
+{
+ "id": "ltx23_transition",
+ "name": "LTX 2.3 · Style transition",
+ "family": "LTX Video",
+ "task": "i2v",
+ "media": "video",
+ "builtin": true,
+ "description": "Morphs from Picture 1 to Picture 2 with a styled transition (identity, look or scene changes over time).",
+ "picture_min": 2,
+ "picture_max": 2,
+ "lengths": [
+  3,
+  5,
+  8,
+  10
+ ],
+ "default_length": 5,
+ "resolutions": [
+  "480p",
+  "720p"
+ ],
+ "default_resolution": "480p",
+ "aspects": [
+  "16:9",
+  "9:16",
+  "1:1",
+  "4:3",
+  "3:4"
+ ],
+ "limits": {
+  "480p": 10,
+  "720p": 10
+ },
+ "size_rule": {
+  "mp": {
+   "480p": 0.37,
+   "720p": 0.92,
+   "1080p": 2.0,
+   "1440p": 3.7
+  },
+  "snap": 64
+ },
+ "needs": {
+  "vram_gb": 8,
+  "ram_gb": 30,
+  "profile": "h3",
+  "note": "Runs best with ComfyUI in MiniMax H3 mode (frees system RAM for the 22B model)."
+ },
+ "alternative": "",
+ "prompt_style": "plain",
+ "sampling_note": "LTX 2.3 distilled: a fixed 8-step draft plus a 3-step refine, CFG 1. Steps, CFG and sampler are set by the workflow. Transition LoRA at 1.0; its trigger word is added for you.",
+ "slots": {
+  "prompt": [
+   {
+    "node": "pos",
+    "input": "text",
+    "label": "Prompt"
+   }
+  ],
+  "negative": [
+   {
+    "node": "neg",
+    "input": "text",
+    "label": "Negative prompt"
+   }
+  ],
+  "seed": [
+   {
+    "node": "n1",
+    "input": "noise_seed",
+    "label": "Seed"
+   },
+   {
+    "node": "n2",
+    "input": "noise_seed",
+    "label": "Seed (refine)",
+    "offset": 1
+   }
+  ],
+  "width": [
+   {
+    "node": "lat",
+    "input": "width",
+    "label": "Width",
+    "scale": 0.5
+   }
+  ],
+  "height": [
+   {
+    "node": "lat",
+    "input": "height",
+    "label": "Height",
+    "scale": 0.5
+   }
+  ],
+  "length": [
+   {
+    "node": "lat",
+    "input": "length",
+    "label": "Frames"
+   },
+   {
+    "node": "alat",
+    "input": "frames_number",
+    "label": "Audio frames"
+   }
+  ],
+  "models": [
+   {
+    "node": "u",
+    "input": "unet_name",
+    "label": "Video model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "ltx-2.3-22b-distilled-fp8.safetensors",
+    "title": "LTX model"
+   },
+   {
+    "node": "te",
+    "input": "clip_name1",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "DualCLIPLoader",
+    "value": "gemma_3_12B_it_fp4_mixed.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "vv",
+    "input": "vae_name",
+    "label": "Video VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "LTX23_video_vae_bf16.safetensors",
+    "title": "Video VAE"
+   },
+   {
+    "node": "av",
+    "input": "vae_name",
+    "label": "Audio VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "LTX23_audio_vae_bf16.safetensors",
+    "title": "Audio VAE"
+   },
+   {
+    "node": "up",
+    "input": "model_name",
+    "label": "Upscaler",
+    "kind": "model",
+    "class_type": "LatentUpscaleModelLoader",
+    "value": "ltx-2.3-spatial-upscaler-x2-1.1.safetensors",
+    "title": "Upscaler"
+   }
+  ],
+  "images": [
+   {
+    "node": "img0",
+    "input": "image",
+    "label": "Picture 1"
+   },
+   {
+    "node": "img1",
+    "input": "image",
+    "label": "Picture 2"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "sv",
+   "kind": "video",
+   "class_type": "SaveVideo"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "fps": 25
+ },
+ "source": "ComfyUI official template (on the LTX 2.3 first + last engine)",
+ "prompt_suffix": "zhuanchang"
+}

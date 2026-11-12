@@ -1,0 +1,229 @@
+{
+ "unet": {
+  "class_type": "UNETLoader",
+  "inputs": {
+   "unet_name": "krea2_turbo_int8_convrot.safetensors",
+   "weight_dtype": "default"
+  }
+ },
+ "clip": {
+  "class_type": "CLIPLoader",
+  "inputs": {
+   "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+   "type": "krea2",
+   "device": "default"
+  }
+ },
+ "vae": {
+  "class_type": "VAELoader",
+  "inputs": {
+   "vae_name": "qwen_image_vae.safetensors"
+  }
+ },
+ "paint_lora": {
+  "class_type": "LoraLoaderModelOnly",
+  "inputs": {
+   "model": [
+    "unet",
+    0
+   ],
+   "lora_name": "krea2_anypaint_rank32.safetensors",
+   "strength_model": 1.0
+  }
+ },
+ "mpatch": {
+  "class_type": "Krea2AnyPaintModelPatch",
+  "inputs": {
+   "model": [
+    "paint_lora",
+    0
+   ],
+   "kv_cache": true
+  }
+ },
+ "img1": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  }
+ },
+ "work": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "img1",
+    0
+   ],
+   "upscale_method": "lanczos",
+   "megapixels": 1.0,
+   "resolution_steps": 16
+  }
+ },
+ "m_img": {
+  "class_type": "MaskToImage",
+  "inputs": {
+   "mask": [
+    "img1",
+    1
+   ]
+  }
+ },
+ "m_work": {
+  "class_type": "ImageScaleToTotalPixels",
+  "inputs": {
+   "image": [
+    "m_img",
+    0
+   ],
+   "upscale_method": "bilinear",
+   "megapixels": 1.0,
+   "resolution_steps": 16
+  }
+ },
+ "m_back": {
+  "class_type": "ImageToMask",
+  "inputs": {
+   "image": [
+    "m_work",
+    0
+   ],
+   "channel": "red"
+  }
+ },
+ "prep": {
+  "class_type": "Krea2AnyPaintPrepare",
+  "inputs": {
+   "source": [
+    "work",
+    0
+   ],
+   "left": 0,
+   "top": 0,
+   "right": 0,
+   "bottom": 0,
+   "reference_max_edge": 384,
+   "boundary_redraw_px": 32,
+   "generated_mask": [
+    "m_back",
+    0
+   ]
+  }
+ },
+ "enc": {
+  "class_type": "Krea2AnyPaintEncode",
+  "inputs": {
+   "clip": [
+    "clip",
+    0
+   ],
+   "prompt": "",
+   "vae": [
+    "vae",
+    0
+   ],
+   "semantic_reference": [
+    "prep",
+    0
+   ],
+   "known_image": [
+    "prep",
+    1
+   ],
+   "keep_mask": [
+    "prep",
+    3
+   ],
+   "vlm_reference": true
+  }
+ },
+ "neg": {
+  "class_type": "ConditioningZeroOut",
+  "inputs": {
+   "conditioning": [
+    "enc",
+    0
+   ]
+  }
+ },
+ "ks": {
+  "class_type": "KSampler",
+  "inputs": {
+   "model": [
+    "mpatch",
+    0
+   ],
+   "positive": [
+    "enc",
+    0
+   ],
+   "negative": [
+    "neg",
+    0
+   ],
+   "latent_image": [
+    "enc",
+    1
+   ],
+   "seed": 0,
+   "steps": 8,
+   "cfg": 1.0,
+   "sampler_name": "euler",
+   "scheduler": "simple",
+   "denoise": 1.0
+  }
+ },
+ "dec": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "ks",
+    0
+   ],
+   "vae": [
+    "vae",
+    0
+   ]
+  }
+ },
+ "grow": {
+  "class_type": "GrowMask",
+  "inputs": {
+   "mask": [
+    "img1",
+    1
+   ],
+   "expand": 6,
+   "tapered_corners": true
+  }
+ },
+ "paste": {
+  "class_type": "ImageCompositeMasked",
+  "inputs": {
+   "destination": [
+    "img1",
+    0
+   ],
+   "source": [
+    "dec",
+    0
+   ],
+   "x": 0,
+   "y": 0,
+   "resize_source": true,
+   "mask": [
+    "grow",
+    0
+   ]
+  }
+ },
+ "save": {
+  "class_type": "SaveImage",
+  "inputs": {
+   "images": [
+    "paste",
+    0
+   ],
+   "filename_prefix": "ComfyStudio/krea2_paint"
+  }
+ }
+}

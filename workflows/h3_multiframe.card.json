@@ -1,0 +1,276 @@
+{
+ "id": "h3_multiframe",
+ "name": "MiniMax H3 · Multi-frame",
+ "family": "MiniMax H3",
+ "task": "r2v",
+ "media": "video",
+ "description": "Picture 1 is the subject and the first frame; Pictures 2-4 are pinned along the clip (spread evenly, the last at the end). Describe what happens between them.",
+ "source": "ComfyUI official template",
+ "picture_min": 1,
+ "picture_max": 4,
+ "lengths": [
+  5,
+  10
+ ],
+ "default_length": 5,
+ "fps": 24,
+ "resolutions": [
+  "480p",
+  "720p"
+ ],
+ "default_resolution": "480p",
+ "aspects": [
+  "16:9",
+  "9:16",
+  "1:1",
+  "4:3",
+  "3:4"
+ ],
+ "size_rule": {
+  "mp": {
+   "480p": 0.41,
+   "720p": 0.92,
+   "1080p": 2.0
+  },
+  "snap": 32
+ },
+ "needs": {
+  "vram_gb": 8,
+  "ram_gb": 30,
+  "profile": "h3",
+  "note": "Needs ComfyUI started in MiniMax H3 mode and about 30 GB of system RAM."
+ },
+ "prompt_style": "h3_frames",
+ "supports_loras": true,
+ "inpaint": false,
+ "assist": false,
+ "sampling_note": "MiniMax H3 ref2va with the 4-step turbo LoRA: 4 steps, res_multistep. Steps above 8 need the LoRA off.",
+ "slots": {
+  "prompt": [
+   {
+    "node": "136",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "images": [
+   {
+    "node": "164",
+    "input": "image",
+    "label": "Picture 1"
+   },
+   {
+    "node": "157",
+    "input": "image",
+    "label": "Picture 2",
+    "if_missing": {
+     "delete": [
+      "147",
+      "157",
+      "159",
+      "162",
+      "167",
+      "169"
+     ],
+     "rewire": [
+      [
+       "126",
+       "conditioning",
+       [
+        "136",
+        0
+       ]
+      ]
+     ],
+     "unset": [
+      [
+       "136",
+       "ref_images.ref_image_1"
+      ],
+      [
+       "136",
+       "ref_images.ref_image_2"
+      ],
+      [
+       "136",
+       "ref_images.ref_image_3"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "159",
+    "input": "image",
+    "label": "Picture 3",
+    "if_missing": {
+     "delete": [
+      "159",
+      "162",
+      "167",
+      "169"
+     ],
+     "rewire": [
+      [
+       "126",
+       "conditioning",
+       [
+        "147",
+        0
+       ]
+      ]
+     ],
+     "unset": [
+      [
+       "136",
+       "ref_images.ref_image_2"
+      ],
+      [
+       "136",
+       "ref_images.ref_image_3"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "167",
+    "input": "image",
+    "label": "Picture 4",
+    "if_missing": {
+     "delete": [
+      "167",
+      "169"
+     ],
+     "rewire": [
+      [
+       "126",
+       "conditioning",
+       [
+        "162",
+        0
+       ]
+      ]
+     ],
+     "unset": [
+      [
+       "136",
+       "ref_images.ref_image_3"
+      ]
+     ]
+    }
+   }
+  ],
+  "seed": [
+   {
+    "node": "129",
+    "input": "noise_seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "124",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "123",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "seconds": [
+   {
+    "node": "132",
+    "input": "value",
+    "label": "Length (s)"
+   }
+  ],
+  "seconds_frac": [
+   {
+    "node": "154",
+    "input": "value",
+    "label": "Picture 2 time",
+    "picture": 2
+   },
+   {
+    "node": "160",
+    "input": "value",
+    "label": "Picture 3 time",
+    "picture": 3
+   },
+   {
+    "node": "168",
+    "input": "value",
+    "label": "Picture 4 time",
+    "picture": 4
+   }
+  ],
+  "width": [
+   {
+    "node": "136",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "136",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
+  "models": [
+   {
+    "node": "127",
+    "input": "unet_name",
+    "label": "Video model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+    "title": "Video model"
+   },
+   {
+    "node": "128",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "119",
+    "input": "vae_name",
+    "label": "Video VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "minimax_h3_video_vae_int8_convrot.safetensors",
+    "title": "Video VAE"
+   },
+   {
+    "node": "120",
+    "input": "vae_name",
+    "label": "Audio VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "minimax_h3_audio_vae_fp32.safetensors",
+    "title": "Audio VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "92",
+   "kind": "video",
+   "class_type": "SaveVideo"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "steps": 4,
+  "sampler": "res_multistep",
+  "fps": 24
+ }
+}

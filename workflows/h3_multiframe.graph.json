@@ -1,0 +1,465 @@
+{
+ "92": {
+  "inputs": {
+   "filename_prefix": "video/MiniMax_H3",
+   "format": "auto",
+   "codec": "auto",
+   "video": [
+    "130",
+    0
+   ],
+   "format.codec": "auto"
+  },
+  "class_type": "SaveVideo",
+  "_meta": {
+   "title": "Save Video"
+  }
+ },
+ "119": {
+  "inputs": {
+   "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load VAE"
+  }
+ },
+ "120": {
+  "inputs": {
+   "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load VAE"
+  }
+ },
+ "121": {
+  "inputs": {
+   "samples": [
+    "125",
+    0
+   ],
+   "vae": [
+    "120",
+    0
+   ]
+  },
+  "class_type": "VAEDecodeAudio",
+  "_meta": {
+   "title": "VAE Decode Audio"
+  }
+ },
+ "122": {
+  "inputs": {
+   "samples": [
+    "125",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ]
+  },
+  "class_type": "VAEDecode",
+  "_meta": {
+   "title": "VAE Decode"
+  }
+ },
+ "123": {
+  "inputs": {
+   "sampler_name": "res_multistep"
+  },
+  "class_type": "KSamplerSelect",
+  "_meta": {
+   "title": "KSamplerSelect"
+  }
+ },
+ "124": {
+  "inputs": {
+   "scheduler": "simple",
+   "denoise": 1,
+   "model": [
+    "127",
+    0
+   ],
+   "steps": 4
+  },
+  "class_type": "BasicScheduler",
+  "_meta": {
+   "title": "BasicScheduler"
+  }
+ },
+ "125": {
+  "inputs": {
+   "noise": [
+    "129",
+    0
+   ],
+   "guider": [
+    "126",
+    0
+   ],
+   "sampler": [
+    "123",
+    0
+   ],
+   "sigmas": [
+    "124",
+    0
+   ],
+   "latent_image": [
+    "136",
+    1
+   ]
+  },
+  "class_type": "SamplerCustomAdvanced",
+  "_meta": {
+   "title": "SamplerCustomAdvanced"
+  }
+ },
+ "126": {
+  "inputs": {
+   "model": [
+    "145",
+    0
+   ],
+   "conditioning": [
+    "169",
+    0
+   ]
+  },
+  "class_type": "BasicGuider",
+  "_meta": {
+   "title": "Basic Guider"
+  }
+ },
+ "127": {
+  "inputs": {
+   "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+   "weight_dtype": "default"
+  },
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "Load Diffusion Model"
+  }
+ },
+ "128": {
+  "inputs": {
+   "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "type": "minimax",
+   "device": "default"
+  },
+  "class_type": "CLIPLoader",
+  "_meta": {
+   "title": "Load CLIP"
+  }
+ },
+ "129": {
+  "inputs": {
+   "noise_seed": 148096032077131
+  },
+  "class_type": "RandomNoise",
+  "_meta": {
+   "title": "RandomNoise"
+  }
+ },
+ "130": {
+  "inputs": {
+   "fps": 24,
+   "bit_depth": "auto",
+   "color_space": "sRGB",
+   "chroma_subsampling": "auto",
+   "codec": "none",
+   "images": [
+    "122",
+    0
+   ],
+   "audio": [
+    "121",
+    0
+   ]
+  },
+  "class_type": "CreateVideo",
+  "_meta": {
+   "title": "Create Video"
+  }
+ },
+ "131": {
+  "inputs": {
+   "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+   "values.a": [
+    "132",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Math Expression"
+  }
+ },
+ "132": {
+  "inputs": {
+   "value": 5
+  },
+  "class_type": "PrimitiveFloat",
+  "_meta": {
+   "title": "Float (Duration)"
+  }
+ },
+ "136": {
+  "inputs": {
+   "ref_image_size": "match",
+   "clip": [
+    "128",
+    0
+   ],
+   "prompt": "",
+   "width": 864,
+   "height": 480,
+   "length": [
+    "131",
+    1
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "audio_vae": [
+    "120",
+    0
+   ],
+   "ref_images.ref_image_0": [
+    "164",
+    0
+   ],
+   "ref_images.ref_image_1": [
+    "157",
+    0
+   ],
+   "ref_images.ref_image_2": [
+    "159",
+    0
+   ],
+   "ref_images.ref_image_3": [
+    "167",
+    0
+   ]
+  },
+  "class_type": "MiniMaxH3ReferenceToVideo",
+  "_meta": {
+   "title": "MiniMax H3 Reference to Video"
+  }
+ },
+ "145": {
+  "inputs": {
+   "lora_name": "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+   "strength_model": 1,
+   "model": [
+    "127",
+    0
+   ]
+  },
+  "class_type": "LoraLoaderModelOnly",
+  "_meta": {
+   "title": "Load LoRA"
+  }
+ },
+ "147": {
+  "inputs": {
+   "positive": [
+    "136",
+    0
+   ],
+   "latent": [
+    "136",
+    1
+   ],
+   "frame_idx": [
+    "153",
+    1
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "audio_vae": [
+    "120",
+    0
+   ],
+   "image": [
+    "157",
+    0
+   ]
+  },
+  "class_type": "MiniMaxH3AddGuide",
+  "_meta": {
+   "title": "Add Guide for MiniMax H3"
+  }
+ },
+ "153": {
+  "inputs": {
+   "expression": "round (a * 24)",
+   "values.a": [
+    "154",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Math Expression"
+  }
+ },
+ "154": {
+  "inputs": {
+   "value": 1.5
+  },
+  "class_type": "PrimitiveFloat",
+  "_meta": {
+   "title": "Frame Index (Second)"
+  }
+ },
+ "157": {
+  "inputs": {
+   "image": "h3_frame_ref_2.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Load Image"
+  }
+ },
+ "159": {
+  "inputs": {
+   "image": "h3_frame_ref_3.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Load Image"
+  }
+ },
+ "160": {
+  "inputs": {
+   "value": 3
+  },
+  "class_type": "PrimitiveFloat",
+  "_meta": {
+   "title": "Frame Index (Second)"
+  }
+ },
+ "161": {
+  "inputs": {
+   "expression": "round (a * 24)",
+   "values.a": [
+    "160",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Math Expression"
+  }
+ },
+ "162": {
+  "inputs": {
+   "positive": [
+    "147",
+    0
+   ],
+   "latent": [
+    "136",
+    1
+   ],
+   "frame_idx": [
+    "161",
+    1
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "audio_vae": [
+    "120",
+    0
+   ],
+   "image": [
+    "159",
+    0
+   ]
+  },
+  "class_type": "MiniMaxH3AddGuide",
+  "_meta": {
+   "title": "Add Guide for MiniMax H3"
+  }
+ },
+ "164": {
+  "inputs": {
+   "image": "h3_frame_ref_1.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Load Image"
+  }
+ },
+ "167": {
+  "inputs": {
+   "image": "h3_frame_ref_4.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "Load Image"
+  }
+ },
+ "168": {
+  "inputs": {
+   "value": 5
+  },
+  "class_type": "PrimitiveFloat",
+  "_meta": {
+   "title": "Frame Index (Second)"
+  }
+ },
+ "169": {
+  "inputs": {
+   "positive": [
+    "162",
+    0
+   ],
+   "latent": [
+    "136",
+    1
+   ],
+   "frame_idx": [
+    "170",
+    1
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "audio_vae": [
+    "120",
+    0
+   ],
+   "image": [
+    "167",
+    0
+   ]
+  },
+  "class_type": "MiniMaxH3AddGuide",
+  "_meta": {
+   "title": "Add Guide for MiniMax H3"
+  }
+ },
+ "170": {
+  "inputs": {
+   "expression": "round (a * 24)",
+   "values.a": [
+    "168",
+    0
+   ]
+  },
+  "class_type": "ComfyMathExpression",
+  "_meta": {
+   "title": "Math Expression"
+  }
+ }
+}

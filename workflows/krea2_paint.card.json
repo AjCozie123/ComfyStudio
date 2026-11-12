@@ -1,0 +1,123 @@
+{
+ "id": "krea2_paint",
+ "name": "Krea 2 Paint · Inpaint (AnyPaint)",
+ "family": "Krea 2",
+ "task": "edit",
+ "media": "image",
+ "builtin": true,
+ "description": "Repaints only the area you paint with the Inpaint pill, any shape; the rest of the picture is kept pixel for pixel. Describe the finished picture, not the change.",
+ "source": "ComfyUI official template",
+ "picture_min": 1,
+ "picture_max": 1,
+ "profile": "krea2",
+ "supports_loras": false,
+ "lora_hint": [
+  "krea2",
+  "krea"
+ ],
+ "sampling_note": "Krea 2 AnyPaint (Turbo): 8 steps, CFG 1, euler / simple.",
+ "prompt_style": "plain",
+ "slots": {
+  "prompt": [
+   {
+    "node": "enc",
+    "input": "prompt",
+    "label": "Prompt"
+   }
+  ],
+  "images": [
+   {
+    "node": "img1",
+    "input": "image",
+    "label": "Picture 1"
+   }
+  ],
+  "seed": [
+   {
+    "node": "ks",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "ks",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "ks",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "ks",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "ks",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "models": [
+   {
+    "node": "unet",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "krea2_turbo_int8_convrot.safetensors",
+    "title": "Image model"
+   },
+   {
+    "node": "clip",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3vl_4b_fp8_scaled.safetensors",
+    "title": "Text encoder"
+   },
+   {
+    "node": "vae",
+    "input": "vae_name",
+    "label": "VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "qwen_image_vae.safetensors",
+    "title": "VAE"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "save",
+   "kind": "image",
+   "class_type": "SaveImage"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "steps": 8,
+  "cfg": 1.0,
+  "sampler": "euler",
+  "scheduler": "simple",
+  "denoise": 1.0
+ },
+ "needs": {},
+ "mp_max": 2,
+ "native_mask": {
+  "node": "img1",
+  "kind": "alpha"
+ },
+ "edit_kind": "anypaint",
+ "assist": false
+}

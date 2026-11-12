@@ -45,7 +45,7 @@ const state = {
 };
 /* Remember the tools between sessions (not prompts, pictures or anything already saved elsewhere). */
 const REMEMBER_STATE = ["mode", "quality", "aspect", "customMp", "customAspect", "p1Original", "p1Mp", "mp", "peMode", "peTokens",
-  "autoAssist", "refMode", "camera"];
+  "autoAssist", "camera"];   // Reference mode is a per-job choice, never carried into the next session
 (function () {
   try {
     const s = JSON.parse(localStorage.getItem("cs.remember") || "null");

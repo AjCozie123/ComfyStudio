@@ -1,6 +1,6 @@
 # Comfy Studio
 
-A simple, phone-friendly front end for **ComfyUI** that runs on your own PC. Pick an engine (MiniMax H3, Krea 2,
+A simple, clean desktop front end for **ComfyUI** that runs on your own PC. Pick an engine (MiniMax H3, Krea 2,
 FLUX.2 Klein, MOSS, Qwen Image, LTX, or any workflow you upload), write a prompt, and go.
 
 ## What you need
@@ -25,10 +25,8 @@ prompt, size, seed, steps, models) and gives it the same simple controls. In **S
 a workflow can be changed.
 
 ## Updates
-**Workflows → Check for updates** installs the newest release; your library, PIN and settings are kept, and the
+**Workflows → Check for updates** installs the newest release; your library and settings are kept, and the
 app restores the previous version by itself if an update fails to start. Important fixes show a banner; you can
 let them install automatically (only while nothing is generating).
 
-## Phone (optional)
-With [Tailscale](https://tailscale.com) on the PC and your phone, open `http://<your-PC's-tailscale-IP>:8198` and
-sign in with the PIN in `data\PIN.txt`.
+Comfy Studio runs on this PC only (http://127.0.0.1:8198); nothing on it is reachable from other devices.

@@ -58,8 +58,17 @@ def _remembered_tailnet():
     return out
 
 
-HOSTS = ["127.0.0.1"] + [h for h in dict.fromkeys(app_paths.tailnet_ips() + _remembered_tailnet() + SETTINGS.get("extra_hosts", []))
-                         if h not in ("127.0.0.1", "0.0.0.0")]
+def _edition():
+    """'pc' for the public PC version (release.json): this PC only, no phone / PIN. Anything else: full."""
+    try:
+        return str(json.load(open(os.path.join(HERE, "release.json"), encoding="utf-8")).get("edition") or "full")
+    except (OSError, ValueError):
+        return "full"
+
+
+PC_ONLY = _edition() == "pc"
+HOSTS = ["127.0.0.1"] + ([] if PC_ONLY else [h for h in dict.fromkeys(app_paths.tailnet_ips() + _remembered_tailnet() + SETTINGS.get("extra_hosts", []))
+                                             if h not in ("127.0.0.1", "0.0.0.0")])
 STATIC = os.path.join(HERE, "static")
 GALLERY = os.path.join(DATA, "gallery.jsonl")
 THUMBS = os.path.join(DATA, "thumbs")
@@ -189,6 +198,8 @@ def _conf():
         salt = secrets.token_hex(16)
         rec = {"salt": salt, "hash": _ph(pin, salt), "secret": secrets.token_hex(32)}
         json.dump(rec, open(p, "w"))
+        if PC_ONLY:
+            return rec              # PC version: nothing is reachable from other devices, so no PIN file
         with open(os.path.join(DATA, "PIN.txt"), "w", encoding="utf-8") as f:
             f.write(pin + "\n\nPhone PIN for Comfy Studio (http://%s:%d).\nChange it from this PC: open http://127.0.0.1:%d and use Advanced, or edit this file after stopping the app and deleting data\\auth.json.\n" % (
                 (HOSTS[1] if len(HOSTS) > 1 else "your-tailscale-ip"), PORT, PORT))
@@ -3952,6 +3963,8 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/cancel":
             return self.j({"msg": cancel(str(data.get("id") or ""))})
         if path == "/api/setpin":
+            if PC_ONLY:
+                return self.j({"error": "This version only runs on this PC, so it has no PIN."}, 404)
             if not self.local():
                 return self.j({"error": "Change the PIN from the PC itself."}, 403)
             pin = str(data.get("pin") or "")
@@ -4178,11 +4191,13 @@ def main():
         _served_hosts.add(h)
         threading.Thread(target=serve, args=(h,), daemon=True).start()
     # Tailscale may come up after the app (a reboot): keep looking, so the phone link never stays dead
-    threading.Thread(target=_tailnet_watch, daemon=True).start()
+    if not PC_ONLY:
+        threading.Thread(target=_tailnet_watch, daemon=True).start()
     print("Comfy Studio  http://127.0.0.1:%d" % PORT, flush=True)
     if extra:
         print("Tailnet            http://%s:%d" % (extra[0], PORT), flush=True)
-    print("PIN file           %s" % os.path.join(DATA, "PIN.txt"), flush=True)
+    if not PC_ONLY:
+        print("PIN file           %s" % os.path.join(DATA, "PIN.txt"), flush=True)
     serve(HOSTS[0])
 
 

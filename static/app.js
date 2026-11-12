@@ -44,8 +44,10 @@ const state = {
   confirm: null,
 };
 /* Remember the tools between sessions (not prompts, pictures or anything already saved elsewhere). */
-const REMEMBER_STATE = ["mode", "quality", "aspect", "customMp", "customAspect", "p1Original", "p1Mp", "mp", "peMode", "peTokens",
-  "autoAssist", "camera"];   // Reference mode is a per-job choice, never carried into the next session
+// Edit sizes (Match Picture 1 / Original / MP) and Reference mode are per-job choices and are NOT remembered: an edit
+// must start at Picture 1's own size, or the model redraws the whole picture (a 0.5 MP photo made 8 MP = all new pixels).
+const REMEMBER_STATE = ["mode", "quality", "aspect", "customMp", "customAspect", "mp", "peMode", "peTokens",
+  "autoAssist", "camera"];
 (function () {
   try {
     const s = JSON.parse(localStorage.getItem("cs.remember") || "null");
@@ -285,6 +287,7 @@ async function refreshOutputSize() {
         out.textContent = "Output: " + info.width + " \u00d7 " + info.height + " (" + info.mp + " MP)";
       } else out.textContent = "Output: \u2014";
     }
+    if (typeof window.__sizeWarn === "function") window.__sizeWarn(info, img);
     const hint = $("p1-hint");
     if (hint) {
       const refMp = (info && info.ref_megapixels) ? (Math.round(info.ref_megapixels * 100) / 100) : null;
@@ -8263,6 +8266,10 @@ function bindShell() {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem("cs.remember") || "null"); } catch (e) {}
     if (keepSize && saved && saved.state) Object.assign(state, keepSize);   // setMode may have reset the size
+    if (state.mode === "edit") {          // an edit always starts at Picture 1's own size
+      state.quality = "picture1";
+      state.p1Original = true;
+    }
     const inp = (saved && saved.inputs) || {};
     Object.keys(inp).forEach((id) => {
       const el = $(id);
@@ -8448,4 +8455,59 @@ function bindShell() {
   if (narrow.addEventListener) narrow.addEventListener("change", place); else if (narrow.addListener) narrow.addListener(place);
   place();
   sync();
+})();
+
+/* ===== Edits start at Picture 1's own size v20261112zn =====
+   Switching to Edit resets the size to Match Picture 1 > Original (a new-picture size like 16:9 12 MP would make the
+   model redraw the whole photo). You can still pick another size for the edit afterwards. */
+(function () {
+  const base = setMode;
+  setMode = function (mode) {
+    const was = state.mode;
+    const out = base.apply(this, arguments);
+    if (mode === "edit" && was !== "edit") {
+      state.quality = "picture1";
+      state.p1Original = true;
+      try { if (typeof renderResMenu === "function") renderResMenu(); if (typeof scheduleOutputSize === "function") scheduleOutputSize();
+            if (typeof syncPills === "function") syncPills(); } catch (e) {}
+    }
+    return out;
+  };
+})();
+
+
+/* ===== Warn when an edit would be much bigger than Picture 1 v20261112zo =====
+   An edit made at several times Picture 1's pixels makes the model invent most of the picture, so even "remove the
+   cup" comes back as a redrawn image. Shown under the prompt box (and in the size panel) with a one-tap fix. */
+(function () {
+  const note = $("size-warn");
+  if (!note) return;
+  const txt = note.querySelector(".size-warn-text"), fix = note.querySelector("button");
+  window.__sizeWarn = function (info, img) {
+    let show = false;
+    if (state.mode === "edit" && img && img.width && img.height && info && info.width && info.height) {
+      const ratio = (info.width * info.height) / (img.width * img.height);
+      if (ratio >= 3) {
+        show = true;
+        const inMp = Math.max(0.1, Math.round(img.width * img.height / 1e5) / 10);
+        txt.textContent = "Picture 1 is " + inMp + " MP and this edit would be " + (Math.round(info.width * info.height / 1e5) / 10)
+          + " MP (" + Math.round(ratio) + "\u00d7 the pixels), so the model redraws most of it. For removals and small changes use Original, then Upscale.";
+        const out = $("p1-output");
+        if (out && out.textContent.indexOf("\u00d7 Picture 1") < 0) out.textContent += " \u2014 " + Math.round(ratio) + "\u00d7 Picture 1's pixels.";
+      }
+    }
+    note.classList.toggle("hidden", !show);
+  };
+  fix.addEventListener("click", () => {
+    if (typeof setP1Original === "function") setP1Original(true);
+    else { state.p1Original = true; if (typeof scheduleOutputSize === "function") scheduleOutputSize(); }
+    if (state.quality !== "picture1") state.quality = "picture1";
+    if (typeof scheduleOutputSize === "function") scheduleOutputSize();
+    if (typeof syncPills === "function") syncPills();
+    note.classList.add("hidden");
+    toast("Size: Match Picture 1 \u203a Original");
+  });
+  // leaving Edit hides it
+  const base = setMode;
+  setMode = function (mode) { const r = base.apply(this, arguments); if (mode !== "edit") note.classList.add("hidden"); return r; };
 })();

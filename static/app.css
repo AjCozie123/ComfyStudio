@@ -1406,3 +1406,9 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 
 /* clear chip in the pill row (phones) */
 .prompt-clear.in-hud, .prompt-undo.in-hud { height: 32px; margin: 0 2px 0 0; align-self: center; }
+
+/* ===== edit much bigger than Picture 1 v20261112zo ===== */
+.size-warn { display: flex; align-items: center; gap: 10px; margin: 6px 2px 2px; padding: 8px 10px; border-radius: 12px;
+  background: rgba(255, 196, 0, .10); border: 1px solid rgba(255, 196, 0, .35); color: #ffe9a8; font-size: 12.5px; line-height: 1.35; }
+.size-warn.hidden { display: none; }
+.size-warn .chip-btn { flex: 0 0 auto; }

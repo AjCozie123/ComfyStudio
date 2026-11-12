@@ -852,11 +852,22 @@ def pe_override(engine, mode):
     return v if isinstance(v, str) else ""
 
 
-def make_pe_graph(prompt, mode, images, pe_mode, models, pe_system_extra="", pe_task_extra="", pe_system_override=""):
+def pe_tokens_in(v):
+    """The dial value from a request: 'auto' (None) or a token count."""
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if 64 <= n <= 32768 else None
+
+
+def make_pe_graph(prompt, mode, images, pe_mode, models, pe_system_extra="", pe_task_extra="", pe_system_override="",
+                  pe_tokens=None):
     free = _has_node("AUSBOSS_NODES_FreeMemory")
     return graphs.build_pe_only(
         prompt, mode=mode, images=images, pe_mode=pe_mode, models=models, free_memory=free,
         pe_system_extra=pe_system_extra, pe_task_extra=pe_task_extra, pe_system_override=pe_system_override,
+        pe_tokens=pe_tokens,
     )
 
 
@@ -871,7 +882,8 @@ def _pe_cache_payload(job):
         "pe_clip": job.get("pe_clip_used"),
         "images": [PE.image_fingerprint(INPUT, n) for n in images],
         "thinking": st["thinking"],
-        "max_length": st.get("max_length") or (st.get("max_length_edit") if job.get("mode") == "edit" else st.get("max_length_t2i")),
+        "max_length": PE.resolve_tokens(st["id"], job.get("mode"), job.get("pe_tokens"),
+                                        job.get("prompt_user") or job.get("prompt"), len(images)),
         "ref_mp": st["ref_megapixels"],
         "templates": [st.get("system_t2i" if job.get("mode") != "edit" else "system_edit"),
                       st.get("task_t2i" if job.get("mode") != "edit" else "task_edit")],
@@ -996,7 +1008,7 @@ def run_prompt_enhancer(job):
             raw, job["mode"], job.get("pe_images") if job.get("pe_images") is not None else (job.get("source_images") or []),
             job.get("pe_mode") or "fast", models,
             pe_system_extra=job.get("pe_system_extra") or "", pe_task_extra=job.get("pe_task_extra") or "",
-            pe_system_override=job.get("pe_system_override") or "",
+            pe_system_override=job.get("pe_system_override") or "", pe_tokens=job.get("pe_tokens"),
         )
         oi = object_info()
         problems = validate_graph(graph, oi, input_root=INPUT)
@@ -1006,7 +1018,7 @@ def run_prompt_enhancer(job):
                 pe_mode=job.get("pe_mode") or "fast",
                 models=models, free_memory=False,
                 pe_system_extra=job.get("pe_system_extra") or "", pe_task_extra=job.get("pe_task_extra") or "",
-                pe_system_override=job.get("pe_system_override") or "",
+                pe_system_override=job.get("pe_system_override") or "", pe_tokens=job.get("pe_tokens"),
             )
             problems = validate_graph(graph, oi, input_root=INPUT)
         if problems:
@@ -1041,7 +1053,8 @@ def run_prompt_enhancer(job):
         job["pe_fallback"] = True
         job["pe_raw"] = text or ""
         job["pe_error"] = job.get("pe_error") or "Prompt Enhancer did not return usable JSON."
-        job["message"] = "Prompt Enhancer did not return usable JSON, so your original prompt was used."
+        job["message"] = ("Prompt Enhancer did not return usable JSON, so your original prompt was used."
+                          + (" It may have run out of room: raise the Tokens dial under Enhance." if job.get("pe_tokens") else ""))
         return False
     job["enhanced_prompt"] = caption
     job["prompt"] = caption
@@ -1690,7 +1703,8 @@ def submit_workflow_job(data):
         if assist_info:
             extra = (ASSIST.pe_task_prefix(assist_info) + "\n" + extra).strip()
         job.update({
-            "pe": True, "pe_mode": pe_mode, "pe_clip_used": pe_clip_used, "pe_small_model": pe_small,
+            "pe": True, "pe_mode": pe_mode, "pe_tokens": pe_tokens_in(data.get("pe_tokens")),
+            "pe_clip_used": pe_clip_used, "pe_small_model": pe_small,
             "mode": pe_task, "pe_images": list(images) if pe_task == "edit" else [],
             "pe_system_extra": ASSIST.pe_system_addon(assist_info) if assist_info else "",
             "pe_task_extra": extra,
@@ -2538,7 +2552,8 @@ def submit_job(data):
         pe_task_extra = ""
     if pe:
         pe_graph, _pe_meta = make_pe_graph(prompt_sent, mode, images, pe_mode, pe_models, pe_system_extra=pe_system_extra,
-                                           pe_task_extra=pe_task_extra, pe_system_override=pe_override("builtin", mode))
+                                           pe_task_extra=pe_task_extra, pe_system_override=pe_override("builtin", mode),
+                                           pe_tokens=pe_tokens_in(data.get("pe_tokens")))
         try:
             pe_problems = validate_graph(pe_graph, object_info(), input_root=INPUT)
         except Exception:
@@ -2590,6 +2605,7 @@ def submit_job(data):
         job["edit_kind"] = "inpaint"
     job["pe"] = pe
     job["pe_mode"] = pe_mode if pe else None
+    job["pe_tokens"] = pe_tokens_in(data.get("pe_tokens")) if pe else None
     job["enhanced_prompt"] = ""
     job["pe_fallback"] = False
     job["pe_cached"] = False

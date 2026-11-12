@@ -597,7 +597,7 @@ def merge_cfg(overrides=None):
 
 
 def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, free_memory=True,
-                   pe_system_extra="", pe_task_extra="", pe_system_override=""):
+                   pe_system_extra="", pe_task_extra="", pe_system_override="", pe_tokens=None):
     """A Prompt-Enhancer-only graph: no UNET or VAE, so ComfyUI can free the PE model before the image run."""
     import pe as PE
     if not (prompt or "").strip():
@@ -625,10 +625,11 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
                 st["ref_megapixels"], cfg["ref_multiple"], cfg["scale_method"],
             ))
     g["user_prompt"] = _node("PrimitiveStringMultiline", {"value": prompt}, "Text (user_prompt)")
+    max_length, thinking = PE.resolve_tokens(st["id"], mode, pe_tokens, prompt, len(links))
     _pe_chain(
         g, "user_prompt", True, links,
         system, task, max_length, pe_clip,
-        thinking=st["thinking"], mtp=st["mtp"], temperature=st["temperature"], top_k=st["top_k"],
+        thinking=thinking, mtp=st["mtp"], temperature=st["temperature"], top_k=st["top_k"],
         pe_clip_type=pe_clip_type, standalone=True, free_memory=bool(free_memory),
         pe_system_extra=pe_system_extra, pe_task_extra=pe_task_extra, pe_system_override=pe_system_override,
     )
@@ -636,7 +637,7 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
         "mode": mode,
         "pe_mode": st["id"],
         "pe_clip_name": pe_clip,
-        "pe_thinking": st["thinking"],
+        "pe_thinking": thinking,
         "pe_max_length": int(max_length),
         "pe_images": len(links),
         "pe_ref_megapixels": st["ref_megapixels"],

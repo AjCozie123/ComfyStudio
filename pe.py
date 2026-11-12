@@ -180,3 +180,34 @@ def image_fingerprint(input_root, rel_name):
         return {"name": str(rel_name).replace("\\", "/"), "size": int(st.st_size), "mtime": int(st.st_mtime)}
     except OSError:
         return {"name": str(rel_name).replace("\\", "/")}
+
+
+# ------------------------------------------------------------------ the token dial (Settings -> Enhance)
+TOKEN_STEPS = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192]
+# Quality "thinks" before it writes, and the limit covers the thinking AND the answer. Below these limits it
+# writes directly instead, so the thinking can never use up the room and leave no prompt.
+THINK_MIN = {"t2i": 4096, "edit": 512}
+
+
+def auto_tokens(pe_mode, mode, prompt="", n_images=0):
+    """The token limit Auto picks for what the user is doing."""
+    words = len(str(prompt or "").split())
+    edit = mode == "edit"
+    if (pe_mode or "fast") != "quality":
+        return 512 if (words > 40 or (edit and n_images > 2)) else 384
+    if edit:
+        return 768 if n_images > 2 else 512
+    return 4096
+
+
+def resolve_tokens(pe_mode, mode, choice=None, prompt="", n_images=0):
+    """(max_length, thinking) for a run. choice: None / 'auto' / a number of tokens from the dial."""
+    st = settings(pe_mode)
+    mode = "edit" if mode == "edit" else "t2i"
+    try:
+        n = int(choice)
+    except (TypeError, ValueError):
+        n = 0
+    max_length = min(TOKEN_STEPS, key=lambda s: abs(s - n)) if n > 0 else auto_tokens(st["id"], mode, prompt, n_images)
+    thinking = bool(st.get("thinking")) and max_length >= THINK_MIN[mode]
+    return max_length, thinking

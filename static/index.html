@@ -30,7 +30,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261112zb">
+  <link rel="stylesheet" href="/static/app.css?v=20261112zc">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -396,6 +396,11 @@
       <button type="button" data-pe-mode="quality">Quality</button>
     </div>
     <input type="checkbox" id="pe" hidden>
+    <div class="pe-tok" id="pe-tok">
+      <div class="row-between"><span class="pop-label">Tokens</span><span class="pe-tok-val" id="pe-tok-val">Auto</span></div>
+      <input type="range" id="pe-tokens" min="0" max="11" step="1" value="0" aria-label="Prompt Enhancer token limit (0 = Auto)">
+      <p class="pop-note" id="pe-tok-note">Auto picks the limit from Fast / Quality, your prompt and the pictures. Lower is faster.</p>
+    </div>
     <p class="pop-note" id="pe-hint">Fast is lighter on an 8 GB card and usually finishes in seconds. Quality is the full enhancer and is slower. Both use extra VRAM and time.</p>
   </div>
 
@@ -897,6 +902,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20261112zb"></script>
+  <script src="/static/app.js?v=20261112zc"></script>
 </body>
 </html>

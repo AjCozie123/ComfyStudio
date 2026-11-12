@@ -1380,3 +1380,8 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 .np-list b { color: var(--text); font-weight: 500; }
 .np-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .np-status { color: var(--muted); font-size: 13px; }
+
+/* ===== Enhance token dial v20261112zc ===== */
+.pe-tok { margin-top: 12px; }
+.pe-tok input[type=range] { width: 100%; accent-color: var(--accent, #6aa0ff); }
+.pe-tok-val { color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }

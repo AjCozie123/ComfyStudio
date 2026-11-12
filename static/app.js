@@ -44,7 +44,7 @@ const state = {
   confirm: null,
 };
 /* Remember the tools between sessions (not prompts, pictures or anything already saved elsewhere). */
-const REMEMBER_STATE = ["mode", "quality", "aspect", "customMp", "customAspect", "p1Original", "p1Mp", "mp", "peMode",
+const REMEMBER_STATE = ["mode", "quality", "aspect", "customMp", "customAspect", "p1Original", "p1Mp", "mp", "peMode", "peTokens",
   "autoAssist", "refMode", "camera"];
 (function () {
   try {
@@ -1141,6 +1141,7 @@ async function generate() {
     resolution: currentResolution(),
     pe: state.mode !== "edit" && $("pe").checked,
     pe_mode: state.peMode || "fast",
+    pe_tokens: state.peTokens || null,
     keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
     understanding: !$("auto-assist") || $("auto-assist").checked,
     random_seed: $("random-seed").checked,
@@ -4775,6 +4776,7 @@ function bindShell() {
       inpaint_explicit: !!(state.inpaint && state.inpaint.explicit),
       pe: (card.media === "video" || (card.media === "image" && !state.images.length && state.mode !== "edit")) && $("pe").checked,
       pe_mode: state.peMode || "fast",
+      pe_tokens: state.peTokens || null,
       auto_assist: !!(card.media === "image" && state.images.length && (!$("auto-assist") || $("auto-assist").checked)),
       image_roles: (state.roles || []).slice(),
       ref_mode: !!(state.mode === "edit" && state.refMode),
@@ -8287,4 +8289,40 @@ function bindShell() {
     });
     else if (window.confirm("Restore every tool to its default for all workflows?")) go();
   });
+})();
+
+
+/* ===== Enhance: token dial (Auto or a fixed limit) v20261112zc =====
+   Same rules as pe.py: the limit covers Quality's thinking and its answer; below 4096 (new picture) or 512 (edit)
+   Quality writes directly instead of thinking first, so it can't run out of room. */
+(function () {
+  const dial = $("pe-tokens");
+  if (!dial) return;
+  const STEPS = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192];
+  const THINK_MIN = { t2i: 4096, edit: 512 };
+  function autoTokens() {
+    const words = String(($("prompt") && $("prompt").value) || "").trim().split(/\s+/).filter(Boolean).length;
+    const edit = state.mode === "edit", n = (state.images || []).length;
+    if (state.peMode !== "quality") return (words > 40 || (edit && n > 2)) ? 512 : 384;
+    if (edit) return n > 2 ? 768 : 512;
+    return 4096;
+  }
+  function show() {
+    const i = Math.max(0, STEPS.indexOf(Number(state.peTokens)) + 1);
+    dial.value = String(i);
+    const n = i ? STEPS[i - 1] : autoTokens();
+    const thinks = state.peMode === "quality" && n >= THINK_MIN[state.mode === "edit" ? "edit" : "t2i"];
+    $("pe-tok-val").textContent = (i ? n + " tokens" : "Auto \u00b7 " + n) + (state.peMode === "quality" ? (thinks ? " \u00b7 thinks first" : " \u00b7 writes directly") : "");
+  }
+  dial.addEventListener("input", () => {
+    const i = Number(dial.value);
+    state.peTokens = i ? STEPS[i - 1] : null;
+    show();
+  });
+  document.querySelectorAll("#pe-modes button").forEach((b) => b.addEventListener("click", () => setTimeout(show, 0)));
+  if ($("prompt")) $("prompt").addEventListener("input", () => { if (!state.peTokens) show(); });
+  const pop = $("quality-pop") || $("pe-modes").closest(".pop");
+  if (pop) new MutationObserver(show).observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
+  window.__showPeTokens = show;
+  show();
 })();

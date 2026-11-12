@@ -206,10 +206,35 @@ def apply_zip(zip_path=None):
             shutil.copytree(s, d, dirs_exist_ok=True)
         else:
             shutil.copy2(s, d)
-    rec = {"from": old, "to": new, "backup": backup, "t": time.time()}
+    removed = _prune(src)
+    rec = {"from": old, "to": new, "backup": backup, "t": time.time(), "removed": removed}
     json.dump(rec, open(PENDING, "w", encoding="utf-8"))
     shutil.rmtree(work, ignore_errors=True)
     return rec
+
+
+SHIPPED_DIRS = ("static", "workflows", "deps", "nodes", "tools")   # folders that belong to the app itself
+
+
+def _prune(src):
+    """Remove app files the new version no longer ships (e.g. a retired engine), only inside the app's own folders.
+    They are in the backup already, so a rollback brings them back."""
+    removed = []
+    for top in SHIPPED_DIRS:
+        new_top, old_top = os.path.join(src, top), os.path.join(HERE, top)
+        if not (os.path.isdir(new_top) and os.path.isdir(old_top)):
+            continue
+        for dp, dns, fns in os.walk(old_top):
+            dns[:] = [d for d in dns if d not in KEEP]
+            for fn in fns:
+                rel = os.path.relpath(os.path.join(dp, fn), HERE)
+                if not os.path.exists(os.path.join(src, rel)):
+                    try:
+                        os.remove(os.path.join(HERE, rel))
+                        removed.append(rel.replace(os.sep, "/"))
+                    except OSError:
+                        pass
+    return removed
 
 
 def rollback():

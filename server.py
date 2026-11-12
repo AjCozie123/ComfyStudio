@@ -3045,6 +3045,12 @@ def install_plan(wid=None):
 UPDATE_STATE = {"checked": 0, "status": None}
 
 
+def auto_critical_on():
+    """Important fixes install by themselves (only while idle) unless the user switched it off in Settings."""
+    v = app_paths.load(DATA).get("auto_critical")
+    return True if v is None else bool(v)
+
+
 def _active_job_count():
     return len([j for j in jobs.values() if j.get("status") in ("queued", "running", "waiting_comfy")])
 
@@ -3056,7 +3062,7 @@ def _update_loop():
             if UPD.release_repo() or UPD.is_git_install():
                 st = UPD.status(fetch=True)
                 UPDATE_STATE.update(checked=time.time(), status=st)
-                if st.get("critical") and st.get("behind") and app_paths.load(DATA).get("auto_critical"):
+                if st.get("critical") and st.get("behind") and auto_critical_on():
                     # wait for an idle moment (never restart under someone's generation)
                     for _ in range(120):
                         if _active_job_count() == 0:
@@ -3435,14 +3441,14 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/update/state":
             # what the last background check found (no network), plus the user's auto-fix choice
             st = dict(UPDATE_STATE.get("status") or {"version": UPD.app_version(), "repo": UPD.release_repo()})
-            st["auto_critical"] = bool(app_paths.load(DATA).get("auto_critical"))
+            st["auto_critical"] = bool(auto_critical_on())
             st["checked"] = UPDATE_STATE.get("checked")
             return self.j(st)
         if path == "/api/update/check":
             try:
                 st = UPD.status(fetch=True)
                 UPDATE_STATE.update(checked=time.time(), status=st)
-                st = dict(st, auto_critical=bool(app_paths.load(DATA).get("auto_critical")))
+                st = dict(st, auto_critical=bool(auto_critical_on()))
                 return self.j(st)
             except Exception as e:
                 return self.j({"error": str(e)}, 500)

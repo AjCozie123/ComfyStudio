@@ -19,7 +19,7 @@ for %%D in ("%PYEXE%") do set "PYW=%%~dpDpythonw.exe"
 if not exist "%PYW%" set "PYW=%PYEXE%"
 if not exist data mkdir data
 > data\python_path.txt echo %PYW%
-"%PYEXE%" -m pip install --quiet --upgrade pywebview pillow >nul 2>&1
+"%PYEXE%" -m pip install --quiet --upgrade pywebview pillow pywin32 >nul 2>&1
 rem 2) ComfyUI
 "%PYEXE%" -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8188/system_stats',timeout=3)" >nul 2>&1
 if errorlevel 1 (
@@ -29,6 +29,9 @@ if errorlevel 1 (
 )
 rem 3) desktop shortcut
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Comfy Studio.lnk');$s.TargetPath='%PYW%';$s.Arguments='\"%~dp0ComfyStudio.pyw\"';$s.WorkingDirectory='%~dp0';$s.IconLocation='%~dp0comfy_studio.ico';$s.Save()"
+rem the taskbar shows the Comfy Studio logo (not Python) when the shortcut carries the app's identity
+for /f "delims=" %%D in ('powershell -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"') do set "DESK=%%D"
+"%PYEXE%" "%~dp0tools\set_shortcut_appid.py" "%DESK%\Comfy Studio.lnk" >nul 2>&1
 echo  Done. Starting Comfy Studio...
 wscript.exe "%~dp0start_app.vbs"
 echo  Open the Workflows page: each engine shows what it needs and a Download button for missing files.

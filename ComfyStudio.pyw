@@ -67,6 +67,32 @@ def set_icon(title):
         time.sleep(0.1)
 
 
+def apply_native_icon(window):
+    """pywebview's Windows window sets its own icon from the running program (python); replace it on the form
+    itself, on the window's own thread, so the title bar and taskbar keep the Comfy Studio logo."""
+    if not os.path.isfile(ICON):
+        return False
+    try:
+        import clr  # pythonnet: what pywebview's Windows window runs on
+        clr.AddReference("System.Drawing")
+        from System import Action
+        from System.Drawing import Icon
+        form = getattr(window, "native", None)
+        if form is None:
+            return False
+
+        def put():
+            form.Icon = Icon(ICON)
+            form.ShowIcon = True
+        if form.InvokeRequired:
+            form.Invoke(Action(put))
+        else:
+            put()
+        return True
+    except Exception:
+        return False
+
+
 def load_state():
     try:
         with open(WIN_STATE, encoding="utf-8") as f:
@@ -126,6 +152,15 @@ def main():
     window.events.maximized += lambda: state.__setitem__("max", True)
     window.events.restored += lambda: state.__setitem__("max", False)
     window.events.closing += lambda: save_state(window, state["max"])
+
+    def logo():
+        # the form may reset its icon while it opens: set it on the form and on the window handle, more than once
+        for delay in (0, 0.6, 2.0):
+            time.sleep(delay)
+            apply_native_icon(window)
+            set_icon(TITLE)
+    window.events.shown += logo
+    window.events.loaded += lambda: (apply_native_icon(window), set_icon(TITLE))
 
     def boot():
         set_icon(TITLE)

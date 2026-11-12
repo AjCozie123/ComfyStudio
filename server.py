@@ -1597,6 +1597,11 @@ def submit_workflow_job(data):
     if prompt and keep_cloth:
         style = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _cg = CG.apply(prompt, data.get("prompt") or "", "edit" if images else "t2i", style)
+    # an edit that names one garment changes only that one (the others stay as they are)
+    if (prompt and images and card.get("media") == "image" and data.get("keep_clothing") is not False
+            and card.get("edit_kind") != "anypaint" and ASSIST.swap_intent(data.get("prompt") or "", len(images)) not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap")):
+        gstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
+        prompt, _og = CG.apply_only_garment(prompt, data.get("prompt") or "", "edit", gstyle)
     # a full mask / helmet the prompt adds hides the hair (models tend to leave hair poking out around it)
     if prompt and card.get("media") == "image" and card.get("edit_kind") != "anypaint":
         hstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
@@ -1749,7 +1754,7 @@ def submit_workflow_job(data):
         "workflow_name": card.get("name") or "Workflow",
         "model_name": model_label(wf_model),
         "prompt": prompt_sent,
-        "prompt_user": prompt,
+        "prompt_user": (data.get("prompt") or "").strip() or prompt,   # what was typed (Reuse / Edit this refill it)
         "prompt_sent": prompt_sent,
         "status": "queued",
         "graph": g,
@@ -2617,6 +2622,8 @@ def submit_job(data):
         if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+        if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
+            prompt_sent, _og = CG.apply_only_garment(prompt_sent, data.get("prompt") or "", "edit")
         # an edit keeps the original picture's quality, texture and light (Settings > Keep image quality)
         if data.get("keep_quality") is not False and not ref_mode and not inpaint:
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")

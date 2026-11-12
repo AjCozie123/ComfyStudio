@@ -132,7 +132,8 @@ def _asks(text):
 
 
 def quality_clause(user_prompt, mode, style=""):
-    """One line that keeps the original picture's quality / texture / light in an edit, or ''."""
+    """One short line that keeps the original picture's quality / texture / light in an edit, or ''.
+    Kept short on purpose: long added text dilutes the instruction itself on models that follow every word (H3)."""
     t = (user_prompt or "").strip()
     if mode != "edit" or not t or _STYLE.search(t):
         return ""
@@ -140,19 +141,42 @@ def quality_clause(user_prompt, mode, style=""):
     keep_q, keep_l = not _QUALITY.search(asked), not _LIGHT.search(asked)
     if not keep_q and not keep_l:
         return ""
-    what = ", ".join(([] if not keep_q else ["image quality", "sharpness", "grain", "skin and fabric texture", "colours"])
+    # when the edit is about clothing, "fabric" texture would pull against it
+    tex = "texture" if (about_clothes(t) or _WEARABLE.search(t)) else "skin and fabric texture"
+    what = ", ".join(([] if not keep_q else ["image quality", "sharpness", "grain", tex, "colours"])
                      + ([] if not keep_l else ["lighting"]))
     what = what.rsplit(", ", 1)[0] + " and " + what.rsplit(", ", 1)[1] if ", " in what else what
-    if style == "plain":           # Krea 2 Edit: one short line
-        return "Keep the original photo's %s exactly the same." % what
-    return ("Match the original %s of <Picture 1> exactly, so the result looks like the same photograph with only "
-            "the requested change." % what)
+    if style == "plain":           # Krea 2 Edit / plain-prompt engines
+        return "Keep the original photo's %s." % what
+    return "Keep the original %s of <Picture 1>." % what
+
+
+_WHOLE_OUTFIT = re.compile(r"\b(all (?:of )?(?:her|his|their|the) cloth\w*|everything|whole outfit|entire outfit|all garments|"
+                           r"naked|nude|undress\w*|strip\w*|outfit|clothes|clothing|costume|wardrobe)\b", re.I)
+
+
+def only_garment_clause(user_prompt, mode, style=""):
+    """When an edit names one garment ("make her jacket red", "remove her hat"), the others must not change too.
+    '' when the prompt is about the whole outfit, names no garment, or isn't an edit."""
+    t = (user_prompt or "").strip()
+    if mode != "edit" or not t or not _WEARABLE.search(t) or _WHOLE_OUTFIT.search(t):
+        return ""
+    if style == "plain":
+        return "Change only that item; their other clothing stays exactly the same."
+    return "Change only the item of clothing named; every other piece of clothing on the person in <Picture 1> stays exactly the same."
+
+
+def apply_only_garment(prompt_sent, user_prompt, mode, style=""):
+    c = only_garment_clause(user_prompt, mode, style)
+    if not c or "other clothing stays" in (prompt_sent or "").lower() or "other piece of clothing" in (prompt_sent or "").lower():
+        return prompt_sent, False
+    return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
 
 
 def apply_quality(prompt_sent, user_prompt, mode, style=""):
     c = quality_clause(user_prompt, mode, style)
     low = (prompt_sent or "").lower()
-    if not c or "same photograph" in low or "original photo's" in low:
+    if not c or "same photograph" in low or "original photo's" in low or "keep the original image quality" in low:
         return prompt_sent, False
     return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
 

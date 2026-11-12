@@ -881,7 +881,7 @@ def guard_on(data, name, n_images=0):
         return bool(CG.auto_guards(data.get("prompt") or "", n_images).get(name, True))
     if name == "keep_face":
         return data.get("keep_face") is True          # off unless ticked
-    if name == "only_garment":
+    if name in ("only_garment", "only_target"):
         name = "keep_clothing"                        # part of Keep clothing
     return data.get(name) is not False
 
@@ -1614,6 +1614,11 @@ def submit_workflow_job(data):
             and card.get("edit_kind") != "anypaint" and ASSIST.swap_intent(data.get("prompt") or "", len(images)) not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap")):
         gstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _og = CG.apply_only_garment(prompt, data.get("prompt") or "", "edit", gstyle)
+    # a removal changes only what it names
+    if prompt and images and card.get("media") == "image" and card.get("edit_kind") != "anypaint" \
+            and guard_on(data, "only_target", len(images)):
+        rstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
+        prompt, _rg = CG.apply_removal(prompt, data.get("prompt") or "", "edit", rstyle)
     # a full mask / helmet the prompt adds hides the hair (models tend to leave hair poking out around it)
     if prompt and card.get("media") == "image" and card.get("edit_kind") != "anypaint":
         hstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
@@ -2636,6 +2641,8 @@ def submit_job(data):
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if guard_on(data, "only_garment", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
             prompt_sent, _og = CG.apply_only_garment(prompt_sent, data.get("prompt") or "", "edit")
+        if guard_on(data, "only_target", len(images or [])) and not ref_mode:
+            prompt_sent, _rg = CG.apply_removal(prompt_sent, data.get("prompt") or "", "edit")
         # an edit keeps the original picture's quality, texture and light (Settings > Keep image quality)
         if guard_on(data, "keep_quality", len(images or [])) and not ref_mode and not inpaint:
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")

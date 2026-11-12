@@ -161,9 +161,11 @@ def only_garment_clause(user_prompt, mode, style=""):
     t = (user_prompt or "").strip()
     if mode != "edit" or not t or not _WEARABLE.search(t) or _WHOLE_OUTFIT.search(t):
         return ""
+    item = named_item(t) or "item of clothing named"
     if style == "plain":
-        return "Change only that item; their other clothing stays exactly the same."
-    return "Change only the item of clothing named; every other piece of clothing on the person in <Picture 1> stays exactly the same."
+        return "Change only the %s; their other clothing stays exactly the same." % item
+    return ("Change only the %s; every other or similar piece of clothing on the person in <Picture 1>, including anything "
+            "under or over it, stays exactly the same." % item)
 
 
 def apply_only_garment(prompt_sent, user_prompt, mode, style=""):
@@ -210,6 +212,50 @@ _FACE_EDIT = re.compile(
 def auto_guards(user_prompt, n_images=0):
     t = user_prompt or ""
     if _REMOVE_EDIT.search(t):
-        return {"keep_clothing": False, "only_garment": False, "keep_quality": False, "keep_face": False, "why": "removal"}
-    return {"keep_clothing": True, "only_garment": True, "keep_quality": True,
+        # a removal gets one short line that scopes it (only what is named goes; everything else, including
+        # anything else being worn, stays), and none of the longer keep-lines
+        return {"keep_clothing": False, "only_garment": False, "keep_quality": False, "keep_face": False,
+                "only_target": True, "why": "removal"}
+    return {"keep_clothing": True, "only_garment": True, "keep_quality": True, "only_target": False,
             "keep_face": not _FACE_EDIT.search(t), "why": "face edit" if _FACE_EDIT.search(t) else "edit"}
+
+
+_ITEM = re.compile(r"\b(?:(?:her|his|their|the|this|that|a|an|its)\s+)?((?:[a-z][\w-]*\s+){0,2}?"
+                   + _WEARABLE.pattern[2:-2] + r")\b", re.I)
+_NOT_ITEM_WORDS = {"remove", "removes", "removed", "removing", "take", "off", "make", "change", "turn", "give", "put",
+                   "add", "only", "just", "please", "erase", "delete", "get", "rid", "of", "and", "with", "her", "his",
+                   "their", "the", "this", "that", "a", "an", "to", "from", "on", "in"}
+
+
+def named_item(user_prompt):
+    """The garment the prompt names, with up to two describing words ('denim jacket', 'red scarf'), or ''."""
+    m = _ITEM.search(user_prompt or "")
+    if not m:
+        return ""
+    words = [w for w in m.group(1).split() if w.lower() not in _NOT_ITEM_WORDS]
+    return " ".join(words).strip().lower()
+
+
+def removal_clause(user_prompt, mode, style=""):
+    """For a removal: only the named thing goes; everything else stays (other objects, and anything else worn)."""
+    t = (user_prompt or "").strip()
+    if mode != "edit" or not t or not _REMOVE_EDIT.search(t):
+        return ""
+    item = named_item(t)
+    if item:
+        if style == "plain":
+            return ("Remove only the %s; every other item of clothing, including anything under or over it, stays exactly "
+                    "the same." % item)
+        return ("Remove only the %s; do not remove or change any other or similar item of clothing, including anything "
+                "worn under or over it. Everything else in <Picture 1> stays exactly as it is." % item)
+    if style == "plain":
+        return "Remove only that; everything else, including anything they are wearing, stays exactly the same."
+    return ("Remove only what is named; everything else in <Picture 1>, including anything the person is wearing, "
+            "stays exactly as it is.")
+
+
+def apply_removal(prompt_sent, user_prompt, mode, style=""):
+    c = removal_clause(user_prompt, mode, style)
+    if not c or "remove only" in (prompt_sent or "").lower():
+        return prompt_sent, False
+    return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True

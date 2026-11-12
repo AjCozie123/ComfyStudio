@@ -104,8 +104,6 @@ def library_record(job, output, app_out, input_root):
         "source_filename": src_name,
         "input_snapshots": snaps,
         "resolution_in": job.get("resolution_in") or resolution,
-        "sampler_name": job.get("sampler_name"),
-        "scheduler": job.get("scheduler"),
         "unet_name": (job.get("models") or {}).get("unet_name") or job.get("unet_name"),
         "clip_name": (job.get("models") or {}).get("clip_name") or job.get("clip_name"),
         "vae_name": (job.get("models") or {}).get("vae_name") or job.get("vae_name"),

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <script>
-  /* client error reporter: script errors + a heartbeat for 40 s after load go to data/client.log on the PC */
+  /* client error reporter: the app's own script errors go to data/client.log on the PC (browser-extension noise,
+     e.g. Brave's wallet script or cross-origin "Script error.", is left out) */
   (function () {
     function send(t, m) {
       try {
@@ -14,9 +15,12 @@
       } catch (e) {}
     }
     window.__clientLog = send;
-    window.addEventListener("error", function (e) { send("error", (e.message || "") + " @" + String(e.filename || "").split("/").pop() + ":" + e.lineno + ":" + e.colno); });
+    function noise(m, f) { return (!f && /^Script error\.?$/i.test(m || "")) || /ethereum|chrome-extension:|safari-web-extension:|moz-extension:/i.test((m || "") + " " + (f || "")); }
+    window.addEventListener("error", function (e) {
+      if (noise(e.message, e.filename)) return;
+      send("error", (e.message || "") + " @" + String(e.filename || "").split("/").pop() + ":" + e.lineno + ":" + e.colno);
+    });
     window.addEventListener("unhandledrejection", function (e) { var r = e.reason; send("promise", (r && (r.stack || r.message)) || r); });
-    var n = 0, hb = setInterval(function () { send("hb", n++); if (n > 20) clearInterval(hb); }, 2000);
     send("boot", location.href);
   })();
   </script>
@@ -30,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261112zf">
+  <link rel="stylesheet" href="/static/app.css?v=20261112zg">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -904,6 +908,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20261112zf"></script>
+  <script src="/static/app.js?v=20261112zg"></script>
 </body>
 </html>

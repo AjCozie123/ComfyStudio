@@ -807,25 +807,38 @@ def _clip_names():
         return []
 
 
+# BFS swap LoRAs per engine (Alissonerdx/BFS-Best-Face-Swap guides). All take Picture 1 = the body / scene kept and
+# Picture 2 = the head or person, which is the app's order. (BFS Face V1 for 2509 takes the face first, so it isn't used.)
+SWAP_LORAS = [
+    # (card id prefix, intents, file pattern, strength)
+    ("klein9b_", ("head_swap", "face_swap"), r"bfs_head_v1_flux-klein_9b.*step3500_rank128|bfs_head_v1_flux-klein_9b", 1.0),
+    ("qwen_edit2509", ("head_swap", "face_swap"), r"bfs_head_v3_qwen_image_edit_2509|bfs_head_v4_qwen_image_edit_2509", 1.0),
+    ("qwen21_edit", ("head_swap", "face_swap"), r"bfs_head_v1\.1_qwen_2\.1(?!_alt)|bfs_head_v1_qwen_2\.1", 1.0),
+    ("qwen21_edit", ("body_swap",), r"bfs_body_swap_v1\.0_qwen_2\.1", 1.0),
+]
+
+
 def swap_loras(card, intent, user_loras):
-    """The head-swap LoRA an engine needs for a head / face swap, when it is installed and the user hasn't added one.
-    FLUX.2 Klein 9B: BFS Head V1 (step3500 rank128, else rank64); body first, head second, strength 1.0.
-    Krea 2 Edit picks its BFS LoRA itself (Auto), so it isn't listed here."""
-    if intent not in ("head_swap", "face_swap") or card.get("task") != "edit":
+    """The BFS swap LoRA this engine needs for a head / face / body swap, when it's installed and the user hasn't
+    added one. Krea 2 Edit picks its BFS LoRA itself (krea_swap_pick), so it isn't listed here."""
+    if not intent or card.get("task") != "edit":
         return []
     names = [str((l or {}).get("name") or "") for l in (user_loras or [])]
     if any("bfs_" in n.lower() for n in names):
         return []
-    fam = (card.get("family") or "")
-    if fam != "FLUX.2 Klein":
+    rules = [r for r in SWAP_LORAS if str(card.get("id") or "").startswith(r[0]) and intent in r[1]]
+    if not rules:
         return []
     try:
         have = combo_list(object_info(), "LoraLoaderModelOnly", "lora_name")
     except Exception:
         return []
-    cands = [n for n in have if re.search(r"bfs_head_v1_flux-klein_9b", n, re.I)]
-    cands.sort(key=lambda n: (not re.search(r"step3500_rank128", n, re.I), len(n)))
-    return [{"name": cands[0], "strength": 1.0}] if cands else []
+    for _prefix, _intents, pat, strength in rules:
+        for alt in pat.split("|"):                       # the first pattern is the preferred file
+            hit = sorted((n for n in have if re.search(alt, n, re.I)), key=len)
+            if hit:
+                return [{"name": hit[0], "strength": strength}]
+    return []
 
 
 def krea_swap_pick(data, sw):
@@ -853,6 +866,12 @@ def krea_swap_pick(data, sw):
         if body and not any(body == (l or {}).get("name") for l in (data.get("loras") or [])):
             return [{"name": body, "strength": 0.5}]
     return []
+
+
+def server_error_text(e):
+    """What the person sees when something unexpected breaks: the actual problem, short, and where the details are."""
+    what = ("%s: %s" % (type(e).__name__, e)).strip().rstrip(":")[:220]
+    return "Something went wrong on the PC (%s). The full details are in app.log in the data folder." % what
 
 
 def _has_node(name):
@@ -3331,10 +3350,10 @@ class H(BaseHTTPRequestHandler):
             self._get()
         except (BrokenPipeError, ConnectionResetError):
             pass
-        except Exception:
+        except Exception as e:
             log.exception("GET")
             try:
-                self.j({"error": "Server error."}, 500)
+                self.j({"error": server_error_text(e)}, 500)
             except Exception:
                 pass
 
@@ -3345,10 +3364,10 @@ class H(BaseHTTPRequestHandler):
             pass
         except ValueError as e:
             self.j({"error": str(e)}, 400)
-        except Exception:
+        except Exception as e:
             log.exception("POST")
             try:
-                self.j({"error": "Server error."}, 500)
+                self.j({"error": server_error_text(e)}, 500)
             except Exception:
                 pass
 

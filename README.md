@@ -37,6 +37,18 @@ Open **Workflows**.
 | Qwen Image Edit 2509 | ComfyUI-GGUF | QuantStack |
 | LTX 2.3 video | ComfyUI-KJNodes | Lightricks, Comfy-Org, Kijai, valiantcat |
 
+**Optional: swap LoRAs.** Head, face and body swaps work on every edit engine from the prompt alone ("head swap",
+"put the woman from Picture 2 into Picture 1"; Picture 1 is the photo kept). For stronger swaps, put these LoRAs from
+[BFS Best Face Swap](https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap) in `ComfyUI/models/loras`; the app uses them
+by itself when it sees a swap:
+
+| Engine | Head / face swap | Body swap |
+|---|---|---|
+| Krea 2 Edit | `bfs_head_swap_v1.1_krea2` | `bfs_body_swap_v1_krea2` (+ the head swap) |
+| FLUX.2 Klein 9B | `bfs_head_v1_flux-klein_9b_step3500_rank128` | - |
+| Qwen Image Edit 2509 | `bfs_head_v3_qwen_image_edit_2509` | - |
+| Qwen Image 2.1 | `bfs_head_v1.1_qwen_2.1` | `bfs_body_swap_v1.0_qwen_2.1` |
+
 Node pack credits: MiniMax H3 AIO uses ComfyUI-Fantastic-MiniMaxH3-PromptBuilder (Adudeguyman),
 ComfyUI-Spectrum-MiniMax-H3 and Comfyui_Minimax_h3_latent_Upscaler-Plus (xmarre),
 ComfyUI-H3-Motion-Context-MultiRef-V3 (Aitrepreneur), ComfyUI-VideoHelperSuite (Kosinkadink),

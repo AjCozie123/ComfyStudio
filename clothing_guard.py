@@ -103,3 +103,65 @@ def negative(neg, user_prompt, mode):
     if "topless" in base.lower():
         return neg
     return (base + ", " if base else "") + NEG_WORDS
+
+
+# ------------------------------------------------------------------ keep the original image quality (edits)
+# An edit should look like the same photograph: same quality, sharpness, grain, skin and fabric texture, colours and
+# light, with only the asked change. Left out where the prompt asks to change exactly those things.
+_STYLE = re.compile(
+    r"\b(anime|cartoon|manga|comic|illustration|illustrated|painting|painted|watercolou?r|oil paint\w*|sketch\w*|"
+    r"drawing|pixel art|3d render|render(?:ed)? in|claymation|lego|ghibli|pixar|black and white|b&w|monochrome|sepia|"
+    r"in the style of|style of|restyle\w*|styli[sz]\w*|polaroid|film look|vhs|cyberpunk style|line art)\b", re.I)
+_LIGHT = re.compile(
+    r"\b(relight\w*|lighting|lights?|lit|sunset|sunrise|golden hour|night\w*|dusk|dawn|neon|shadows?|darker|brighter|"
+    r"darken\w*|brighten\w*|exposure|flash|backlit|backlight\w*|candle\w*|moonlight|daylight|overcast|"
+    r"colou?r grad\w*|warmer|cooler|time of day)\b", re.I)
+_QUALITY = re.compile(
+    r"\b(sharpen\w*|sharper|upscal\w*|enhanc\w*|restor\w*|denois\w*|de-?noise|deblur\w*|blur\w*|grain\w*|noisy|"
+    r"resolution|hd|4k|8k|detail\w*|smooth\w*|retouch\w*|airbrush\w*|jpeg|compress\w*|remaster\w*|"
+    r"(?:image|picture|photo) quality|low quality|high quality|soft focus|out of focus|bokeh)\b", re.I)
+QUALITY_NEG = "blurry, low quality, oversmoothed, plastic skin, waxy skin, jpeg artifacts"
+# "keep / maintain / preserve the original quality / lighting / texture" asks to KEEP, not to change: taken out first
+_KEEP_PHRASE = re.compile(
+    r"\b(?:keep\w*|maintain\w*|preserv\w*|retain\w*|same|match\w*|don'?t change|do not change|without changing)\b"
+    r"[^.,;]{0,40}?\b(?:quality|lighting|light|texture|grain|sharpness|detail\w*|resolution|colou?rs?|exposure)\b(?:\s+as\s+(?:the\s+)?original)?", re.I)
+
+
+def _asks(text):
+    return _KEEP_PHRASE.sub(" ", text or "")
+
+
+def quality_clause(user_prompt, mode, style=""):
+    """One line that keeps the original picture's quality / texture / light in an edit, or ''."""
+    t = (user_prompt or "").strip()
+    if mode != "edit" or not t or _STYLE.search(t):
+        return ""
+    asked = _asks(t)
+    keep_q, keep_l = not _QUALITY.search(asked), not _LIGHT.search(asked)
+    if not keep_q and not keep_l:
+        return ""
+    what = ", ".join(([] if not keep_q else ["image quality", "sharpness", "grain", "skin and fabric texture", "colours"])
+                     + ([] if not keep_l else ["lighting"]))
+    what = what.rsplit(", ", 1)[0] + " and " + what.rsplit(", ", 1)[1] if ", " in what else what
+    if style == "plain":           # Krea 2 Edit: one short line
+        return "Keep the original photo's %s exactly the same." % what
+    return ("Match the original %s of <Picture 1> exactly, so the result looks like the same photograph with only "
+            "the requested change." % what)
+
+
+def apply_quality(prompt_sent, user_prompt, mode, style=""):
+    c = quality_clause(user_prompt, mode, style)
+    low = (prompt_sent or "").lower()
+    if not c or "same photograph" in low or "original photo's" in low:
+        return prompt_sent, False
+    return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
+
+
+def negative_quality(neg, user_prompt, mode):
+    """Negative words for engines that use one, when the edit keeps the original quality."""
+    if not quality_clause(user_prompt, mode) or _QUALITY.search(_asks(user_prompt)):
+        return neg
+    base = (neg or "").strip().rstrip(",")
+    if "oversmoothed" in base.lower():
+        return neg
+    return (base + ", " if base else "") + QUALITY_NEG

@@ -1143,6 +1143,7 @@ async function generate() {
     pe_mode: state.peMode || "fast",
     pe_tokens: state.peTokens || null,
     keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
+    keep_quality: !$("keep-quality") || $("keep-quality").checked,
     understanding: !$("auto-assist") || $("auto-assist").checked,
     random_seed: $("random-seed").checked,
     seed: $("random-seed").checked ? null : Number($("seed").value || 0),
@@ -4788,6 +4789,7 @@ function bindShell() {
       edit_intent: (card.edit_kind === "krea_edit" && tuneMode() === "auto") ? kreaKind(prompt, Math.min(state.images.length, most)) : null,
       keep_face: !!(card.edit_kind === "krea_edit" && $("krea-keepface") && $("krea-keepface").checked),
       keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
+      keep_quality: !$("keep-quality") || $("keep-quality").checked,
       understanding: !$("auto-assist") || $("auto-assist").checked,
       overrides: manualOverrides(),
       videos: window.__mediaInBody ? window.__mediaInBody().videos : [],
@@ -8339,4 +8341,18 @@ function bindShell() {
   if (pop) new MutationObserver(show).observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
   window.__showPeTokens = show;
   show();
+})();
+
+
+/* ===== Keep image quality switch v20261112zh =====
+   On by default. Edits get one line (in the engine's own wording) that keeps the original picture's quality, texture,
+   colours and light; the server leaves out what the prompt itself asks to change. */
+(function () {
+  const cb = $("keep-quality");
+  if (!cb) return;
+  try { cb.checked = localStorage.getItem("cs.keepquality") !== "0"; } catch (e) { cb.checked = true; }
+  cb.addEventListener("change", () => {
+    try { localStorage.setItem("cs.keepquality", cb.checked ? "1" : "0"); } catch (e) {}
+    toast(cb.checked ? "Edits keep the original image quality" : "Image quality guard off");
+  });
 })();

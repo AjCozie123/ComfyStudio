@@ -1601,6 +1601,11 @@ def submit_workflow_job(data):
     if prompt and card.get("media") == "image" and card.get("edit_kind") != "anypaint":
         hstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _hg = CG.apply_headgear(prompt, data.get("prompt") or "", "edit" if images else "t2i", hstyle)
+    keep_q = (data.get("keep_quality") is not False and bool(images) and card.get("media") == "image"
+              and card.get("edit_kind") != "anypaint" and not data.get("ref_mode") and not data.get("inpaint_mask"))
+    if prompt and keep_q:
+        qstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
+        prompt, _qg = CG.apply_quality(prompt, data.get("prompt") or "", "edit", qstyle)
     if prompt and data.get("understanding") is not False:
         prompt = UND.apply_extra(prompt, DATA, card.get("id"))   # the user's "always add" sentences
     camera = CAMERA.normalize_camera(data.get("camera") or {})
@@ -1666,6 +1671,8 @@ def submit_workflow_job(data):
         cfg_now = 1.0
     if keep_cloth and (slots.get("negative") or []) and cfg_now > 1.05:
         neg_in = CG.negative(neg_in, data.get("prompt") or "", "edit" if images else "t2i")
+    if keep_q and (slots.get("negative") or []) and cfg_now > 1.05:
+        neg_in = CG.negative_quality(neg_in, data.get("prompt") or "", "edit")
     krea_extra_loras = []
     if card.get("edit_kind") == "krea_edit" and data.get("edit_intent") and len(images or []) >= 2:
         krea_extra_loras = krea_swap_pick(data, ASSIST.swap_intent(data.get("prompt") or "", len(images)))
@@ -2610,6 +2617,9 @@ def submit_job(data):
         if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+        # an edit keeps the original picture's quality, texture and light (Settings > Keep image quality)
+        if data.get("keep_quality") is not False and not ref_mode and not inpaint:
+            prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)

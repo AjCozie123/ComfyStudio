@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261112zg">
+  <link rel="stylesheet" href="/static/app.css?v=20261112zh">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -591,6 +591,14 @@
         words decide. Body swaps and putting someone into a scene are left alone too, since their clothes come from the other
         picture.</p>
     </div>
+    <div class="settings-group" id="keep-quality-group">
+      <p class="pop-label">Keep image quality</p>
+      <label class="check-row"><input type="checkbox" id="keep-quality" checked> Edits keep the original picture's quality, texture and light</label>
+      <p class="pop-note">All picture edits. Adds one line so the result looks like the same photograph: the same sharpness, grain,
+        skin and fabric texture, colours and lighting, with only your change. If your prompt changes the light (sunset, relight)
+        the light isn't locked; if it changes quality (sharpen, restore) quality isn't locked; style changes (anime, black and
+        white) are left alone.</p>
+    </div>
     <div class="settings-group" id="pe-sys-group">
       <div class="knobs-head">
         <p class="pop-label">Prompt Enhancer instructions <span class="knobs-count" id="pe-sys-badge"></span></p>
@@ -908,6 +916,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20261112zg"></script>
+  <script src="/static/app.js?v=20261112zh"></script>
 </body>
 </html>

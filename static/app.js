@@ -8391,3 +8391,61 @@ function bindShell() {
   window.__syncAutoGuards = sync;
   sync();
 })();
+
+
+/* ===== Clear the prompt v20261112zl =====
+   A small "Clear" chip in the bottom bar, after Create / Edit and well away from Send, shown only while there is
+   text. Clearing keeps an Undo (in the same spot) for 6 s, so a mis-tap costs nothing. */
+(function () {
+  const box = $("prompt"), btn = $("prompt-clear"), undo = $("prompt-undo");
+  if (!box || !btn || !undo) return;
+  let saved = "", timer = 0;
+  function sync() {
+    // Clear shows while there is text; Undo takes its place for a few seconds after clearing
+    btn.classList.toggle("hidden", !box.value.length || !undo.classList.contains("hidden"));
+  }
+  function fire() { box.dispatchEvent(new Event("input", { bubbles: true })); }
+  btn.addEventListener("mousedown", (e) => e.preventDefault());       // keep the keyboard open on phones
+  btn.addEventListener("click", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!box.value) return;
+    saved = box.value;
+    box.value = "";
+    fire(); sync();
+    box.focus();
+    undo.classList.remove("hidden");
+    clearTimeout(timer);
+    timer = setTimeout(() => { undo.classList.add("hidden"); saved = ""; sync(); }, 6000);
+  });
+  undo.addEventListener("mousedown", (e) => e.preventDefault());
+  undo.addEventListener("click", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (!saved) return;
+    box.value = saved;
+    saved = "";
+    clearTimeout(timer);
+    undo.classList.add("hidden");
+    fire(); sync();
+    box.focus();
+    try { box.setSelectionRange(box.value.length, box.value.length); } catch (err) {}
+  });
+  box.addEventListener("input", () => { sync(); if (box.value && !undo.classList.contains("hidden") && saved && box.value !== saved) { /* typing again: keep Undo until it times out */ } });
+  // text set by the app itself (Reuse, Edit this, Restore) doesn't fire "input": check now and then
+  setInterval(sync, 800);
+  // Where it sits: on a PC, in the bottom bar after Create / Edit (far from Send). On a phone the bar has no room
+  // (it would push Send off the screen), so it moves to the start of the pill row above the prompt box.
+  const bar = btn.parentNode, grow = bar.querySelector(".grow"), hud = $("hud-scroller");
+  const narrow = window.matchMedia("(max-width: 480px)");
+  function place() {
+    if (narrow.matches && hud) {
+      if (btn.parentNode !== hud) { hud.insertBefore(undo, hud.firstChild); hud.insertBefore(btn, hud.firstChild); }
+    } else if (btn.parentNode !== bar) {
+      bar.insertBefore(btn, grow); bar.insertBefore(undo, grow);
+    }
+    btn.classList.toggle("in-hud", btn.parentNode === hud);
+    undo.classList.toggle("in-hud", undo.parentNode === hud);
+  }
+  if (narrow.addEventListener) narrow.addEventListener("change", place); else if (narrow.addListener) narrow.addListener(place);
+  place();
+  sync();
+})();

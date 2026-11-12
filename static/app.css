@@ -1396,3 +1396,13 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 /* ===== Auto decides the helpers v20261112zj ===== */
 .auto-decides .check-row { opacity: .55; }
 .auto-note { color: var(--accent, #8ab4ff); }
+
+/* ===== Clear the prompt v20261112zl ===== */
+.prompt-clear, .prompt-undo { height: 30px; padding: 0 12px; margin-left: 4px; border-radius: 15px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); font-size: 13px; cursor: pointer; flex: 0 0 auto; }
+.prompt-clear:hover, .prompt-clear:focus-visible { color: var(--text); border-color: var(--muted); }
+.prompt-undo { color: var(--text); background: var(--surface-2); }
+.prompt-clear.hidden, .prompt-undo.hidden { display: none; }
+
+/* clear chip in the pill row (phones) */
+.prompt-clear.in-hud, .prompt-undo.in-hud { height: 32px; margin: 0 2px 0 0; align-self: center; }

@@ -22,6 +22,7 @@ import installer as INST
 import custom_nodes as CN
 import clothing_guard as CG
 import lora_index as LI
+import understanding as UND
 import library as LIB
 import assist as ASSIST
 import camera as CAMERA
@@ -1430,6 +1431,8 @@ def submit_workflow_job(data):
     card, graph = WF.get(wid)
     slots = card.get("slots") or {}
     prompt = (data.get("prompt") or "").strip()
+    if prompt and data.get("understanding") is not False:
+        prompt = UND.apply_words(prompt, DATA, data.get("workflow_id") or "")   # the user's own words
     if slots.get("prompt") and not prompt:
         raise ValueError("Enter a prompt.")
     images = [str(x).replace("\\", "/") for x in (data.get("images") or []) if str(x).strip()]
@@ -1510,6 +1513,12 @@ def submit_workflow_job(data):
     if prompt and keep_cloth:
         style = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _cg = CG.apply(prompt, data.get("prompt") or "", "edit" if images else "t2i", style)
+    # a full mask / helmet the prompt adds hides the hair (models tend to leave hair poking out around it)
+    if prompt and card.get("media") == "image" and card.get("edit_kind") != "anypaint":
+        hstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
+        prompt, _hg = CG.apply_headgear(prompt, data.get("prompt") or "", "edit" if images else "t2i", hstyle)
+    if prompt and data.get("understanding") is not False:
+        prompt = UND.apply_extra(prompt, DATA, card.get("id"))   # the user's "always add" sentences
     camera = CAMERA.normalize_camera(data.get("camera") or {})
     prompt_sent = prompt
     dialect = PD.for_card(card)
@@ -1583,8 +1592,9 @@ def submit_workflow_job(data):
         # "lcm_detail" is the built-in engine's recipe, not a sampler name a workflow node accepts
         "sampler": None if data.get("sampler_name") == graphs.LCM_DETAIL else data.get("sampler_name"),
         "scheduler": data.get("scheduler"),
-        "width": width,
-        "height": height,
+        # engines that follow Picture 1 (Krea 2 Edit): "Original" keeps the workflow's own working size
+        "width": None if (card.get("size_follows_input") and data.get("size_auto")) else width,
+        "height": None if (card.get("size_follows_input") and data.get("size_auto")) else height,
         "seconds": seconds,
         "res": res,
         "aspect": aspect,
@@ -2389,6 +2399,8 @@ def submit_job(data):
     else:
         raise ValueError("Choose Text to Image or Image Edit.")
     prompt = (data.get("prompt") or "").strip()
+    if prompt and data.get("understanding") is not False:
+        prompt = UND.apply_words(prompt, DATA, "builtin")
     if not prompt:
         raise ValueError("Enter a prompt.")
     resolution = data.get("resolution") or ("2048x2048")
@@ -2437,6 +2449,9 @@ def submit_job(data):
             prompt_sent = assist_info.get("prompt") or prompt_user
         if data.get("keep_clothing") is not False:
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+        prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+        if data.get("understanding") is not False:
+            prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=False)
     else:
         images = list(data.get("images") or [])
@@ -2502,6 +2517,9 @@ def submit_job(data):
             # Keep the user's chosen aspect / Match Picture 1 size. Layout adapts to W x H.
         if data.get("keep_clothing") is not False:
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+        prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+        if data.get("understanding") is not False:
+            prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
         if inpaint and inpaint.get("box"):
             # without this the model may redraw the whole cut-out (new framing, people gone); with it, only your area
@@ -3380,6 +3398,10 @@ class H(BaseHTTPRequestHandler):
             return self.j({"engine": eng, "engine_name": name, "mode": mode, "pe_mode": pe_mode,
                            "default": graphs.default_pe_system(mode, pe_mode), "custom": pe_override(eng, mode),
                            "model_note": note})
+        if path == "/api/understanding":
+            eng = (q.get("engine") or ["builtin"])[0] or "builtin"
+            d = UND.load(DATA)
+            return self.j({"all": d.get("*") or {}, "engine": d.get(eng) or {}, "engine_id": eng})
         if path == "/api/nodes/job":
             j = CN.JOBS.get((q.get("id") or [""])[0])
             return self.j(j) if j else self.j({"error": "unknown job"}, 404)
@@ -3846,6 +3868,22 @@ class H(BaseHTTPRequestHandler):
             json.dump(d, open(tmp, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
             os.replace(tmp, PE_PROMPTS)
             return self.j({"ok": True, "custom": cur.get(mode, "")})
+        if path == "/api/understanding":
+            eng = str(data.get("engine") or "builtin")[:80]
+            key = "*" if data.get("scope") == "all" else eng
+            d = UND.load(DATA)
+            if data.get("reset"):
+                d.pop(key, None)
+            else:
+                if not isinstance(data.get("words", []), list) or not isinstance(data.get("extra", ""), str):
+                    return self.j({"error": "That request wasn't understood."}, 400)
+                entry = UND.clean({"words": data.get("words") or [], "extra": data.get("extra") or ""})
+                if entry:
+                    d[key] = entry
+                else:
+                    d.pop(key, None)
+            UND.save(DATA, d)
+            return self.j({"ok": True, "saved": d.get(key) or {}})
         if path == "/api/nodes/github":
             try:
                 if not os.path.isdir(NODES_DIR):

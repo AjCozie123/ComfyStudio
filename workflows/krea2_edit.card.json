@@ -63,6 +63,30 @@
     }
    }
   ],
+  "width": [
+   {
+    "node": "lat",
+    "input": "width",
+    "label": "Width"
+   },
+   {
+    "node": "back",
+    "input": "width",
+    "label": "Width"
+   }
+  ],
+  "height": [
+   {
+    "node": "lat",
+    "input": "height",
+    "label": "Height"
+   },
+   {
+    "node": "back",
+    "input": "height",
+    "label": "Height"
+   }
+  ],
   "seed": [
    {
     "node": "ks",
@@ -118,7 +142,9 @@
     "title": "Edit LoRA",
     "only": [
      "identity_edit_v",
-     "general_edit_v"
+     "general_edit_v",
+     "head_swap_v",
+     "body_swap_v"
     ]
    },
    {
@@ -157,9 +183,10 @@
   "denoise": 1.0
  },
  "needs": {},
- "mp_max": 4,
+ "mp_max": 2,
  "edit_kind": "krea_edit",
  "assist": false,
  "pe_task": "edit",
+ "size_follows_input": true,
  "edit_tips": "Write the edit as one plain instruction: 'Change her outfit to a red raincoat.'"
 }

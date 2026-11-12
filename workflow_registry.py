@@ -1219,7 +1219,14 @@ KREA_INTENT_KNOBS = {
     "remove": {"lora": "general", "ref_boost": 4.0, "position": "aligned (trained)", "grounding_px": 768},
     "face": {"lora": "general", "ref_boost": 4.0, "position": "aligned (trained)", "grounding_px": 768},
     "general": {"lora": "general", "ref_boost": 4.0, "position": "aligned (trained)", "grounding_px": 768},
+    # BFS swap LoRAs (two pictures: 1 = the picture to keep, 2 = whose head / body goes in). Values from the BFS
+    # workflows: boosts 1 / 1, 'fit', one fixed trigger sentence. Body swap = head swap LoRA 1.0 + body swap 0.5.
+    "headswap": {"lora": "headswap", "ref_boost": 1.0, "ref_boost_a": 1.0, "position": "aligned (trained)", "grounding_px": 512,
+                 "trigger": "head_swap: replace the head with the reference head."},
+    "bodyswap": {"lora": "headswap", "ref_boost": 1.0, "ref_boost_a": 1.0, "position": "aligned (trained)", "grounding_px": 0,
+                 "trigger": "body_swap: replace the person with the reference person."},
 }
+SWAP_INTENTS = ("headswap", "bodyswap")
 
 
 def krea_edit_tune(g, intent=None):
@@ -1236,11 +1243,14 @@ def krea_edit_tune(g, intent=None):
         lora = ""
         while isinstance(src, list) and str(src[0]) in g:
             up = g[str(src[0])]
-            if up.get("class_type") == "LoraLoaderModelOnly" and "edit" in str(up["inputs"].get("lora_name", "")).lower():
+            if up.get("class_type") == "LoraLoaderModelOnly" and re.search(r"edit|head_swap|body_swap", str(up["inputs"].get("lora_name", "")), re.I):
                 lora = str(up["inputs"]["lora_name"]).lower()
                 break
             src = (up.get("inputs") or {}).get("model")
         if not lora:
+            continue
+        if "_swap" in lora:
+            _swap_tune(g, ins, intent)
             continue
         legacy = re.search(r"edit_v1(_1)?(\.|_r)", lora) is not None
         v2 = "edit_v2" in lora
@@ -1273,6 +1283,23 @@ def krea_edit_tune(g, intent=None):
             for e in g.values():
                 if str(e.get("class_type", "")).startswith("Krea2EditGroundedEncode") and "grounding_px" in e.get("inputs", {}):
                     e["inputs"]["grounding_px"] = knobs["grounding_px"]
+
+
+def _swap_tune(g, ins, intent):
+    """BFS head / body swap: the settings its own workflow uses. The trigger sentence replaces the prompt only when
+    Auto picked the swap (Manual keeps whatever you wrote)."""
+    knobs = KREA_INTENT_KNOBS["bodyswap" if intent == "bodyswap" else "headswap"]
+    for k, v in (("fit_mode", "fit"), ("ref_boost", knobs["ref_boost"]), ("ref_boost_a", knobs["ref_boost_a"]),
+                 ("ref_position", knobs["position"]), ("ref_position_a", knobs["position"])):
+        if k in ins:
+            ins[k] = v
+    for e in g.values():
+        if str(e.get("class_type", "")).startswith("Krea2EditGroundedEncode"):
+            ei = e.get("inputs", {})
+            if "grounding_px" in ei:
+                ei["grounding_px"] = knobs["grounding_px"]
+            if intent in SWAP_INTENTS and str(ei.get("prompt") or "").strip() and not isinstance(ei.get("prompt"), list):
+                ei["prompt"] = knobs["trigger"]
 
 
 # ------------------------------------------------------------------ Manual mode: every setting of any workflow

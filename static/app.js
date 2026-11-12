@@ -1133,6 +1133,7 @@ async function generate() {
     pe: state.mode !== "edit" && $("pe").checked,
     pe_mode: state.peMode || "fast",
     keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
+    understanding: !$("auto-assist") || $("auto-assist").checked,
     random_seed: $("random-seed").checked,
     seed: $("random-seed").checked ? null : Number($("seed").value || 0),
     steps: Number($("steps").value || 6),
@@ -4279,7 +4280,18 @@ function bindShell() {
     remove: { label: "Removal", lora: "general", steps: 8, knobs: "ref_boost 4, aligned, grounding 768" },
     face: { label: "Face / expression", lora: "general", steps: 8, knobs: "ref_boost 4, aligned, grounding 768" },
     general: { label: "General edit", lora: "general", steps: 8, knobs: "ref_boost 4, aligned, grounding 768" },
+    headswap: { label: "Head swap", lora: "head_swap_v", steps: 8, knobs: "BFS head swap: Picture 2's head onto Picture 1, grounding 512" },
+    bodyswap: { label: "Body swap", lora: "head_swap_v", steps: 10, knobs: "BFS head swap 1.0 + body swap 0.5: Picture 2's person into Picture 1" },
   };
+  const SWAP_RX = {
+    headswap: /\b((head|face)[- ]?swap\w*|swap\w* (the |her |his |their )?(heads?|faces?)|replace (the |her |his |their )?(head|face)|(put|use|give (her|him|them)) (the |picture 2'?s? |image 2'?s? )?(head|face) (of|from))/i,
+    bodyswap: /\b(body[- ]?swap\w*|character[- ]?swap\w*|swap\w* (the |her |his |their )?(body|bodies|person|people|characters?)|replace (the |her |his |their )?(body|person|woman|man|girl|guy|character))/i,
+  };
+  function swapLora(part) {
+    const sel = editLoraSelect();
+    return sel ? ([...sel.options].map((o) => o.value).find((v) => v.toLowerCase().includes(part)) || "") : "";
+  }
+  window.__swapLora = swapLora;
   const RX = {
     // the person moves: pose, body, camera angle, framing
     pose: /\b(turn(s|ed|ing)?(?!\s+(on|off|up|down|into)\b)|rotat\w*|profile|facing|face (left|right|away|the camera|forward)|from (behind|the back|the side|above|below)|back view|side view|over (her|his|their|the) shoulder|look(s|ing)? (at|over|away|up|down|back|left|right)|camera angle|(low|high|eye[- ]level|overhead|dutch|birds?[- ]eye) angle|zoom (in|out)|close[- ]?up|full[- ]body|wide shot|medium shot|pose|posing|sit(s|ting)?|seated|stand(s|ing)?|kneel\w*|lie|lying|lay(ing)?|crouch\w*|squat\w*|lean\w*|bend\w*|walk\w*|run(s|ning)?|jump\w*|danc\w*|character sheet|turnaround)\b/i,
@@ -4294,7 +4306,12 @@ function bindShell() {
   };
   function kreaKind(prompt, pics) {
     const p = String(prompt || "");
-    if ((pics == null ? state.images.length : pics) >= 2) return "insert";   // the card: person into a scene = Identity
+    if ((pics == null ? state.images.length : pics) >= 2) {
+      // head / body swap needs the BFS head swap LoRA; without it a swap is done as person-into-scene
+      if (SWAP_RX.bodyswap.test(p) && swapLora("head_swap_v") && swapLora("body_swap_v")) return "bodyswap";
+      if ((SWAP_RX.headswap.test(p) || SWAP_RX.bodyswap.test(p)) && swapLora("head_swap_v")) return "headswap";
+      return "insert";                                                        // the card: person into a scene = Identity
+    }
     if (RX.remove.test(p)) return "remove";                                   // removals are General's job
     if (RX.pose.test(p) || RX.place.test(p)) return "restage";               // the whole body / view / place changes
     if (RX.body.test(p)) return "action";                                     // hands / arms act, same picture
@@ -4308,6 +4325,8 @@ function bindShell() {
     const p = String(prompt || "").trim();
     const tips = [];
     if (!p) return tips;
+    if (kind === "headswap" || kind === "bodyswap")      // the BFS LoRA gets its own trigger sentence instead
+      return ["Picture 1 = the one to keep, Picture 2 = whose " + (kind === "headswap" ? "head" : "person") + " goes in."];
     const sentences = p.split(/[.!?]+\s+/).filter((x) => x.trim().length > 2);
     if (!ACTION.test(p)) tips.push("Krea Edit follows commands best. Start with the action, e.g. 'Turn her to a left-facing side profile.'");
     const actions = sentences.filter((x) => ACTION.test(x.trim())).length;
@@ -4331,7 +4350,12 @@ function bindShell() {
     const sel = editLoraSelect();
     if (!sel) return "";
     const cur = sel.value;
-    if (!/(general|identity)_edit_v2/i.test(cur)) return cur;              // v1.2 / v1.1 / other: yours
+    if (!/(general|identity)_edit_v2|_swap_v/i.test(cur)) return cur;      // v1.2 / v1.1 / other: yours
+    if (KREA_KINDS[kind].lora === "head_swap_v") {
+      const sw = swapLora("head_swap_v");
+      if (sw) sel.value = sw;
+      return sel.value;
+    }
     const want = KREA_KINDS[kind].lora === "identity" ? "identity_edit_v2" : "general_edit_v2";
     const r128 = /_r128/i.test(cur);
     const opts = [...sel.options].map((o) => o.value).filter((v) => v.toLowerCase().includes(want));
@@ -4350,6 +4374,7 @@ function bindShell() {
     v = String(v || "").split(/[\\/]/).pop().replace(/\.safetensors$/i, "");
     if (/identity_edit_v2/i.test(v)) return "Identity Edit V2" + (/_r128/i.test(v) ? " r128" : "");
     if (/general_edit_v2/i.test(v)) return "General Edit V2" + (/_r128/i.test(v) ? " r128" : "");
+    if (/head_swap_v/i.test(v)) return "BFS Head Swap";
     return v;
   }
 
@@ -4728,6 +4753,7 @@ function bindShell() {
       scheduler: $("scheduler").value,
       width: size.width,
       height: size.height,
+      size_auto: state.quality === "picture1" || state.quality === "keep" || state.quality === "match",
       seconds: card.media === "video" ? state.video.len : null,
       fps: (card.defaults || {}).fps || null,
       models,
@@ -4744,6 +4770,7 @@ function bindShell() {
       edit_intent: (card.edit_kind === "krea_edit" && tuneMode() === "auto") ? kreaKind(prompt, Math.min(state.images.length, most)) : null,
       keep_face: !!(card.edit_kind === "krea_edit" && $("krea-keepface") && $("krea-keepface").checked),
       keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
+      understanding: !$("auto-assist") || $("auto-assist").checked,
       overrides: manualOverrides(),
       videos: window.__mediaInBody ? window.__mediaInBody().videos : [],
       audios: window.__mediaInBody ? window.__mediaInBody().audios : [],
@@ -4752,6 +4779,8 @@ function bindShell() {
       applyModelRecipe(false);
       body.steps = $("steps").value; body.cfg = $("cfg").value;
       document.querySelectorAll("#wf-models select").forEach((sel) => { body.models[sel.dataset.key] = sel.value; });
+      if (body.edit_intent === "bodyswap" && window.__swapLora("body_swap_v"))   // the BFS recipe: body swap LoRA at 0.5
+        body.loras = (body.loras || []).concat([{ name: window.__swapLora("body_swap_v"), strength: 0.5 }]);
     }
     let resp, data;
     try {
@@ -7976,3 +8005,142 @@ function bindShell() {
   if ($("queue-close")) $("queue-close").addEventListener("click", () => hidePops());
 })();
 
+
+/* ===== "This engine" guide in the ? pill v20261112w =====
+   What the loaded engine is for, how to prompt it, and its practical tips. Built-in engines have written guides;
+   an uploaded workflow gets one made from what the app read in it. */
+(function () {
+  const G = {
+    builtin_t2i: { what: "MiniMax H3 Image: photoreal or graphic pictures from a description.",
+      how: "Describe the whole picture in plain sentences: subject, what they're doing, place, light, camera. Short ideas work too: switch on Enhance and it writes the full description for you.",
+      tips: ["6 steps, CFG 1 is the tuned setting; 8 steps adds a little detail.", "Up to 4 MP; use the size pill for the shape."] },
+    builtin_edit: { what: "MiniMax H3 Image edit: changes a picture you add, or combines several (up to 16).",
+      how: "Say the change and name pictures as <Picture 1>, <Picture 2> (Image 1, img1 and @Image1 work too). One change per run is most reliable.",
+      tips: ["Inpaint (paint an area) limits the change to that area.", "Mark labels parts of the picture so the prompt can point at them.", "Keep clothing (Settings) stops edits from changing what people wear."] },
+    krea2_t2i: { what: "Krea 2 Turbo: realistic pictures with strong aesthetics.",
+      how: "Natural photographic language in 1-3 rich sentences: subject, setting, light quality, texture, lens and mood. No tag lists.",
+      tips: ["8 steps, CFG 1, euler / simple.", "Raw model: 28 steps, CFG 3.5 for more detail."] },
+    krea2_edit: { what: "Krea 2 Edit: edits a picture from one plain instruction; a second picture can be a person to place into it.",
+      how: "Write the edit as one short command: “Turn her to a left-facing side profile, full body.” “Change her outfit to a red raincoat.”",
+      tips: ["Auto picks Identity Edit (pose, angle, new place) or General Edit (outfits, removals, background, light) from your words.",
+        "Size “Original” is best for pose changes; a picked size up to 2 MP also works.",
+        "Keep face (Settings) adds a line that holds the face; full masks and helmets automatically hide the hair.",
+        "Removals clean up best on the Raw model.",
+        "Head swap: add the body picture first, then the head picture, and say “head swap” (needs the BFS Head Swap LoRA). “Body swap” puts the whole person from picture 2 in."] },
+    krea2_paint: { what: "Krea 2 Paint: repaints only the area you paint with Inpaint; the rest stays pixel for pixel.",
+      how: "Describe the finished picture, not the change: “a sunny garden lawn with a small wooden bench”.",
+      tips: ["Paint a little past the edges of what should change.", "8 steps, CFG 1."] },
+    krea2_style: { what: "Krea 2 style from pictures: a new picture in the look of 1-2 pictures you add.",
+      how: "Describe the new subject and scene; the pictures supply the style.", tips: [] },
+    klein9b_t2i: { what: "FLUX.2 Klein 9B: fast, detailed pictures.",
+      how: "Concrete prose with the main subject first, then setting, light, materials, camera and style. 40-120 words. No keyword lists.", tips: [] },
+    klein9b_edit: { what: "FLUX.2 Klein 9B edit: edits with one or more reference pictures.",
+      how: "Describe the change and refer to the pictures as image 1, image 2.", tips: [] },
+    moss_t2i: { what: "MOSS Image: reads long scene captions very closely.",
+      how: "Write a full scene caption: every subject with position, clothing and pose, then the setting, light and camera.",
+      tips: ["KroMOSS / Base: 50 steps, CFG 3, euler. SFT: 25 steps, CFG 2.5. With the 8-step DMD2 LoRA: 8 steps, CFG 1.", "1-2 MP is its range."] },
+    qwen21_t2i: { what: "Qwen Image 2.1: great with long prompts and text in pictures.",
+      how: "One long flowing paragraph from foreground to background. Put any text that must appear in double quotes.", tips: [] },
+    qwen21_edit: { what: "Qwen Image 2.1 edit: edits with up to 4 pictures.",
+      how: "Say the change and refer to Picture 1, Picture 2. Text to change goes in double quotes.", tips: [] },
+    qwen_edit2509: { what: "Qwen Image Edit 2509: precise edits with up to 3 pictures.",
+      how: "Say the change plainly and name the pictures (Picture 1...).", tips: ["Slower: 20 steps."] },
+    h3_video: { what: "MiniMax H3 video: clips with sound from text, a start picture or references.",
+      how: "Describe what happens over time: the action, how the camera moves, and the sound. For a start picture, describe the motion rather than how things look.",
+      tips: ["Reference to video: name the pictures as <Picture 1>...", "Long video joins several clips seamlessly."] },
+    ltx23: { what: "LTX 2.3 video: image to video, text to video, first + last frame and style transitions.",
+      how: "One paragraph about the motion and camera; for first + last frame, describe how the scene gets from one to the other.", tips: [] },
+  };
+  function guideFor() {
+    const a = window.__wfActive && window.__wfActive();
+    if (!a) return Object.assign({ name: "MiniMax H3 (built-in)" }, state.mode === "edit" ? G.builtin_edit : G.builtin_t2i);
+    const c = a.card || {}, id = c.id || "";
+    let g = G[id] || (/^h3_/.test(id) ? G.h3_video : /^ltx23_/.test(id) ? G.ltx23 : null);
+    if (!g && c.family === "MOSS") g = G.moss_t2i;
+    if (g) return Object.assign({ name: c.name }, g);
+    // an uploaded workflow: from what the app read in it
+    const s = c.slots || {};
+    const TASK = { t2i: "makes pictures from text", edit: "edits the pictures you add", t2v: "makes videos from text",
+      i2v: "turns a picture into a video", r2v: "makes a video from reference pictures", v2v: "edits or drives a video you add" };
+    const needs = [];
+    if (c.picture_min) needs.push(c.picture_min + " picture" + (c.picture_min === 1 ? "" : "s"));
+    if (c.video_min) needs.push(c.video_min + " video" + (c.video_min === 1 ? "" : "s"));
+    if (c.audio_min) needs.push(c.audio_min + " audio clip" + (c.audio_min === 1 ? "" : "s"));
+    const ctl = ["prompt", "negative", "width", "seed", "steps", "cfg", "length", "models"].filter((k) => (s[k] || []).length)
+      .map((k) => ({ prompt: "prompt", negative: "negative prompt", width: "size", seed: "seed", steps: "steps", cfg: "CFG", length: "length", models: "models" })[k]);
+    return { name: c.name, what: (c.family || "This workflow") + " (uploaded): " + (TASK[c.task] || "runs your workflow") + ".",
+      how: (needs.length ? "Add " + needs.join(" and ") + " with +, then write" : "Write") + " the prompt the way this model's own guide suggests.",
+      tips: ["The app controls: " + (ctl.join(", ") || "the prompt") + ".", "Settings → Manual lists every other value in the workflow.",
+        c.sampling_note || "Steps and CFG start at the workflow's own values."] };
+  }
+  const base = renderHelp;
+  renderHelp = function () {
+    base.apply(this, arguments);
+    const box = $("help-engine");
+    if (!box) return;
+    const g = guideFor();
+    const esc = (t) => String(t || "").replace(/[&<>]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[ch]);
+    box.innerHTML = '<p class="pop-label">This engine · ' + esc(g.name) + "</p>"
+      + "<p class=\"help-what\">" + esc(g.what) + "</p>"
+      + "<p class=\"help-how\"><b>How to prompt:</b> " + esc(g.how) + "</p>"
+      + ((g.tips || []).length ? "<ul class=\"help-list\">" + g.tips.map((t) => "<li>" + esc(t) + "</li>").join("") + "</ul>" : "")
+      + '<p class="pop-label help-general">General tips</p>';
+  };
+})();
+
+
+/* ===== Auto understanding: your additions v20261112x ===== */
+(function () {
+  if (!$("und-group")) return;
+  let scope = "engine", data = { all: {}, engine: {} };
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const eng = () => (!state.engine || state.engine === "none" ? "builtin" : state.engine);
+  function cur() { return (scope === "all" ? data.all : data.engine) || {}; }
+  function addRow(from, to) {
+    const row = document.createElement("div");
+    row.className = "und-row";
+    row.innerHTML = '<input type="text" class="und-from" placeholder="word" aria-label="Word" value="' + esc(from) + '">'
+      + '<span class="und-arrow" aria-hidden="true">\u2192</span>'
+      + '<input type="text" class="und-to" placeholder="what it means" aria-label="What it means" value="' + esc(to) + '">'
+      + '<button type="button" class="icon-btn sm" aria-label="Remove">\u2715</button>';
+    row.querySelector("button").addEventListener("click", () => row.remove());
+    $("und-words").appendChild(row);
+  }
+  function render() {
+    document.querySelectorAll("#und-scope button").forEach((b) => b.classList.toggle("is-on", b.dataset.und === scope));
+    const c = cur();
+    $("und-words").innerHTML = "";
+    (c.words || []).forEach((w) => addRow(w.from, w.to));
+    if (!(c.words || []).length) addRow("", "");
+    $("und-extra").value = c.extra || "";
+    const n = ((data.all.words || []).length + (data.all.extra ? 1 : 0)) + ((data.engine.words || []).length + (data.engine.extra ? 1 : 0));
+    $("und-badge").textContent = n ? "yours" : "";
+    $("und-revert").disabled = !((c.words || []).length || c.extra);
+  }
+  async function load() {
+    try { data = await api("/api/understanding?engine=" + encodeURIComponent(eng())); } catch (e) { data = { all: {}, engine: {} }; }
+    render();
+  }
+  async function send(body) {
+    try {
+      await api("/api/understanding", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ engine: eng(), scope }, body)) });
+      await load();
+      return true;
+    } catch (e) { showError(e.message || "Couldn't save that."); return false; }
+  }
+  $("und-add-word").addEventListener("click", () => addRow("", ""));
+  $("und-save").addEventListener("click", async () => {
+    const words = [...document.querySelectorAll("#und-words .und-row")].map((r) => ({
+      from: r.querySelector(".und-from").value.trim(), to: r.querySelector(".und-to").value.trim() })).filter((w) => w.from && w.to);
+    if (await send({ words, extra: $("und-extra").value })) toast("Saved for " + (scope === "all" ? "all engines" : "this engine"));
+  });
+  $("und-revert").addEventListener("click", async () => {
+    if (!window.confirm("Remove your additions for " + (scope === "all" ? "all engines" : "this engine") + "? The built-in understanding stays as shipped.")) return;
+    if (await send({ reset: true })) toast("Back to the original understanding");
+  });
+  document.querySelectorAll("#und-scope button").forEach((b) => b.addEventListener("click", () => { scope = b.dataset.und; render(); }));
+  const pop = $("settings-pop");
+  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(); })
+    .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
+})();

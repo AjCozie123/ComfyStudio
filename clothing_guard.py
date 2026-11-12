@@ -24,6 +24,35 @@ _GARMENT = re.compile(
 
 NEG_WORDS = "nude, naked, topless, undressed, missing clothing, exposed body"
 
+# headwear that covers the WHOLE head: the hair must disappear inside it (models tend to leave hair poking out)
+_FULL_HEAD = re.compile(
+    r"\b(full[- ]?(?:face|head)\s+mask|(?:superhero|spider[- ]?man|spiderman|batman|deadpool|venom|ninja|luchador|"
+    r"wrestling|ski|gimp|latex|rubber|mascot|horse|animal)\s+(?:mask|hood|head)|balaclava|helmet|motorcycle helmet|"
+    r"space helmet|knight'?s? helm|gas mask|hazmat hood|full[- ]head|head[- ]?to[- ]?toe (?:suit|costume)|"
+    r"(?:suit|costume|outfit) (?:and|with) (?:a |the )?(?:full )?(?:mask|hood|helmet)|hood up|hooded mask)\b", re.I)
+# small coverings where hair normally shows: leave alone
+_PARTIAL = re.compile(r"\b(eye mask|half[- ]?mask|domino mask|masquerade mask|face mask|surgical mask|sleep mask|"
+                      r"mouth mask|bandana|cap|beanie|hat|headband|visor)\b", re.I)
+
+
+def headgear_clause(user_prompt, mode, style=""):
+    """One line so a full mask / helmet hides the hair, or '' when the prompt adds no full-head covering."""
+    t = user_prompt or ""
+    if not _FULL_HEAD.search(t) or (_PARTIAL.search(t) and not re.search(r"full|helmet|balaclava|whole head", t, re.I)):
+        return ""
+    if style == "plain":
+        return "It covers the whole head: no hair shows outside it."
+    who = "the person in <Picture 1>" if mode == "edit" else "the person"
+    return ("The mask / headwear covers the whole head of %s: all of the hair is hidden inside it, "
+            "with no hair, ears or skin showing around its edges." % who)
+
+
+def apply_headgear(prompt_sent, user_prompt, mode, style=""):
+    c = headgear_clause(user_prompt, mode, style)
+    if not c or "covers the whole head" in (prompt_sent or "").lower():
+        return prompt_sent, False
+    return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
+
 
 def about_clothes(text):
     return bool(_ABOUT_CLOTHES.search(text or ""))

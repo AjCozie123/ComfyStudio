@@ -30,7 +30,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261112v">
+  <link rel="stylesheet" href="/static/app.css?v=20261112y">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -494,7 +494,8 @@
   </div>
 
   <div id="help-pop" class="pop hidden" role="dialog" aria-label="Help" hidden>
-    <div class="pop-head"><h3>Tips</h3></div>
+    <div class="pop-head"><h3>Help</h3></div>
+    <div id="help-engine" class="help-engine"></div>
     <ul class="help-list" id="help-list"></ul>
   </div>
 
@@ -551,6 +552,26 @@
         <label class="field">Scheduler <select id="scheduler"></select></label>
       </div>
       <p class="pop-note" id="sampling-note">The distilled model is tuned for 6 steps and CFG 1. 8 steps also works well.</p>
+    </div>
+    <div class="settings-group" id="und-group">
+      <div class="knobs-head">
+        <p class="pop-label">Auto understanding: your additions <span class="knobs-count" id="und-badge"></span></p>
+        <div class="seg" id="und-scope" role="tablist" aria-label="Which engines">
+          <button type="button" class="is-on" data-und="engine">This engine</button>
+          <button type="button" data-und="all">All engines</button>
+        </div>
+      </div>
+      <p class="pop-note">Added on top of the app's own understanding while Auto understanding is on. Revert removes them, so the
+        built-in behaviour is exactly as shipped.</p>
+      <p class="pop-label und-sub">My words</p>
+      <div id="und-words" class="und-words"></div>
+      <button type="button" class="chip-btn" id="und-add-word">+ Add word</button>
+      <p class="pop-label und-sub">Always add</p>
+      <textarea id="und-extra" class="search-box" rows="3" placeholder="e.g. Keep her tattoos visible. Natural skin texture." aria-label="Sentences added to every prompt"></textarea>
+      <div class="pe-sys-actions">
+        <button type="button" class="chip-btn primary" id="und-save">Save</button>
+        <button type="button" class="chip-btn" id="und-revert">Revert to original</button>
+      </div>
     </div>
     <div class="settings-group" id="keep-cloth-group">
       <p class="pop-label">Keep clothing</p>
@@ -872,6 +893,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20261112v"></script>
+  <script src="/static/app.js?v=20261112y"></script>
 </body>
 </html>

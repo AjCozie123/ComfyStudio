@@ -1357,3 +1357,17 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 .gsr-more { align-self: flex-start; margin: 2px 0 0 4px; font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px;
   background: var(--surface-3); color: var(--text); border: 1px solid var(--line); }
 .gsr-more:hover { background: var(--surface-2); }
+
+/* ===== Engine guide v20261112w ===== */
+.help-engine .help-what { margin: 4px 0 6px; font-size: 14px; line-height: 1.45; }
+.help-engine .help-how { margin: 0 0 6px; font-size: 13px; line-height: 1.45; color: var(--text); }
+.help-engine .help-general { margin-top: 12px; }
+#help-pop { max-height: 75vh; overflow-y: auto; }
+
+/* ===== Auto understanding additions v20261112x ===== */
+.und-sub { margin-top: 10px; }
+.und-words { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+.und-row { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 2fr) auto; gap: 6px; align-items: center; }
+.und-row input { height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2);
+  color: var(--text); font-size: 13px; min-width: 0; }
+.und-arrow { color: var(--muted); }

@@ -1,0 +1,154 @@
+{
+ "id": "h3_recast",
+ "name": "MiniMax H3 Max · Cast swap (paid)",
+ "description": "Swap the people in a finished clip for the people in 1-4 photos. Keeps the motion, framing, cuts and sound. Runs on Comfy.org's servers and spends your Comfy.org credits.",
+ "family": "MiniMax H3",
+ "task": "v2v",
+ "media": "video",
+ "builtin": true,
+ "alternative": "",
+ "api": true,
+ "enhance": false,
+ "dialect": "minimax_recast",
+ "assist": false,
+ "picture_min": 1,
+ "picture_max": 4,
+ "video_min": 1,
+ "video_max": 1,
+ "audio_min": 0,
+ "audio_max": 0,
+ "resolutions": [
+  "480p",
+  "768p",
+  "1080p"
+ ],
+ "all_resolutions": [
+  "480p",
+  "768p",
+  "1080p"
+ ],
+ "default_resolution": "768p",
+ "aspects": [],
+ "slots": {
+  "prompt": [
+   {
+    "node": "3",
+    "input": "model.prompt",
+    "label": "Prompt"
+   }
+  ],
+  "seed": [
+   {
+    "node": "3",
+    "input": "model.seed",
+    "label": "Seed",
+    "mod": 4294967296
+   }
+  ],
+  "images": [
+   {
+    "node": "img1",
+    "input": "image",
+    "label": "Person 1",
+    "class_type": "LoadImage"
+   },
+   {
+    "node": "img2",
+    "input": "image",
+    "label": "Person 2",
+    "class_type": "LoadImage",
+    "if_missing": {
+     "delete": [
+      "img2",
+      "img3",
+      "img4"
+     ],
+     "unset": [
+      [
+       "3",
+       "model.reference_images.image_2"
+      ],
+      [
+       "3",
+       "model.reference_images.image_3"
+      ],
+      [
+       "3",
+       "model.reference_images.image_4"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "img3",
+    "input": "image",
+    "label": "Person 3",
+    "class_type": "LoadImage",
+    "if_missing": {
+     "delete": [
+      "img3",
+      "img4"
+     ],
+     "unset": [
+      [
+       "3",
+       "model.reference_images.image_3"
+      ],
+      [
+       "3",
+       "model.reference_images.image_4"
+      ]
+     ]
+    }
+   },
+   {
+    "node": "img4",
+    "input": "image",
+    "label": "Person 4",
+    "class_type": "LoadImage",
+    "if_missing": {
+     "delete": [
+      "img4"
+     ],
+     "unset": [
+      [
+       "3",
+       "model.reference_images.image_4"
+      ]
+     ]
+    }
+   }
+  ],
+  "videos": [
+   {
+    "node": "1",
+    "input": "file",
+    "label": "Video",
+    "class_type": "LoadVideo"
+   }
+  ],
+  "res_label": {
+   "node": "3",
+   "input": "model.resolution",
+   "label": "Resolution",
+   "map": {
+    "480p": "480P",
+    "768p": "768P",
+    "1080p": "1080P"
+   }
+  }
+ },
+ "outputs": [
+  {
+   "node": "4",
+   "kind": "video",
+   "class_type": "SaveVideo"
+  }
+ ],
+ "defaults": {
+  "seed": 42
+ },
+ "sampling_note": "Cast swap runs on MiniMax's servers through Comfy.org: no steps or CFG. The clip must be 5-30 s, with no single shot over 15 s. The original sound is kept.",
+ "keeps_clip": true,
+ "supports_loras": false
+}

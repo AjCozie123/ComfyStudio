@@ -1,0 +1,96 @@
+{
+ "1": {
+  "class_type": "LoadVideo",
+  "inputs": {
+   "file": "_cs_placeholder.mp4"
+  },
+  "_meta": {
+   "title": "Video to recast"
+  }
+ },
+ "3": {
+  "class_type": "MinimaxHailuo03MaxRecastNode",
+  "_meta": {
+   "title": "MiniMax H3 Max Recast"
+  },
+  "inputs": {
+   "model": "MiniMax H3 Max",
+   "model.prompt": "",
+   "model.resolution": "768P",
+   "model.enhance_realism": true,
+   "model.seed": 42,
+   "model.video": [
+    "1",
+    0
+   ],
+   "model.reference_images.image_1": [
+    "img1",
+    0
+   ],
+   "model.reference_images.image_2": [
+    "img2",
+    0
+   ],
+   "model.reference_images.image_3": [
+    "img3",
+    0
+   ],
+   "model.reference_images.image_4": [
+    "img4",
+    0
+   ]
+  }
+ },
+ "4": {
+  "class_type": "SaveVideo",
+  "inputs": {
+   "filename_prefix": "ComfyStudio/h3_recast",
+   "format": "auto",
+   "codec": "auto",
+   "video": [
+    "3",
+    0
+   ],
+   "format.codec": "auto"
+  },
+  "_meta": {
+   "title": "Save Video"
+  }
+ },
+ "img1": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  },
+  "_meta": {
+   "title": "Person 1"
+  }
+ },
+ "img2": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  },
+  "_meta": {
+   "title": "Person 2"
+  }
+ },
+ "img3": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  },
+  "_meta": {
+   "title": "Person 3"
+  }
+ },
+ "img4": {
+  "class_type": "LoadImage",
+  "inputs": {
+   "image": "_cs_placeholder.png"
+  },
+  "_meta": {
+   "title": "Person 4"
+  }
+ }
+}

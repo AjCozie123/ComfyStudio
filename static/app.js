@@ -8048,6 +8048,10 @@ function bindShell() {
     h3_video: { what: "MiniMax H3 video: clips with sound from text, a start picture or references.",
       how: "Describe what happens over time: the action, how the camera moves, and the sound. For a start picture, describe the motion rather than how things look.",
       tips: ["Reference to video: name the pictures as <Picture 1>...", "Long video joins several clips seamlessly."] },
+    h3_recast: { what: "MiniMax H3 Max Cast swap (paid): replaces the people in a finished clip with the people in 1-4 photos, keeping motion, framing, cuts and sound.",
+      how: "Add the video, then one photo per new person (left to right in the video). Say who becomes whom and what must stay: “@Image1 is now the woman in the video: keep her speaking to camera, same room, same framing.” Don't describe the new person's looks; the photo sets them.",
+      tips: ["Needs your Comfy.org API key (Settings) and spends Comfy.org credits each run.", "Clip 5-30 s, no single shot over 15 s.",
+        "Picture 1 / Image 1 are written as @Image1 for you.", "Clothes follow the photo too."] },
     ltx23: { what: "LTX 2.3 video: image to video, text to video, first + last frame and style transitions.",
       how: "One paragraph about the motion and camera; for first + last frame, describe how the scene gets from one to the other.", tips: [] },
   };
@@ -8143,4 +8147,41 @@ function bindShell() {
   const pop = $("settings-pop");
   if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(); })
     .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
+})();
+
+
+/* ===== Comfy.org API key (paid engines) v20261112z ===== */
+(function () {
+  if (!$("corg-group")) return;
+  async function load() {
+    try { const d = await api("/api/comfyorg"); $("corg-state").textContent = d.set ? "saved " + (d.hint || "") : "not set";
+      $("corg-clear").disabled = !d.set; } catch (e) {}
+  }
+  $("corg-save").addEventListener("click", async () => {
+    const k = $("corg-key").value.trim();
+    if (!k) return;
+    try {
+      await api("/api/comfyorg", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: k }) });
+      $("corg-key").value = ""; toast("Comfy.org key saved on this PC"); load();
+    } catch (e) { showError(e.message || "Couldn't save the key."); }
+  });
+  $("corg-clear").addEventListener("click", async () => {
+    if (!window.confirm("Remove the Comfy.org key from this PC? Paid engines stop working until you add one again.")) return;
+    try { await api("/api/comfyorg", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clear: true }) });
+      toast("Key removed"); load(); } catch (e) { showError(e.message || "Couldn't remove the key."); }
+  });
+  const pop = $("settings-pop");
+  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(); })
+    .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
+  load();
+})();
+
+/* ===== Engines that keep the source clip's length, framing and camera (Cast swap) v20261112z ===== */
+(function () {
+  const base = window.onEngineChanged;
+  window.onEngineChanged = function (active) {
+    if (base) base.apply(this, arguments);
+    const c = active && active.card;
+    document.body.classList.toggle("clip-framed", !!(c && c.media === "video" && c.keeps_clip));
+  };
 })();

@@ -101,6 +101,14 @@ for card in cards:
             "seed": 1, "images": pics[:n], "width": 1024, "height": 1024}
     if card.get("media") == "video":
         base.update(seconds=2, fps=(card.get("defaults") or {}).get("fps") or 24)
+    if card.get("video_min"):
+        vids = sorted(f for f in os.listdir(S.INPUT) if f.lower().endswith(".mp4"))[: card["video_min"]]
+        if len(vids) < card["video_min"]:
+            results.append((False, "%s (%s)" % (card.get("name", wid), wid), "no .mp4 in the input folder to test with"))
+            continue
+        base["videos"] = vids
+    if card.get("api"):
+        S.comfy_org_key = lambda: "dryrun_placeholder_not_a_key"   # /prompt is faked above: nothing is sent
     if card.get("edit_kind") == "anypaint" or card.get("native_mask"):
         import base64, io as _io
         from PIL import ImageDraw
@@ -113,6 +121,9 @@ for card in cards:
         for intent in ("action", "restage", "remove", "general"):
             run("  Krea 2 Edit auto: %s" % intent, dict(base, edit_intent=intent))
         run("  Krea 2 Edit two pictures", dict(base, images=pics[:2], edit_intent="insert"))
+        for intent in ("headswap", "bodyswap"):
+            run("  Krea 2 Edit %s" % intent, dict(base, images=pics[:2], edit_intent=intent,
+                                                   models={"1": "Krea2\\bfs_head_swap_v1.1_krea2.safetensors"}))
         run("  Krea 2 Edit manual overrides", dict(base, overrides={"patch.ref_boost": 1.5, "pos.grounding_px": 512}))
 
 # ---------------------------------------------------------------- clean up the synthetic pictures

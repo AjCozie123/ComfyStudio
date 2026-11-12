@@ -1143,7 +1143,8 @@ def fill(card, graph, values, out_prefix):
     if seed is None:
         seed = random.randint(1, 2 ** 50)
     for slot in s.get("seed") or []:
-        _set(g, slot, int(seed) + int(slot.get("offset") or 0))
+        sv = int(seed) + int(slot.get("offset") or 0)
+        _set(g, slot, sv % int(slot["mod"]) if slot.get("mod") else sv)
     if values.get("seconds") not in (None, ""):
         for slot in s.get("seconds") or []:
             _set(g, slot, float(values["seconds"]))

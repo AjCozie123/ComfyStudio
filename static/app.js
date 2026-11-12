@@ -1144,6 +1144,7 @@ async function generate() {
     pe_tokens: state.peTokens || null,
     keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
     keep_quality: !$("keep-quality") || $("keep-quality").checked,
+    tune_mode: tuneMode(),
     understanding: !$("auto-assist") || $("auto-assist").checked,
     random_seed: $("random-seed").checked,
     seed: $("random-seed").checked ? null : Number($("seed").value || 0),
@@ -4790,6 +4791,7 @@ function bindShell() {
       keep_face: !!(card.edit_kind === "krea_edit" && $("krea-keepface") && $("krea-keepface").checked),
       keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
       keep_quality: !$("keep-quality") || $("keep-quality").checked,
+      tune_mode: tuneMode(),
       understanding: !$("auto-assist") || $("auto-assist").checked,
       overrides: manualOverrides(),
       videos: window.__mediaInBody ? window.__mediaInBody().videos : [],
@@ -8355,4 +8357,37 @@ function bindShell() {
     try { localStorage.setItem("cs.keepquality", cb.checked ? "1" : "0"); } catch (e) {}
     toast(cb.checked ? "Edits keep the original image quality" : "Image quality guard off");
   });
+})();
+
+
+/* ===== Auto decides the prompt helpers v20261112zj =====
+   Auto: Keep clothing / Keep image quality / Keep face are chosen for each instruction by the server (a removal
+   gets nothing extra, a face edit doesn't lock the face, everything else gets them). Manual: the ticks apply.
+   In Auto the ticks are shown greyed with a note, so it's clear they aren't what decides. */
+(function () {
+  const groups = ["keep-cloth-group", "keep-quality-group", "krea-keepface-group"];
+  function sync() {
+    const auto = tuneMode() === "auto";
+    groups.forEach((id) => {
+      const g = $(id);
+      if (!g) return;
+      g.querySelectorAll("input[type=checkbox]").forEach((cb) => { cb.disabled = auto; });
+      g.classList.toggle("auto-decides", auto);
+      let n = g.querySelector(".auto-note");
+      if (!n) {
+        n = document.createElement("p");
+        n.className = "pop-note auto-note";
+        n.textContent = "Auto: chosen for each instruction (a removal gets nothing extra; a face edit doesn't lock the face). Switch to Manual to set it yourself.";
+        const label = g.querySelector(".check-row");
+        if (label && label.nextSibling) g.insertBefore(n, label.nextSibling); else g.appendChild(n);
+      }
+      n.classList.toggle("hidden", !auto);
+    });
+  }
+  document.querySelectorAll("#tune-seg button").forEach((b) => b.addEventListener("click", () => setTimeout(sync, 0)));
+  const pop = $("settings-pop");
+  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) sync(); })
+    .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
+  window.__syncAutoGuards = sync;
+  sync();
 })();

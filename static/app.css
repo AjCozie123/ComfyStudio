@@ -1392,3 +1392,7 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 /* ===== error bar readable over pictures v20261112zg ===== */
 .dock-alert { background: #3a1416; border-color: rgba(255,107,107,.6); box-shadow: 0 6px 20px rgba(0,0,0,.45); }
 .dock-alert .error { font-size: 14px; line-height: 1.4; color: #ffe1e1; font-weight: 500; }
+
+/* ===== Auto decides the helpers v20261112zj ===== */
+.auto-decides .check-row { opacity: .55; }
+.auto-note { color: var(--accent, #8ab4ff); }

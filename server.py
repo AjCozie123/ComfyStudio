@@ -874,6 +874,18 @@ def server_error_text(e):
     return "Something went wrong on the PC (%s). The full details are in app.log in the data folder." % what
 
 
+def guard_on(data, name, n_images=0):
+    """Whether a prompt helper (keep_clothing / only_garment / keep_quality / keep_face) applies to this job.
+    Auto (Settings): decided from the instruction itself. Manual: the user's own ticks, exactly."""
+    if (data.get("tune_mode") or "") == "auto":
+        return bool(CG.auto_guards(data.get("prompt") or "", n_images).get(name, True))
+    if name == "keep_face":
+        return data.get("keep_face") is True          # off unless ticked
+    if name == "only_garment":
+        name = "keep_clothing"                        # part of Keep clothing
+    return data.get(name) is not False
+
+
 def _has_node(name):
     try:
         return name in object_info()
@@ -1587,18 +1599,18 @@ def submit_workflow_job(data):
         elif prompt:
             prompt = (prompt.rstrip(" .") + ". Keep the framing, lighting, colours and edges of the picture the same "
                       "so the change blends in seamlessly.")
-    if prompt and card.get("edit_kind") == "krea_edit" and data.get("keep_face") is True \
+    if prompt and card.get("edit_kind") == "krea_edit" and guard_on(data, "keep_face", len(images or [])) \
             and "facial identity" not in prompt.lower():
         # the Krea 2 Edit notes' own fix for faces drifting generic
         prompt = prompt.strip().rstrip(" .") + ". Preserve the exact facial identity."
     # keep the subject's clothing when the edit isn't about clothing (on unless the user switched it off)
-    keep_cloth = data.get("keep_clothing") is not False and card.get("edit_kind") != "anypaint" and card.get("media") == "image" \
+    keep_cloth = guard_on(data, "keep_clothing", len(images or [])) and card.get("edit_kind") != "anypaint" and card.get("media") == "image" \
         and ASSIST.swap_intent(data.get("prompt") or "", len(images or [])) not in ("body_swap", "subject_into_environment", "clothing_transfer")
     if prompt and keep_cloth:
         style = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _cg = CG.apply(prompt, data.get("prompt") or "", "edit" if images else "t2i", style)
     # an edit that names one garment changes only that one (the others stay as they are)
-    if (prompt and images and card.get("media") == "image" and data.get("keep_clothing") is not False
+    if (prompt and images and card.get("media") == "image" and guard_on(data, "only_garment", len(images))
             and card.get("edit_kind") != "anypaint" and ASSIST.swap_intent(data.get("prompt") or "", len(images)) not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap")):
         gstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _og = CG.apply_only_garment(prompt, data.get("prompt") or "", "edit", gstyle)
@@ -1606,7 +1618,7 @@ def submit_workflow_job(data):
     if prompt and card.get("media") == "image" and card.get("edit_kind") != "anypaint":
         hstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _hg = CG.apply_headgear(prompt, data.get("prompt") or "", "edit" if images else "t2i", hstyle)
-    keep_q = (data.get("keep_quality") is not False and bool(images) and card.get("media") == "image"
+    keep_q = (guard_on(data, "keep_quality", len(images or [])) and bool(images) and card.get("media") == "image"
               and card.get("edit_kind") != "anypaint" and not data.get("ref_mode") and not data.get("inpaint_mask"))
     if prompt and keep_q:
         qstyle = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
@@ -2551,7 +2563,7 @@ def submit_job(data):
                 enabled=bool(auto_assist), camera=camera, mode="t2i",
             )
             prompt_sent = assist_info.get("prompt") or prompt_user
-        if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
+        if guard_on(data, "keep_clothing", 0) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
@@ -2619,13 +2631,13 @@ def submit_job(data):
             ref_mode = True
             edit_kind = "ref"
             # Keep the user's chosen aspect / Match Picture 1 size. Layout adapts to W x H.
-        if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
+        if guard_on(data, "keep_clothing", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
-        if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
+        if guard_on(data, "only_garment", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
             prompt_sent, _og = CG.apply_only_garment(prompt_sent, data.get("prompt") or "", "edit")
         # an edit keeps the original picture's quality, texture and light (Settings > Keep image quality)
-        if data.get("keep_quality") is not False and not ref_mode and not inpaint:
+        if guard_on(data, "keep_quality", len(images or [])) and not ref_mode and not inpaint:
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")

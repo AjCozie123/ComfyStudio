@@ -189,3 +189,27 @@ def negative_quality(neg, user_prompt, mode):
     if "oversmoothed" in base.lower():
         return neg
     return (base + ", " if base else "") + QUALITY_NEG
+
+
+
+# ------------------------------------------------------------------ Auto: which helpers suit this instruction
+# In Auto the app decides per instruction instead of the Settings ticks (Manual keeps the ticks exactly).
+#   remove / erase   -> nothing extra: the instruction alone is clearest; keep-lines make removals hesitate
+#   face / expression -> no "keep face" line (it would fight the change)
+#   everything else  -> all helpers on; each one still steps aside by itself where it doesn't fit
+#                       (clothing prompts, light / quality / style changes, swaps)
+_REMOVE_EDIT = re.compile(
+    r"\b(remov\w*|eras\w*|delet\w*|get rid of|take (?:off|out|away)|taking (?:off|out)|clean (?:up|out)|"
+    r"without (?:the|her|his|their|any)|no longer (?:has|wearing))\b", re.I)
+_FACE_EDIT = re.compile(
+    r"\b(smil\w*|expression|frown\w*|laugh\w*|wink\w*|pout\w*|makeup|make-up|lipstick|eyeliner|mascara|"
+    r"eyes? (?:open|closed|shut)|close (?:her|his|their) eyes|open (?:her|his|their) mouth|blush\w*|eyebrows?|"
+    r"face|facial|head[- ]?swap\w*|face[- ]?swap\w*|older|younger|age\w*)\b", re.I)
+
+
+def auto_guards(user_prompt, n_images=0):
+    t = user_prompt or ""
+    if _REMOVE_EDIT.search(t):
+        return {"keep_clothing": False, "only_garment": False, "keep_quality": False, "keep_face": False, "why": "removal"}
+    return {"keep_clothing": True, "only_garment": True, "keep_quality": True,
+            "keep_face": not _FACE_EDIT.search(t), "why": "face edit" if _FACE_EDIT.search(t) else "edit"}

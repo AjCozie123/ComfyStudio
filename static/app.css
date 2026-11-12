@@ -1372,9 +1372,11 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
   color: var(--text); font-size: 13px; min-width: 0; }
 .und-arrow { color: var(--muted); }
 
-/* ===== Comfy.org key v20261112z ===== */
-#corg-group .pe-sys-actions { align-items: center; }
-#corg-key { flex: 1 1 auto; min-width: 0; height: 34px; }
-/* the clip sets length, framing and camera: only resolution is a choice */
-body.clip-framed #vlen-pill, body.clip-framed #camera-open, body.clip-framed #vsize-icon, body.clip-framed #vsize-label { display: none; }
-body.clip-framed #vsize-meta { display: inline !important; margin: 0; }
+
+/* ===== Node packs banner v20261112za ===== */
+.np-banner { border: 1px solid var(--line); background: var(--surface-2); border-radius: 14px; padding: 12px 14px; margin: 0 0 12px; }
+.np-title { margin: 0 0 4px; font-weight: 600; color: var(--text); }
+.np-list { margin: 6px 0 10px; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.np-list b { color: var(--text); font-weight: 500; }
+.np-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.np-status { color: var(--muted); font-size: 13px; }

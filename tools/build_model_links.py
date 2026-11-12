@@ -66,11 +66,13 @@ def main():
             except Exception as e:
                 print("  skipped", r["repo"], e)
                 continue
+            sub = (r.get("subdir") or "").strip("/")
             for s in sib:
                 f = s.get("rfilename") or ""
-                if "/" not in f and _re.search(r["pattern"], f):
-                    links.setdefault(f.lower(), {"name": f, "url": "https://huggingface.co/%s/resolve/main/%s" % (r["repo"], f),
-                                                 "directory": r["directory"]})
+                head, _, base = f.rpartition("/")
+                if head == sub and _re.search(r["pattern"], base):
+                    links.setdefault(base.lower(), {"name": base, "url": "https://huggingface.co/%s/resolve/main/%s" % (r["repo"], f),
+                                                    "directory": r["directory"]})
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     json.dump({"generated_from": len(files), "links": dict(sorted(links.items()))}, open(OUT, "w", encoding="utf-8"), indent=1)
     print("templates read:", len(files), "| model links:", len(links), "->", OUT)

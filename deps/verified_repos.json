@@ -1,8 +1,32 @@
 {
-  "note": "Official Hugging Face repos for model files the built-in engines use that ComfyUI's templates don't link. Only files matching 'pattern' are added, with their real names from the repo's file list.",
-  "repos": [
-    {"repo": "conradlocke/krea2-identity-edit", "directory": "loras", "pattern": "^krea2_.*edit.*\\.safetensors$"},
-    {"repo": "yijunwang2/krea2-anypaint", "directory": "loras", "pattern": "^krea2_anypaint.*\\.safetensors$"},
-    {"repo": "QuantStack/Qwen-Image-Edit-2509-GGUF", "directory": "diffusion_models", "pattern": "^Qwen-Image-Edit-2509-Q\\d.*\\.gguf$"}
-  ]
+ "note": "Official Hugging Face repos for model files the built-in engines use that ComfyUI's templates don't link. Only files matching 'pattern' are added, with their real names from the repo's file list. 'subdir' = the folder inside the repo (Kijai's ComfyUI repackage of LTX 2.3 keeps its split VAEs there).",
+ "repos": [
+  {
+   "repo": "conradlocke/krea2-identity-edit",
+   "directory": "loras",
+   "pattern": "^krea2_.*edit.*\\.safetensors$"
+  },
+  {
+   "repo": "yijunwang2/krea2-anypaint",
+   "directory": "loras",
+   "pattern": "^krea2_anypaint.*\\.safetensors$"
+  },
+  {
+   "repo": "QuantStack/Qwen-Image-Edit-2509-GGUF",
+   "directory": "diffusion_models",
+   "pattern": "^Qwen-Image-Edit-2509-Q\\d.*\\.gguf$"
+  },
+  {
+   "repo": "Kijai/LTX2.3_comfy",
+   "subdir": "vae",
+   "directory": "vae",
+   "pattern": "^LTX23_(video|audio)_vae_bf16\\.safetensors$"
+  },
+  {
+   "repo": "Kijai/LTX2.3_comfy",
+   "subdir": "text_encoders",
+   "directory": "text_encoders",
+   "pattern": "^ltx-2\\.3_text_projection_bf16\\.safetensors$"
+  }
+ ]
 }

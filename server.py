@@ -140,11 +140,6 @@ def graph_model(g):
         for k, v in (n.get("inputs") or {}).items():
             if k.lower().startswith("model") and isinstance(v, str) and v.lower().endswith(_MODEL_EXT):
                 return v
-    # a paid API node names its hosted model in "model" (e.g. "MiniMax H3 Max" on the Recast node)
-    for n in nodes:
-        cls, v = str(n.get("class_type") or ""), (n.get("inputs") or {}).get("model")
-        if isinstance(v, str) and v and cls.endswith("Node"):
-            return v + (" Recast" if "Recast" in cls else "")
     return ""
 
 
@@ -1431,36 +1426,6 @@ def start_comfy(profile="everyday"):
     return "Starting ComfyUI. This takes about a minute."
 
 
-COMFY_ORG = os.path.join(DATA, "comfy_org.json")
-
-
-def comfy_org_key():
-    try:
-        return str(json.load(open(COMFY_ORG, encoding="utf-8")).get("api_key") or "").strip()
-    except (OSError, ValueError, AttributeError):
-        return ""
-
-
-def graph_uses_api(graph):
-    """True when a node in the graph is a paid Comfy.org API node (it takes the hidden api_key_comfy_org)."""
-    try:
-        oi = object_info()
-    except Exception:
-        oi = {}
-    for n in (graph or {}).values():
-        hidden = (((oi or {}).get(n.get("class_type")) or {}).get("input") or {}).get("hidden") or {}
-        if "api_key_comfy_org" in hidden:
-            return True
-    return False
-
-
-def comfy_prompt_body(graph):
-    body = {"prompt": graph, "client_id": CLIENT_ID}
-    if graph_uses_api(graph) and comfy_org_key():
-        body["extra_data"] = {"api_key_comfy_org": comfy_org_key()}
-    return body
-
-
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
@@ -1645,9 +1610,6 @@ def submit_workflow_job(data):
                                                    and data.get("edit_intent") in WF.KREA_INTENT_KNOBS) else None,
     }
     g, used_seed = WF.fill(card, graph, values, APP_OUT + "/wf/" + card["id"])
-    if (card.get("api") or graph_uses_api(g)) and not comfy_org_key():
-        raise ValueError("%s runs on Comfy.org's paid API. Add your Comfy.org API key in Settings first "
-                         "(make one at platform.comfy.org, under API keys)." % (card.get("name") or "This engine"))
     # sorted save folder: ComfyStudio/<engine>/<model>/<t2i|edit|video>/<workflow id>_00001_.png
     wf_model = graph_model(g)
     wf_prefix = out_dir(engine_label(card), wf_model, kind_label(card)) + "/" + _seg(card["id"], "workflow")
@@ -2880,7 +2842,7 @@ def _worker():
                         continue
             job["status"] = "running"
             job["message"] = "Starting…"
-            body = comfy_prompt_body(job["graph"])
+            body = {"prompt": job["graph"], "client_id": CLIENT_ID}
             try:
                 resp = comfy("POST", "/prompt", body, timeout=60)
             except ComfyError as e:
@@ -3436,9 +3398,6 @@ class H(BaseHTTPRequestHandler):
             return self.j({"engine": eng, "engine_name": name, "mode": mode, "pe_mode": pe_mode,
                            "default": graphs.default_pe_system(mode, pe_mode), "custom": pe_override(eng, mode),
                            "model_note": note})
-        if path == "/api/comfyorg":
-            k = comfy_org_key()
-            return self.j({"set": bool(k), "hint": ("\u2026" + k[-4:]) if len(k) > 8 else ""})
         if path == "/api/understanding":
             eng = (q.get("engine") or ["builtin"])[0] or "builtin"
             d = UND.load(DATA)
@@ -3446,6 +3405,13 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/nodes/job":
             j = CN.JOBS.get((q.get("id") or [""])[0])
             return self.j(j) if j else self.j({"error": "unknown job"}, 404)
+        if path == "/api/nodes/required":
+            try:
+                have = set(object_info())
+            except Exception:
+                have = set()
+            return self.j({"packs": CN.required_status(HERE, NODES_DIR, have), "comfy_up": bool(have),
+                           "nodes_dir": NODES_DIR, "comfy_python": bool(COMFY_PY)})
         if path == "/api/nodes/custom":
             return self.j({"installed": CN.installed(DATA), "comfy_python": bool(COMFY_PY), "nodes_dir": NODES_DIR})
         if path == "/api/nodes/status":
@@ -3909,18 +3875,6 @@ class H(BaseHTTPRequestHandler):
             json.dump(d, open(tmp, "w", encoding="utf-8"), indent=1, ensure_ascii=False)
             os.replace(tmp, PE_PROMPTS)
             return self.j({"ok": True, "custom": cur.get(mode, "")})
-        if path == "/api/comfyorg":
-            if data.get("clear"):
-                if os.path.exists(COMFY_ORG):
-                    os.replace(COMFY_ORG, COMFY_ORG + ".removed")
-                return self.j({"ok": True, "set": False})
-            k = str(data.get("api_key") or "").strip()
-            if not re.fullmatch(r"[A-Za-z0-9_\-\.]{20,300}", k):
-                return self.j({"error": "That doesn't look like a Comfy.org API key."}, 400)
-            tmp = COMFY_ORG + ".tmp"
-            json.dump({"api_key": k}, open(tmp, "w", encoding="utf-8"))
-            os.replace(tmp, COMFY_ORG)
-            return self.j({"ok": True, "set": True, "hint": "\u2026" + k[-4:]})
         if path == "/api/understanding":
             eng = str(data.get("engine") or "builtin")[:80]
             key = "*" if data.get("scope") == "all" else eng
@@ -3937,6 +3891,17 @@ class H(BaseHTTPRequestHandler):
                     d.pop(key, None)
             UND.save(DATA, d)
             return self.j({"ok": True, "saved": d.get(key) or {}})
+        if path == "/api/nodes/required":
+            try:
+                if not os.path.isdir(NODES_DIR):
+                    raise ValueError("ComfyUI's custom_nodes folder wasn't found.")
+                try:
+                    have = set(object_info(force=True))
+                except Exception:
+                    have = set()
+                return self.j({"job": CN.start_required(HERE, DATA, NODES_DIR, COMFY_PY, have)})
+            except ValueError as e:
+                return self.j({"error": str(e)}, 400)
         if path == "/api/nodes/github":
             try:
                 if not os.path.isdir(NODES_DIR):

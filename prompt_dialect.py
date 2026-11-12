@@ -54,8 +54,6 @@ DIALECTS["ltx"] = {
              "detail that must appear, the camera movement, and the sounds or dialogue. One flowing paragraph, "
              "present tense."),
 }
-# MiniMax H3 Max Recast (cast swap): the photos are @Image1..@Image4 in socket order
-DIALECTS["minimax_recast"] = {"ref": "@Image{n}", "hint": ""}
 GENERIC_VIDEO = {"ref": "image {n}", "hint": "Target: a VIDEO. Describe the action over time, camera movement and sound."}
 GENERIC = {"ref": "image {n}", "hint": "Write one clear, detailed English description of the finished picture."}
 
@@ -65,10 +63,6 @@ _TAG = re.compile(r"<\s*(?:picture|image|pic|img)\s*(\d{1,2})\s*>", re.I)
 def for_card(card: dict) -> dict:
     """The dialect for an engine card (built-in or uploaded workflow)."""
     video = card.get("media") == "video"
-    if card.get("dialect") in DIALECTS:
-        d = dict(DIALECTS[card["dialect"]])
-        d["id"] = card["dialect"]
-        return d
     if card.get("prompt_style") in ("h3", "h3_frames") or (card.get("family") or "").startswith("MiniMax"):
         key = "minimax_h3_video" if video else "minimax_h3_image"
         d = dict(DIALECTS[key])
@@ -96,7 +90,4 @@ def translate(text: str, dialect: dict) -> str:
     ref = dialect.get("ref") or "image {n}"
     if ref == "<Picture {n}>":
         return text
-    text = _TAG.sub(lambda m: ref.format(n=int(m.group(1))), text)
-    if ref.startswith("@"):   # plain "Picture 2" / "photo 2" / "image 2" / "@Image 2" too
-        text = re.sub(r"(?<![\w@])@?(?:picture|image|photo|pic|img|person)\s*(\d)\b", lambda m: ref.format(n=int(m.group(1))), text, flags=re.I)
-    return text
+    return _TAG.sub(lambda m: ref.format(n=int(m.group(1))), text)

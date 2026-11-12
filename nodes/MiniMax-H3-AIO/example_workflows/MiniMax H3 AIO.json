@@ -1,0 +1,1272 @@
+{
+ "id": "4d3ba790-901d-48c2-b281-dd16333f6e39",
+ "revision": 0,
+ "last_node_id": 14,
+ "last_link_id": 10,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "MiniMaxH3MediaLoader",
+   "pos": [
+    0,
+    0
+   ],
+   "size": [
+    660,
+    562
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "media_state",
+     "name": "media_state",
+     "type": "STRING",
+     "widget": {
+      "name": "media_state"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "references",
+     "name": "references",
+     "type": "H3_REFS",
+     "links": [
+      1
+     ]
+    }
+   ],
+   "title": "1  Media Loader - pictures / videos / audio",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3MediaLoader"
+   },
+   "widgets_values": [
+    "[]",
+    null,
+    null,
+    ""
+   ],
+   "widgets_values_named": {
+    "media_state": "[]",
+    "Open loader…": null,
+    "+ Native-output splitter": null,
+    "mml_panel": ""
+   }
+  },
+  {
+   "id": 2,
+   "type": "MiniMaxH3AIOModels",
+   "pos": [
+    0,
+    560
+   ],
+   "size": [
+    380,
+    256
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "model_text_image",
+     "name": "model_text_image",
+     "type": "COMBO",
+     "widget": {
+      "name": "model_text_image"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "model_references",
+     "name": "model_references",
+     "type": "COMBO",
+     "widget": {
+      "name": "model_references"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "text_encoder",
+     "name": "text_encoder",
+     "type": "COMBO",
+     "widget": {
+      "name": "text_encoder"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "video_vae",
+     "name": "video_vae",
+     "type": "COMBO",
+     "widget": {
+      "name": "video_vae"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "audio_vae",
+     "name": "audio_vae",
+     "type": "COMBO",
+     "widget": {
+      "name": "audio_vae"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "image_vae",
+     "name": "image_vae",
+     "type": "COMBO",
+     "widget": {
+      "name": "image_vae"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "speed_lora_name",
+     "name": "speed_lora_name",
+     "type": "COMBO",
+     "widget": {
+      "name": "speed_lora_name"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "keep_text_encoder_loaded",
+     "name": "keep_text_encoder_loaded",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "keep_text_encoder_loaded"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "models",
+     "name": "models",
+     "type": "H3_AIO_MODELS",
+     "links": [
+      5
+     ]
+    }
+   ],
+   "title": "Models (set once)",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOModels"
+   },
+   "widgets_values": [
+    "MiniMax\\minimax_h3_fl2va_pruned_w4a8_mixed_AX1Y2JP.safetensors",
+    "MiniMax\\minimax_h3_ref2va_pruned_w4a8_mixed_AX1Y2JP.safetensors",
+    "MiniMax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "MiniMax\\minimax_h3_video_vae_int8_convrot.safetensors",
+    "MiniMax\\minimax_h3_audio_vae_fp32.safetensors",
+    "MiniMax\\minimax_h3_t1_image_vae_step1597.safetensors",
+    "MiniMax\\minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    false
+   ],
+   "widgets_values_named": {
+    "model_text_image": "MiniMax\\minimax_h3_fl2va_pruned_w4a8_mixed_AX1Y2JP.safetensors",
+    "model_references": "MiniMax\\minimax_h3_ref2va_pruned_w4a8_mixed_AX1Y2JP.safetensors",
+    "text_encoder": "MiniMax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "video_vae": "MiniMax\\minimax_h3_video_vae_int8_convrot.safetensors",
+    "audio_vae": "MiniMax\\minimax_h3_audio_vae_fp32.safetensors",
+    "image_vae": "MiniMax\\minimax_h3_t1_image_vae_step1597.safetensors",
+    "speed_lora_name": "MiniMax\\minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+    "keep_text_encoder_loaded": false
+   }
+  },
+  {
+   "id": 3,
+   "type": "MiniMaxH3AIOLoras",
+   "pos": [
+    0,
+    866
+   ],
+   "size": [
+    380,
+    256
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "lora_1",
+     "name": "lora_1",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_1"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "strength_1",
+     "name": "strength_1",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_1"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "lora_2",
+     "name": "lora_2",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_2"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "strength_2",
+     "name": "strength_2",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_2"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "lora_3",
+     "name": "lora_3",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_3"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "strength_3",
+     "name": "strength_3",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_3"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "lora_4",
+     "name": "lora_4",
+     "type": "COMBO",
+     "widget": {
+      "name": "lora_4"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "strength_4",
+     "name": "strength_4",
+     "type": "FLOAT",
+     "widget": {
+      "name": "strength_4"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "loras",
+     "name": "loras",
+     "type": "H3_AIO_LORAS",
+     "links": [
+      4
+     ]
+    }
+   ],
+   "title": "LoRAs",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOLoras"
+   },
+   "widgets_values": [
+    "MiniMax\\h3-realism-people-t2v-i2v-r2v.safetensors",
+    0.8,
+    "None",
+    0.8,
+    "None",
+    0.8,
+    "None",
+    0.8
+   ],
+   "widgets_values_named": {
+    "lora_1": "MiniMax\\h3-realism-people-t2v-i2v-r2v.safetensors",
+    "strength_1": 0.8,
+    "lora_2": "None",
+    "strength_2": 0.8,
+    "lora_3": "None",
+    "strength_3": 0.8,
+    "lora_4": "None",
+    "strength_4": 0.8
+   }
+  },
+  {
+   "id": 4,
+   "type": "MiniMaxH3AIO",
+   "pos": [
+    460,
+    0
+   ],
+   "size": [
+    400,
+    596
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "references",
+     "name": "references",
+     "shape": 7,
+     "type": "H3_REFS",
+     "link": 1
+    },
+    {
+     "localized_name": "settings",
+     "name": "settings",
+     "shape": 7,
+     "type": "H3_AIO_SETTINGS",
+     "link": 2
+    },
+    {
+     "localized_name": "long_video",
+     "name": "long_video",
+     "shape": 7,
+     "type": "H3_AIO_LONG",
+     "link": 3
+    },
+    {
+     "localized_name": "loras",
+     "name": "loras",
+     "shape": 7,
+     "type": "H3_AIO_LORAS",
+     "link": 4
+    },
+    {
+     "localized_name": "models",
+     "name": "models",
+     "shape": 7,
+     "type": "H3_AIO_MODELS",
+     "link": 5
+    },
+    {
+     "localized_name": "mode",
+     "name": "mode",
+     "type": "COMBO",
+     "widget": {
+      "name": "mode"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "prompt",
+     "name": "prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "use_negative",
+     "name": "use_negative",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "use_negative"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "negative_prompt",
+     "name": "negative_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "negative_prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "cfg",
+     "name": "cfg",
+     "type": "FLOAT",
+     "widget": {
+      "name": "cfg"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "resolution",
+     "name": "resolution",
+     "type": "COMBO",
+     "widget": {
+      "name": "resolution"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "aspect_ratio",
+     "name": "aspect_ratio",
+     "type": "COMBO",
+     "widget": {
+      "name": "aspect_ratio"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "duration_seconds",
+     "name": "duration_seconds",
+     "type": "FLOAT",
+     "widget": {
+      "name": "duration_seconds"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "seed",
+     "name": "seed",
+     "type": "INT",
+     "widget": {
+      "name": "seed"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "inpaint_target",
+     "name": "inpaint_target",
+     "type": "STRING",
+     "widget": {
+      "name": "inpaint_target"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video",
+     "name": "video",
+     "type": "VIDEO",
+     "links": [
+      7
+     ]
+    },
+    {
+     "localized_name": "image",
+     "name": "image",
+     "type": "IMAGE",
+     "links": [
+      8
+     ]
+    },
+    {
+     "localized_name": "info",
+     "name": "info",
+     "type": "STRING",
+     "links": [
+      9
+     ]
+    }
+   ],
+   "title": "2  MiniMax H3 AIO",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIO"
+   },
+   "widgets_values": [
+    "Text to Video",
+    "integrated_multimodal_description: [Shot 1] Handheld phone video, natural light. A young woman with curly dark hair (S1) stands in a sunlit kitchen, smiles at the camera and says warmly: <d>[English] Morning, everyone! Coffee first.</d> She lifts a mug and takes a sip. The camera pushes in with small amplitude at slow speed.\n\noverall_soundscape: Small kitchen room tone, her voice close to the phone mic with a short reflection off the tiles, the soft clink of the mug. Not a voice-over.\n\nnon_diegetic_music: N/A",
+    false,
+    "blurry, low quality, distorted face, warped hands, extra fingers, morphing, flicker, jitter, watermark, subtitles, text overlay, cartoon, plastic skin, oversaturated, voice-over, narration, muffled audio",
+    1.5,
+    "720p (0.9 MP)",
+    "16:9 landscape",
+    5,
+    0,
+    "randomize",
+    "head"
+   ],
+   "widgets_values_named": {
+    "mode": "Text to Video",
+    "prompt": "integrated_multimodal_description: [Shot 1] Handheld phone video, natural light. A young woman with curly dark hair (S1) stands in a sunlit kitchen, smiles at the camera and says warmly: <d>[English] Morning, everyone! Coffee first.</d> She lifts a mug and takes a sip. The camera pushes in with small amplitude at slow speed.\n\noverall_soundscape: Small kitchen room tone, her voice close to the phone mic with a short reflection off the tiles, the soft clink of the mug. Not a voice-over.\n\nnon_diegetic_music: N/A",
+    "use_negative": false,
+    "negative_prompt": "blurry, low quality, distorted face, warped hands, extra fingers, morphing, flicker, jitter, watermark, subtitles, text overlay, cartoon, plastic skin, oversaturated, voice-over, narration, muffled audio",
+    "cfg": 1.5,
+    "resolution": "720p (0.9 MP)",
+    "aspect_ratio": "16:9 landscape",
+    "duration_seconds": 5,
+    "seed": 0,
+    "control_after_generate": "randomize",
+    "inpaint_target": "head"
+   }
+  },
+  {
+   "id": 5,
+   "type": "MiniMaxH3AIOSpeed",
+   "pos": [
+    900,
+    0
+   ],
+   "size": [
+    380,
+    232
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "steps",
+     "name": "steps",
+     "type": "INT",
+     "widget": {
+      "name": "steps"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "speed_lora",
+     "name": "speed_lora",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "speed_lora"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "speed_lora_strength",
+     "name": "speed_lora_strength",
+     "type": "FLOAT",
+     "widget": {
+      "name": "speed_lora_strength"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "spectrum",
+     "name": "spectrum",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "spectrum"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "refine_strength",
+     "name": "refine_strength",
+     "type": "COMBO",
+     "widget": {
+      "name": "refine_strength"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "reference_detail",
+     "name": "reference_detail",
+     "type": "COMBO",
+     "widget": {
+      "name": "reference_detail"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "auto_prompt_format",
+     "name": "auto_prompt_format",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "auto_prompt_format"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "settings",
+     "name": "settings",
+     "type": "H3_AIO_SETTINGS",
+     "links": [
+      2
+     ]
+    }
+   ],
+   "title": "Speed & Quality",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOSpeed"
+   },
+   "widgets_values": [
+    8,
+    true,
+    1,
+    true,
+    "Balanced (3 steps)",
+    "High",
+    true
+   ],
+   "widgets_values_named": {
+    "steps": 8,
+    "speed_lora": true,
+    "speed_lora_strength": 1,
+    "spectrum": true,
+    "refine_strength": "Balanced (3 steps)",
+    "reference_detail": "High",
+    "auto_prompt_format": true
+   }
+  },
+  {
+   "id": 6,
+   "type": "MiniMaxH3AIOPlanner",
+   "pos": [
+    900,
+    306
+   ],
+   "size": [
+    400,
+    420
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "seamless",
+     "name": "seamless",
+     "shape": 7,
+     "type": "H3_AIO_SEAMLESS",
+     "link": 6
+    },
+    {
+     "localized_name": "story",
+     "name": "story",
+     "type": "STRING",
+     "widget": {
+      "name": "story"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "total_seconds",
+     "name": "total_seconds",
+     "type": "FLOAT",
+     "widget": {
+      "name": "total_seconds"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "seconds_per_clip",
+     "name": "seconds_per_clip",
+     "type": "COMBO",
+     "widget": {
+      "name": "seconds_per_clip"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "prompt_format",
+     "name": "prompt_format",
+     "type": "COMBO",
+     "widget": {
+      "name": "prompt_format"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "long_video",
+     "name": "long_video",
+     "type": "H3_AIO_LONG",
+     "links": [
+      3
+     ]
+    },
+    {
+     "localized_name": "plan",
+     "name": "plan",
+     "type": "STRING",
+     "links": [
+      10
+     ]
+    }
+   ],
+   "title": "3  Seamless Planner (Long modes / Extend Video)",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOPlanner"
+   },
+   "widgets_values": [
+    "Handheld phone video, natural light, a sunlit kitchen.\n\nintegrated_multimodal_description: [Shot 1] A young woman with curly dark hair (S1) walks into the kitchen and smiles at the camera. She says: <d>[English] Morning, everyone! Coffee first.</d> The camera follows her at slow speed.\n[Shot 2] At 00:05.000, the camera cuts to a close-up of her hands filling the kettle at the sink.\n[Shot 3] At 00:10.000, she leans on the counter while it boils. The woman (S1) says: <d>[English] Okay. Today is a big day.</d>\n[Shot 4] At 00:15.000, she pours the water into a mug and takes a careful first sip.\n\noverall_soundscape: Small kitchen room tone, her voice close to the phone mic, kettle hiss rising. Not a voice-over.\n\nnon_diegetic_music: N/A",
+    20,
+    "5 s - fastest, most control",
+    "auto"
+   ],
+   "widgets_values_named": {
+    "story": "Handheld phone video, natural light, a sunlit kitchen.\n\nintegrated_multimodal_description: [Shot 1] A young woman with curly dark hair (S1) walks into the kitchen and smiles at the camera. She says: <d>[English] Morning, everyone! Coffee first.</d> The camera follows her at slow speed.\n[Shot 2] At 00:05.000, the camera cuts to a close-up of her hands filling the kettle at the sink.\n[Shot 3] At 00:10.000, she leans on the counter while it boils. The woman (S1) says: <d>[English] Okay. Today is a big day.</d>\n[Shot 4] At 00:15.000, she pours the water into a mug and takes a careful first sip.\n\noverall_soundscape: Small kitchen room tone, her voice close to the phone mic, kettle hiss rising. Not a voice-over.\n\nnon_diegetic_music: N/A",
+    "total_seconds": 20,
+    "seconds_per_clip": "5 s - fastest, most control",
+    "prompt_format": "auto"
+   }
+  },
+  {
+   "id": 7,
+   "type": "MiniMaxH3AIOSeamless",
+   "pos": [
+    900,
+    776
+   ],
+   "size": [
+    380,
+    136
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "carry_over",
+     "name": "carry_over",
+     "type": "COMBO",
+     "widget": {
+      "name": "carry_over"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "audio_fade",
+     "name": "audio_fade",
+     "type": "COMBO",
+     "widget": {
+      "name": "audio_fade"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "picture_blend",
+     "name": "picture_blend",
+     "type": "COMBO",
+     "widget": {
+      "name": "picture_blend"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "seamless",
+     "name": "seamless",
+     "type": "H3_AIO_SEAMLESS",
+     "links": [
+      6
+     ]
+    }
+   ],
+   "title": "Seamless Settings",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOSeamless"
+   },
+   "widgets_values": [
+    "1.6 s (39 frames) - default",
+    "0.2 s - default",
+    "full carry-over - default"
+   ],
+   "widgets_values_named": {
+    "carry_over": "1.6 s (39 frames) - default",
+    "audio_fade": "0.2 s - default",
+    "picture_blend": "full carry-over - default"
+   }
+  },
+  {
+   "id": 8,
+   "type": "MiniMaxH3AIOLongVideo",
+   "pos": [
+    900,
+    962
+   ],
+   "size": [
+    596.249609375,
+    220
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "seamless",
+     "name": "seamless",
+     "shape": 7,
+     "type": "H3_AIO_SEAMLESS",
+     "link": null
+    },
+    {
+     "localized_name": "extra_clips",
+     "name": "extra_clips",
+     "type": "INT",
+     "widget": {
+      "name": "extra_clips"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "seconds_per_clip",
+     "name": "seconds_per_clip",
+     "type": "FLOAT",
+     "widget": {
+      "name": "seconds_per_clip"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clip_1_prompt",
+     "name": "clip_1_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "clip_1_prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clip_2_prompt",
+     "name": "clip_2_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "clip_2_prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clip_3_prompt",
+     "name": "clip_3_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "clip_3_prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clip_4_prompt",
+     "name": "clip_4_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "clip_4_prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clip_5_prompt",
+     "name": "clip_5_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "clip_5_prompt"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "clip_6_prompt",
+     "name": "clip_6_prompt",
+     "type": "STRING",
+     "widget": {
+      "name": "clip_6_prompt"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "long_video",
+     "name": "long_video",
+     "type": "H3_AIO_LONG",
+     "links": null
+    }
+   ],
+   "title": "Alternative: Long Video (one box per clip) - wire to long_video instead of the planner",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOLongVideo"
+   },
+   "widgets_values": [
+    2,
+    5,
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   "widgets_values_named": {
+    "extra_clips": 2,
+    "seconds_per_clip": 5,
+    "clip_1_prompt": "",
+    "clip_2_prompt": "",
+    "clip_3_prompt": "",
+    "clip_4_prompt": "",
+    "clip_5_prompt": "",
+    "clip_6_prompt": ""
+   }
+  },
+  {
+   "id": 9,
+   "type": "MiniMaxH3AIOLivePreview",
+   "pos": [
+    1340,
+    0
+   ],
+   "size": [
+    560,
+    330
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "enabled",
+     "name": "enabled",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "enabled"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [],
+   "title": "Live Preview",
+   "properties": {
+    "Node name for S&R": "MiniMaxH3AIOLivePreview"
+   },
+   "widgets_values": [
+    true
+   ],
+   "widgets_values_named": {
+    "enabled": true
+   }
+  },
+  {
+   "id": 10,
+   "type": "SaveVideo",
+   "pos": [
+    1340,
+    370
+   ],
+   "size": [
+    560,
+    430
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "video",
+     "name": "video",
+     "type": "VIDEO",
+     "link": 7
+    },
+    {
+     "localized_name": "filename_prefix",
+     "name": "filename_prefix",
+     "type": "STRING",
+     "widget": {
+      "name": "filename_prefix"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "format",
+     "name": "format",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "codec",
+     "name": "format.codec",
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "format.codec"
+     },
+     "link": null
+    },
+    {
+     "localized_name": "codec",
+     "name": "codec",
+     "shape": 7,
+     "type": "COMFY_DYNAMICCOMBO_V3",
+     "widget": {
+      "name": "codec"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "video",
+     "name": "video",
+     "type": "VIDEO",
+     "links": null
+    }
+   ],
+   "title": "Video result",
+   "properties": {
+    "Node name for S&R": "SaveVideo"
+   },
+   "widgets_values": [
+    "video/H3_AIO",
+    "auto",
+    "auto",
+    "auto"
+   ],
+   "widgets_values_named": {
+    "filename_prefix": "video/H3_AIO",
+    "format": "auto",
+    "format.codec": "auto",
+    "codec": "auto"
+   }
+  },
+  {
+   "id": 11,
+   "type": "SaveImage",
+   "pos": [
+    1340,
+    840
+   ],
+   "size": [
+    560,
+    340
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "images",
+     "name": "images",
+     "type": "IMAGE",
+     "link": 8
+    },
+    {
+     "localized_name": "filename_prefix",
+     "name": "filename_prefix",
+     "type": "STRING",
+     "widget": {
+      "name": "filename_prefix"
+     },
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "images",
+     "name": "images",
+     "type": "IMAGE",
+     "links": null
+    }
+   ],
+   "title": "Image result (Image Editing)",
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "images/H3_AIO_edit"
+   ],
+   "widgets_values_named": {
+    "filename_prefix": "images/H3_AIO_edit"
+   }
+  },
+  {
+   "id": 12,
+   "type": "PreviewAny",
+   "pos": [
+    1340,
+    1220
+   ],
+   "size": [
+    560,
+    122
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "source",
+     "name": "source",
+     "type": "*",
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "STRING",
+     "name": "STRING",
+     "type": "STRING",
+     "links": null
+    }
+   ],
+   "title": "Run info",
+   "properties": {
+    "Node name for S&R": "PreviewAny"
+   },
+   "widgets_values": [],
+   "widgets_values_named": {}
+  },
+  {
+   "id": 13,
+   "type": "PreviewAny",
+   "pos": [
+    1340,
+    1380
+   ],
+   "size": [
+    560,
+    360
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "localized_name": "source",
+     "name": "source",
+     "type": "*",
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "localized_name": "STRING",
+     "name": "STRING",
+     "type": "STRING",
+     "links": null
+    }
+   ],
+   "title": "Plan - every clip's prompt",
+   "properties": {
+    "Node name for S&R": "PreviewAny"
+   },
+   "widgets_values": [],
+   "widgets_values_named": {}
+  },
+  {
+   "id": 14,
+   "type": "MarkdownNote",
+   "pos": [
+    1940,
+    0
+   ],
+   "size": [
+    520,
+    560
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "title": "Start here",
+   "properties": {},
+   "widgets_values": [
+    "## MiniMax H3 AIO - start here\n\n1. **Pick a mode** in the AIO node. The grey line under it says what to load.\n2. **Load media** in the Media Loader (Picture 1, Video 1, Audio 1 ...).\n3. **Write the prompt** in the AIO node - or, for **Long** modes and **Extend Video**, write the whole video as one story in the **Seamless Planner** (it splits it into clips for you; read them in *Plan*).\n4. **Run.** Watch it in *Live Preview*; the result lands in *Video result* (or *Image result* for Image Editing).\n\nEvery H3 node has an **(i) How to use** button with the full guide for that node / mode.\n\n**Side nodes:** Speed & Quality (steps, turbo, Spectrum, upscale detail), Seamless Settings (how clips join), Models and LoRAs (set once). Unplug any of them and sensible defaults are used.\n\n**Memory:** prompts are encoded once and the 15 GB text encoder is released before the video model loads; if RAM is short the AIO frees memory first and says so in *Run info*. Start ComfyUI with run_comfyui_minimax_h3.bat (no --cache-lru)."
+   ],
+   "widgets_values_named": {
+    "text": "## MiniMax H3 AIO - start here\n\n1. **Pick a mode** in the AIO node. The grey line under it says what to load.\n2. **Load media** in the Media Loader (Picture 1, Video 1, Audio 1 ...).\n3. **Write the prompt** in the AIO node - or, for **Long** modes and **Extend Video**, write the whole video as one story in the **Seamless Planner** (it splits it into clips for you; read them in *Plan*).\n4. **Run.** Watch it in *Live Preview*; the result lands in *Video result* (or *Image result* for Image Editing).\n\nEvery H3 node has an **(i) How to use** button with the full guide for that node / mode.\n\n**Side nodes:** Speed & Quality (steps, turbo, Spectrum, upscale detail), Seamless Settings (how clips join), Models and LoRAs (set once). Unplug any of them and sensible defaults are used.\n\n**Memory:** prompts are encoded once and the 15 GB text encoder is released before the video model loads; if RAM is short the AIO frees memory first and says so in *Run info*. Start ComfyUI with run_comfyui_minimax_h3.bat (no --cache-lru)."
+   },
+   "color": "#432",
+   "bgcolor": "#653"
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   4,
+   0,
+   "H3_REFS"
+  ],
+  [
+   2,
+   5,
+   0,
+   4,
+   1,
+   "H3_AIO_SETTINGS"
+  ],
+  [
+   3,
+   6,
+   0,
+   4,
+   2,
+   "H3_AIO_LONG"
+  ],
+  [
+   4,
+   3,
+   0,
+   4,
+   3,
+   "H3_AIO_LORAS"
+  ],
+  [
+   5,
+   2,
+   0,
+   4,
+   4,
+   "H3_AIO_MODELS"
+  ],
+  [
+   6,
+   7,
+   0,
+   6,
+   0,
+   "H3_AIO_SEAMLESS"
+  ],
+  [
+   8,
+   4,
+   1,
+   11,
+   0,
+   "IMAGE"
+  ],
+  [
+   9,
+   4,
+   2,
+   12,
+   0,
+   "STRING"
+  ],
+  [
+   10,
+   6,
+   1,
+   13,
+   0,
+   "STRING"
+  ],
+  [
+   7,
+   4,
+   0,
+   10,
+   0,
+   "VIDEO"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {
+  "ds": {
+   "scale": 0.9350000000000005,
+   "offset": [
+    454.5655943748104,
+    247.3786382091672
+   ]
+  }
+ },
+ "version": 0.4
+}

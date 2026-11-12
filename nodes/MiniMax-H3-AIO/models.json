@@ -1,0 +1,87 @@
+{
+  "_about": "Every model file the MiniMax H3 AIO node uses, from its original Hugging Face source. 'folder' is under ComfyUI/models. 'match' = a file whose name contains this text already counts as present (renamed copies are not downloaded twice). install.bat and the node's download route both read this list.",
+  "required": [
+    {
+      "file": "minimax_h3_ref2va_pruned_w4a8_mixed.safetensors",
+      "folder": "diffusion_models/MiniMax",
+      "size_gb": 12.54,
+      "match": "ref2va",
+      "url": "https://huggingface.co/starsfriday/MiniMax-H3-w4a8/resolve/main/minimax_h3_ref2va_pruned_w4a8_mixed.safetensors",
+      "for": "References to Video and Extend a Video (w4a8: the smallest H3 build, runs on int8 kernels on RTX 30/40/50)"
+    },
+    {
+      "file": "minimax_h3_fl2va_pruned_w4a8_mixed.safetensors",
+      "folder": "diffusion_models/MiniMax",
+      "size_gb": 12.54,
+      "match": "fl2va",
+      "url": "https://huggingface.co/starsfriday/MiniMax-H3-w4a8/resolve/main/minimax_h3_fl2va_pruned_w4a8_mixed.safetensors",
+      "for": "Text to Video and Image to Video"
+    },
+    {
+      "file": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "folder": "text_encoders/MiniMax",
+      "size_gb": 14.61,
+      "match": "qwen3vl_32b_minimax_h3",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "for": "text encoder (the smallest official one)"
+    },
+    {
+      "file": "minimax_h3_video_vae_int8_convrot.safetensors",
+      "folder": "vae/MiniMax",
+      "size_gb": 2.62,
+      "match": "minimax_h3_video_vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+      "for": "video VAE"
+    },
+    {
+      "file": "minimax_h3_audio_vae_fp32.safetensors",
+      "folder": "vae/MiniMax",
+      "size_gb": 0.56,
+      "match": "minimax_h3_audio_vae",
+      "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors",
+      "for": "audio VAE"
+    },
+    {
+      "file": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "folder": "loras/MiniMax",
+      "size_gb": 0.58,
+      "match": "turbo_v4_step600_ema",
+      "url": "https://huggingface.co/Aitrepreneur/FLX/resolve/main/minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "for": "speed LoRA (larryvrh's Turbo v4 step600 EMA, ComfyUI key format)"
+    },
+    {
+      "file": "minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
+      "folder": "latent_upscale_models",
+      "size_gb": 0.64,
+      "match": "minimax_h3_latent_upscaler_3d",
+      "url": "https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/resolve/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors",
+      "for": "two_stage_upscale (learned 3D latent upscaler)"
+    },
+    {
+      "file": "minimax_h3_t1_image_vae_step1597.safetensors",
+      "folder": "vae/MiniMax",
+      "size_gb": 4.85,
+      "match": "minimax_h3_t1_image_vae",
+      "url": "https://huggingface.co/Aitrepreneur/FLX/resolve/main/minimax_h3_t1_image_vae_step1597.safetensors",
+      "for": "Image Editing (H3 T1 image VAE)"
+    },
+    {
+      "file": "sam3.1_multiplex_fp16.safetensors",
+      "folder": "checkpoints",
+      "size_gb": 1.63,
+      "match": "sam3",
+      "url": "https://huggingface.co/Aitrepreneur/FLX/resolve/main/sam3.1_multiplex_fp16.safetensors",
+      "for": "Inpainting (SAM3 finds and tracks what to replace)"
+    }
+  ],
+  "optional": [
+    {
+      "file": "taeh3.safetensors",
+      "folder": "vae_approx",
+      "size_gb": 0.02,
+      "match": "taeh3",
+      "url": "https://raw.githubusercontent.com/madebyollin/taehv/main/safetensors/taeh3.safetensors",
+      "for": "live_preview (madebyollin's temporal tiny H3 decoder)"
+    }
+  ]
+}

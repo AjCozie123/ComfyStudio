@@ -1,0 +1,16 @@
+{
+ "note": "ComfyUI node packs the built-in engines need. Each is pinned to the commit Comfy Studio was tested with. A pack counts as installed when ComfyUI already has its 'probe' node (under any folder name) or its folder exists. 'bundled' packs ship inside Comfy Studio (nodes/) and are copied into custom_nodes.",
+ "packs": [
+  {"folder": "MiniMax-H3-AIO", "bundled": "nodes/MiniMax-H3-AIO", "probe": "MiniMaxH3AIO", "for": "MiniMax H3 video and image edit"},
+  {"folder": "ComfyUI-Fantastic-MiniMaxH3-PromptBuilder", "repo": "Adudeguyman/ComfyUI-Fantastic-MiniMaxH3-PromptBuilder", "commit": "01b6d8d91180c6994840e34312a65febe02cc4f5", "probe": "MiniMaxH3MediaLoader", "for": "MiniMax H3 (Media Loader)"},
+  {"folder": "ComfyUI-Spectrum-MiniMax-H3", "repo": "xmarre/ComfyUI-Spectrum-MiniMax-H3", "commit": "5161f0457bc8c52535212d6783eee73f439e1537", "probe": "SpectrumApplyMiniMaxH3", "for": "MiniMax H3 (speed-up)"},
+  {"folder": "ComfyUI-H3-Motion-Context-MultiRef-V3", "repo": "Aitrepreneur/ComfyUI-H3-Motion-Context-MultiRef-V3", "commit": "d299ea552d49213e25a337f6e2f24fbf64e78f40", "probe": "MiniMaxH3AVExtensionController", "for": "MiniMax H3 (long video)"},
+  {"folder": "Comfyui_Minimax_h3_latent_Upscaler-Plus", "repo": "xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus", "commit": "0e46b6d95259746ac82cf451f5b4f71b50849105", "probe": "MinimaxH3LatentUpscaler3D", "aliases": ["Comfyui_Minimax_h3_latent_Upscaler"], "for": "MiniMax H3 Fast (two-stage)"},
+  {"folder": "ComfyUI-VideoHelperSuite", "repo": "Kosinkadink/ComfyUI-VideoHelperSuite", "commit": "4d907bee61e92c2e65af3bd6383a4e4d356126d1", "probe": "VHS_VideoCombine", "for": "MiniMax H3 (video files)"},
+  {"folder": "ComfyUI-KJNodes", "repo": "kijai/ComfyUI-KJNodes", "commit": "d3cfe21625e5170126ce06fbfcfe1d88108688c3", "probe": "LTX2SamplingPreviewOverride", "for": "MiniMax H3 live preview, LTX 2.3"},
+  {"folder": "MaskVidExperiments", "repo": "drozbay/MaskVidExperiments", "commit": "c32ed8c17e6fe892a174ebf25fe98b1317de97fb", "probe": "MVEx_AudioMaskToLatent", "for": "MiniMax H3 (video inpainting)"},
+  {"folder": "ComfyUI-NKD-Basic-Tools", "repo": "Nekodificador/ComfyUI-NKD-Basic-Tools", "commit": "4f487a5617f36fbd9d5e069bca92ea834a74d7a1", "probe": "NKDAVLatent", "for": "MiniMax H3 (video inpainting)"},
+  {"folder": "ComfyUI-GGUF", "repo": "city96/ComfyUI-GGUF", "commit": "6ea2651e7df66d7585f6ffee804b20e92fb38b8a", "probe": "UnetLoaderGGUF", "for": "Qwen Image Edit 2509 (GGUF)"},
+  {"folder": "krea2-anypaint", "repo": "alexw5702-afk/krea2-anypaint", "commit": "675be5a91eadbf8b8997b21c0e8e1848310b9571", "probe": "Krea2AnyPaintEncode", "for": "Krea 2 Paint"}
+ ]
+}

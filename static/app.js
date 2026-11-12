@@ -43,6 +43,15 @@ const state = {
   pc: { open: false, tab: "recent", root: "", path: "", multi: true, selected: {}, items: [], dirs: [], crumbs: [], offset: 0, more: false, roots: [], q: "" },
   confirm: null,
 };
+/* Remember the tools between sessions (not prompts, pictures or anything already saved elsewhere). */
+const REMEMBER_STATE = ["mode", "quality", "aspect", "customMp", "customAspect", "p1Original", "p1Mp", "mp", "peMode",
+  "autoAssist", "refMode", "camera"];
+(function () {
+  try {
+    const s = JSON.parse(localStorage.getItem("cs.remember") || "null");
+    if (s && s.state) REMEMBER_STATE.forEach((k) => { if (k in s.state && s.state[k] != null) state[k] = s.state[k]; });
+  } catch (e) {}
+})();
 var _pcSearchTimer = null;
 var _pcSearchSeq = 0;
 
@@ -2732,8 +2741,10 @@ function bindAssistCamera() {
   if (typeof renderResMenu === "function") renderResMenu();
   if (typeof scheduleOutputSize === "function") scheduleOutputSize();
   renderSlots();
-  setMode("t2i");
+  const keepSize = REMEMBER_STATE.reduce((o, k) => { o[k] = state[k]; return o; }, {});
+  setMode(state.mode === "edit" ? "edit" : "t2i");
   try { await loadConfig(); } catch (e) { showError("Could not load settings: " + e.message); }
+  if (window.__restoreRemembered) window.__restoreRemembered(keepSize);
   refreshStatus();
   setInterval(refreshStatus, 8000);
 })();
@@ -8048,10 +8059,6 @@ function bindShell() {
     h3_video: { what: "MiniMax H3 video: clips with sound from text, a start picture or references.",
       how: "Describe what happens over time: the action, how the camera moves, and the sound. For a start picture, describe the motion rather than how things look.",
       tips: ["Reference to video: name the pictures as <Picture 1>...", "Long video joins several clips seamlessly."] },
-    h3_recast: { what: "MiniMax H3 Max Cast swap (paid): replaces the people in a finished clip with the people in 1-4 photos, keeping motion, framing, cuts and sound.",
-      how: "Add the video, then one photo per new person (left to right in the video). Say who becomes whom and what must stay: “@Image1 is now the woman in the video: keep her speaking to camera, same room, same framing.” Don't describe the new person's looks; the photo sets them.",
-      tips: ["Needs your Comfy.org API key (Settings) and spends Comfy.org credits each run.", "Clip 5-30 s, no single shot over 15 s.",
-        "Picture 1 / Image 1 are written as @Image1 for you.", "Clothes follow the photo too."] },
     ltx23: { what: "LTX 2.3 video: image to video, text to video, first + last frame and style transitions.",
       how: "One paragraph about the motion and camera; for first + last frame, describe how the scene gets from one to the other.", tips: [] },
   };
@@ -8149,39 +8156,135 @@ function bindShell() {
     .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
 })();
 
-
-/* ===== Comfy.org API key (paid engines) v20261112z ===== */
+/* ===== Node packs the built-in engines need (Library page) v20261112za ===== */
 (function () {
-  if (!$("corg-group")) return;
-  async function load() {
-    try { const d = await api("/api/comfyorg"); $("corg-state").textContent = d.set ? "saved " + (d.hint || "") : "not set";
-      $("corg-clear").disabled = !d.set; } catch (e) {}
+  const list = $("wf-list");
+  if (!list) return;
+  const box = document.createElement("div");
+  box.id = "np-banner";
+  box.className = "np-banner hidden";
+  list.parentNode.insertBefore(box, list);
+  let timer = 0;
+  async function refresh() {
+    let d;
+    try { d = await api("/api/nodes/required"); } catch (e) { return; }
+    const miss = (d.packs || []).filter((p) => !p.installed);
+    const waiting = (d.packs || []).filter((p) => p.installed && !p.loaded);
+    if (!miss.length && !(d.comfy_up && waiting.length)) { box.classList.add("hidden"); return; }
+    box.classList.remove("hidden");
+    const esc = (t) => String(t || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    if (!miss.length) {
+      box.innerHTML = '<p class="np-title">Node packs installed</p><p class="pop-note">Restart ComfyUI so it loads: '
+        + waiting.map((p) => esc(p.folder)).join(", ") + ".</p>";
+      return;
+    }
+    box.innerHTML = '<p class="np-title">' + miss.length + " node pack" + (miss.length === 1 ? "" : "s") + " missing</p>"
+      + '<p class="pop-note">Some engines need these ComfyUI node packs. Comfy Studio installs the exact versions it was tested with.</p>'
+      + '<ul class="np-list">' + miss.map((p) => "<li><b>" + esc(p.folder) + "</b> · " + esc(p.for) + "</li>").join("") + "</ul>"
+      + '<div class="np-actions"><button type="button" class="chip-btn primary" id="np-install">Install ' + (miss.length === 1 ? "it" : "all " + miss.length) + '</button>'
+      + '<span class="np-status" id="np-status"></span></div>';
+    $("np-install").addEventListener("click", install);
   }
-  $("corg-save").addEventListener("click", async () => {
-    const k = $("corg-key").value.trim();
-    if (!k) return;
+  async function install() {
+    const b = $("np-install");
+    if (b) b.disabled = true;
     try {
-      await api("/api/comfyorg", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ api_key: k }) });
-      $("corg-key").value = ""; toast("Comfy.org key saved on this PC"); load();
-    } catch (e) { showError(e.message || "Couldn't save the key."); }
-  });
-  $("corg-clear").addEventListener("click", async () => {
-    if (!window.confirm("Remove the Comfy.org key from this PC? Paid engines stop working until you add one again.")) return;
-    try { await api("/api/comfyorg", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clear: true }) });
-      toast("Key removed"); load(); } catch (e) { showError(e.message || "Couldn't remove the key."); }
-  });
-  const pop = $("settings-pop");
-  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(); })
-    .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
-  load();
+      const r = await api("/api/nodes/required", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      poll(r.job);
+    } catch (e) { showError(e.message || "Couldn't start the install."); if (b) b.disabled = false; }
+  }
+  async function poll(id) {
+    clearTimeout(timer);
+    let j;
+    try { j = await api("/api/nodes/job?id=" + encodeURIComponent(id)); } catch (e) { return; }
+    if ($("np-status")) $("np-status").textContent = j.message || "Installing…";
+    if (j.state === "running") { timer = setTimeout(() => poll(id), 1500); return; }
+    toast(j.message || "Done");
+    refresh();
+  }
+  new MutationObserver(() => { if (document.body.classList.contains("view-workflows")) refresh(); })
+    .observe(document.body, { attributes: true, attributeFilter: ["class"] });
+  window.__refreshNodePacks = refresh;
 })();
 
-/* ===== Engines that keep the source clip's length, framing and camera (Cast swap) v20261112z ===== */
+
+/* ===== Remember the tools between sessions + Restore defaults v20261112za =====
+   Saved: mode, picture size / shape, camera, Enhance (on/off + Fast/Quality), Auto understanding, reference mode,
+   seed (random or the number), the built-in engine's model picks. Engine choice, video length / resolution / shape,
+   Auto/Manual, Manual values, LoRAs and workflow model picks were already saved by their own parts of the app.
+   Never saved: the prompt, the negative prompt, pictures, Reuse settings. */
 (function () {
-  const base = window.onEngineChanged;
-  window.onEngineChanged = function (active) {
-    if (base) base.apply(this, arguments);
-    const c = active && active.card;
-    document.body.classList.toggle("clip-framed", !!(c && c.media === "video" && c.keeps_clip));
+  const INPUTS = ["pe", "auto-assist", "random-seed", "seed", "unet_name", "clip_name", "vae_name", "pe_clip_name"];
+  let ready = false, last = "";
+  function snapshot() {
+    const s = {}, inp = {};
+    REMEMBER_STATE.forEach((k) => { s[k] = state[k]; });
+    INPUTS.forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      if (el.type === "checkbox") inp[id] = el.checked;
+      else if (el.tagName === "SELECT" && !el.options.length) return;     // list not filled yet: keep what was saved
+      else inp[id] = el.value;
+    });
+    return { v: 1, state: s, inputs: inp };
+  }
+  function save() {
+    if (!ready) return;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem("cs.remember") || "{}") || {}; } catch (e) {}
+    const snap = snapshot();
+    snap.inputs = Object.assign({}, saved.inputs || {}, snap.inputs);
+    const t = JSON.stringify(snap);
+    if (t === last) return;
+    last = t;
+    try { localStorage.setItem("cs.remember", t); } catch (e) {}
+  }
+  window.__restoreRemembered = function (keepSize) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem("cs.remember") || "null"); } catch (e) {}
+    if (keepSize && saved && saved.state) Object.assign(state, keepSize);   // setMode may have reset the size
+    const inp = (saved && saved.inputs) || {};
+    Object.keys(inp).forEach((id) => {
+      const el = $(id);
+      if (!el) return;
+      if (el.type === "checkbox") {
+        if (el.checked !== !!inp[id]) { el.checked = !!inp[id]; el.dispatchEvent(new Event("change", { bubbles: true })); }
+      } else if (el.tagName === "SELECT") {
+        if ([...el.options].some((o) => o.value === inp[id]) && el.value !== inp[id]) {
+          el.value = inp[id]; el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      } else if (inp[id] !== "" && el.value !== String(inp[id])) {
+        el.value = inp[id]; el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+    try { if (typeof renderAspects === "function") renderAspects(); if (typeof renderCustomMp === "function") renderCustomMp();
+      if (typeof renderResMenu === "function") renderResMenu(); if (typeof scheduleOutputSize === "function") scheduleOutputSize();
+      if (typeof syncPills === "function") syncPills(); } catch (e) {}
+    ready = true;
+    save();
   };
+  setInterval(save, 2000);
+  document.addEventListener("change", () => setTimeout(save, 50), true);
+  document.addEventListener("click", () => setTimeout(save, 50), true);
+  window.addEventListener("pagehide", save);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) save(); });
+
+  // Settings -> Restore defaults: every tool back to how the app ships (your pictures, library, words and
+  // Enhancer instructions are kept; those have their own Revert buttons)
+  const btn = $("tools-reset");
+  if (btn) btn.addEventListener("click", () => {
+    const go = () => {
+      ready = false;
+      try {
+        Object.keys(localStorage).filter((k) => k.indexOf("cs.") === 0 || k === "ipSplit").forEach((k) => localStorage.removeItem(k));
+      } catch (e) {}
+      location.reload();
+    };
+    if (typeof askConfirm === "function") askConfirm({
+      title: "Restore every tool to its default?",
+      body: "Engine choices, sizes, Enhance, Auto/Manual values, LoRAs, workflow settings and model picks go back to how the app ships, for all workflows. Your pictures, videos and library stay.",
+      yes: "Restore defaults", onYes: go,
+    });
+    else if (window.confirm("Restore every tool to its default for all workflows?")) go();
+  });
 })();

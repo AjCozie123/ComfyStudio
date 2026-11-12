@@ -30,7 +30,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261112z">
+  <link rel="stylesheet" href="/static/app.css?v=20261112zb">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -553,16 +553,6 @@
       </div>
       <p class="pop-note" id="sampling-note">The distilled model is tuned for 6 steps and CFG 1. 8 steps also works well.</p>
     </div>
-    <div class="settings-group" id="corg-group">
-      <p class="pop-label">Comfy.org API key <span class="knobs-count" id="corg-state"></span></p>
-      <p class="pop-note">Only for paid engines (Cast swap). Runs on Comfy.org's servers and spends your Comfy.org
-        credits. Make a key at platform.comfy.org under API keys. It stays on this PC.</p>
-      <div class="pe-sys-actions">
-        <input type="password" id="corg-key" class="search-box" autocomplete="off" placeholder="Paste your key" aria-label="Comfy.org API key">
-        <button type="button" class="chip-btn primary" id="corg-save">Save</button>
-        <button type="button" class="chip-btn" id="corg-clear">Remove</button>
-      </div>
-    </div>
     <div class="settings-group" id="und-group">
       <div class="knobs-head">
         <p class="pop-label">Auto understanding: your additions <span class="knobs-count" id="und-badge"></span></p>
@@ -632,6 +622,10 @@
       <div class="row-between">
         <span class="pop-note" id="app-version">Comfy Studio</span>
         <button type="button" class="chip-btn" id="update-check">Check for updates</button>
+      </div>
+      <div class="row-between">
+        <span class="pop-note">Tools are remembered between sessions.</span>
+        <button type="button" class="chip-btn" id="tools-reset">Restore defaults</button>
       </div>
       <p class="pop-note" id="update-msg"></p>
       <button type="button" class="send-text hidden" id="update-apply">Update now</button>
@@ -903,6 +897,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20261112z"></script>
+  <script src="/static/app.js?v=20261112zb"></script>
 </body>
 </html>

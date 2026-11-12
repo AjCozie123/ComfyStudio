@@ -254,3 +254,92 @@ def node_sources(text):
             o, r = parse_github(str(aux))
             cur["github"] = "https://github.com/%s/%s" % (o, r)
     return {k: v for k, v in out.items() if v}
+
+
+# ------------------------------------------------------------------ the packs the built-in engines need
+def required_packs(app_dir):
+    try:
+        return json.load(open(os.path.join(app_dir, "deps", "node_packs.json"), encoding="utf-8")).get("packs") or []
+    except (OSError, ValueError):
+        return []
+
+
+def required_status(app_dir, nodes_dir, have_classes):
+    """Each required pack with installed: True/False (its probe node is loaded, or its folder exists)."""
+    out = []
+    for p in required_packs(app_dir):
+        folders = [p["folder"]] + list(p.get("aliases") or [])
+        on_disk = any(os.path.isdir(os.path.join(nodes_dir, f)) for f in folders)
+        loaded = bool(p.get("probe")) and p["probe"] in (have_classes or ())
+        out.append(dict(p, installed=on_disk or loaded, loaded=loaded))
+    return out
+
+
+def _fetch_pinned(repo, commit, staged, git_exe, opener=None):
+    """The pack at exactly the tested commit: git clone + checkout, or GitHub's zip of that commit."""
+    if git_exe:
+        r = subprocess.run([git_exe, "clone", "-q", "https://github.com/" + repo, staged],
+                           capture_output=True, text=True, timeout=900, creationflags=NO_WINDOW)
+        if r.returncode == 0:
+            r = subprocess.run([git_exe, "-C", staged, "checkout", "-q", commit], capture_output=True, text=True,
+                               timeout=120, creationflags=NO_WINDOW)
+            if r.returncode == 0:
+                return
+        shutil.rmtree(staged, ignore_errors=True)
+    tmp = staged + "_zip"
+    os.makedirs(tmp, exist_ok=True)
+    data = (opener or urllib.request.urlopen)(urllib.request.Request(
+        "https://codeload.github.com/%s/zip/%s" % (repo, commit), headers={"User-Agent": "ComfyStudio"}), timeout=600).read()
+    _extract_zip(data, tmp)
+    root = _pack_root(tmp)
+    if not root:
+        raise ValueError("%s: the download has no node pack in it." % repo)
+    os.rename(root, staged)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def start_required(app_dir, data_dir, nodes_dir, py, have_classes, git=None, opener=None):
+    """Install every missing required pack (pinned commits / bundled copy), one after another. Returns a job id."""
+    todo = [p for p in required_status(app_dir, nodes_dir, have_classes) if not p["installed"]]
+    if not todo:
+        raise ValueError("Every node pack Comfy Studio needs is already installed.")
+    jid = "n%d" % int(time.time() * 1000)
+    JOBS[jid] = {"id": jid, "state": "running", "name": "required packs", "log": [], "total": len(todo), "done": 0,
+                 "failed": []}
+
+    def work(job):
+        git_exe = git if git is not None else shutil.which("git")
+        for p in todo:
+            job["message"] = "Installing %s (%d of %d)..." % (p["folder"], job["done"] + 1, len(todo))
+            tmp = tempfile.mkdtemp(prefix="cs_node_", dir=_staging(nodes_dir))
+            staged = os.path.join(tmp, p["folder"])
+            try:
+                if p.get("bundled"):
+                    shutil.copytree(os.path.join(app_dir, *p["bundled"].split("/")), staged,
+                                    ignore=shutil.ignore_patterns("__pycache__", "*.bak*"))
+                    source = "bundled with Comfy Studio"
+                else:
+                    _fetch_pinned(p["repo"], p["commit"], staged, git_exe, opener)
+                    source = "https://github.com/%s@%s" % (p["repo"], p["commit"][:10])
+                if not os.path.isfile(os.path.join(staged, "__init__.py")):
+                    raise ValueError("no __init__.py")
+                dest = os.path.join(nodes_dir, p["folder"])
+                if os.path.exists(dest):
+                    raise ValueError("a folder called %s is already in custom_nodes" % p["folder"])
+                shutil.move(staged, dest)
+                ok = _pip_requirements(py, dest, job["log"])
+                _record(data_dir, {"name": p["folder"], "source": source, "path": dest, "t": time.time(), "requirements_ok": ok})
+                job["log"].append("Installed %s (%s)" % (p["folder"], source))
+            except Exception as e:
+                job["failed"].append(p["folder"])
+                job["log"].append("%s failed: %s" % (p["folder"], e))
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            job["done"] += 1
+        bad = job["failed"]
+        job.update(state="error" if bad and len(bad) == len(todo) else "done",
+                   message=("Installed %d node pack(s). Restart ComfyUI to load them." % (len(todo) - len(bad)))
+                   + (" Couldn't install: %s (see the log)." % ", ".join(bad) if bad else ""))
+
+    threading.Thread(target=_run, args=(jid, work), daemon=True).start()
+    return jid

@@ -107,8 +107,6 @@ for card in cards:
             results.append((False, "%s (%s)" % (card.get("name", wid), wid), "no .mp4 in the input folder to test with"))
             continue
         base["videos"] = vids
-    if card.get("api"):
-        S.comfy_org_key = lambda: "dryrun_placeholder_not_a_key"   # /prompt is faked above: nothing is sent
     if card.get("edit_kind") == "anypaint" or card.get("native_mask"):
         import base64, io as _io
         from PIL import ImageDraw

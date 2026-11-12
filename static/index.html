@@ -30,7 +30,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261112zd">
+  <link rel="stylesheet" href="/static/app.css?v=20261112zf">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -581,9 +581,11 @@
     <div class="settings-group" id="keep-cloth-group">
       <p class="pop-label">Keep clothing</p>
       <label class="check-row"><input type="checkbox" id="keep-clothing" checked> Keep the person's clothing unless my prompt is about clothing</label>
-      <p class="pop-note">For edits that turn, pose, resize or relight someone (and new pictures that describe an outfit), the app adds a
-        short "keep the clothing the same" line in the model's own wording, plus negative words for engines that use them.
-        Prompts that remove, change or describe clothing are never touched. If a LoRA still strips clothes, lower its strength.</p>
+      <p class="pop-note">All picture engines. When your prompt doesn't mention clothes (turn her, sit her down, change the light),
+        the app adds one short "keep their clothing the same" line, so the edit can't change or remove what they're wearing.
+        If your prompt is about clothes (add a jacket, wear the dress from Picture 2, remove the hat), nothing is added and your
+        words decide. Body swaps and putting someone into a scene are left alone too, since their clothes come from the other
+        picture.</p>
     </div>
     <div class="settings-group" id="pe-sys-group">
       <div class="knobs-head">
@@ -902,6 +904,6 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20261112zd"></script>
+  <script src="/static/app.js?v=20261112zf"></script>
 </body>
 </html>

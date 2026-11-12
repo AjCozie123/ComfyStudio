@@ -23,6 +23,19 @@ _GARMENT = re.compile(
     r"uniform|gown|robe|corset|leggings|tank top|crop top|bodysuit|jumpsuit|overalls|cardigan|vest)\b", re.I)
 
 NEG_WORDS = "nude, naked, topless, undressed, missing clothing, exposed body"
+# anything worn: in an EDIT, a prompt that names one is about clothing (add a jacket, put a hat on her, give her a
+# scarf), so "keep the clothing the same" would fight it
+_WEARABLE = re.compile(
+    r"\b(dress(?:es)?|shirt|t-shirt|tee|blouse|tops?(?! of\b)|jacket|coat|blazer|hoodie|sweater|jumper|cardigan|vest|jeans|trousers|"
+    r"pants|shorts|skirt|suit|uniform|gown|robe|corset|leggings|tights|stockings|socks|jumpsuit|bodysuit|overalls|apron|"
+    r"bikini|swimsuit|lingerie|bra|panties|underwear|hat|cap|beanie|hood|scarf|gloves?|mittens|shoes?|boots?|heels|"
+    r"sneakers|trainers|sandals|slippers|belt|tie|bow tie|glasses|sunglasses|goggles|necklace|earrings?|bracelet|"
+    r"rings?|jewel(?:le)?ry|wrist ?watch|bag|handbag|backpack|veil|crown|tiara|headband|mask|helmet|armou?r|cape|cloak|"
+    r"costume|outfit|clothes|clothing|garments?|sleeves?|collar|pocket|zip(?:per)?|buttons?)\b", re.I)
+
+
+def _edit_about_clothes(text):
+    return about_clothes(text) or bool(_WEARABLE.search(text or ""))
 
 # headwear that covers the WHOLE head: the hair must disappear inside it (models tend to leave hair poking out)
 _FULL_HEAD = re.compile(
@@ -63,6 +76,8 @@ def clause(user_prompt, mode, style=""):
     t = user_prompt or ""
     if not t.strip() or about_clothes(t):
         return ""
+    if mode == "edit" and _WEARABLE.search(t):
+        return ""
     if mode == "edit":
         if style == "plain":           # Krea 2 Edit: trained on one short instruction
             return "Keep their clothing exactly the same."
@@ -82,7 +97,7 @@ def apply(prompt_sent, user_prompt, mode, style=""):
 
 def negative(neg, user_prompt, mode):
     """Negative words for engines that use one (CFG above 1)."""
-    if not clause(user_prompt, mode) and not (mode == "edit" and not about_clothes(user_prompt) and (user_prompt or "").strip()):
+    if not clause(user_prompt, mode) and not (mode == "edit" and not _edit_about_clothes(user_prompt) and (user_prompt or "").strip()):
         return neg
     base = (neg or "").strip().rstrip(",")
     if "topless" in base.lower():

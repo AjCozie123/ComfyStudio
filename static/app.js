@@ -2989,7 +2989,7 @@ function syncPills() {
     $("roles-pill").classList.toggle("is-on", setRoles > 0);
     $("roles-pill").classList.toggle("hidden", state.images.length < 2 && !state.refMode);
   }
-  if ($("mark-pill")) $("mark-pill").classList.toggle("hidden", !state.images.length || state.refMode);
+  if ($("mark-pill")) $("mark-pill").classList.add("hidden");   // retired: Inpaint's box does this, with a real mask
 
   const rnd = $("random-seed");
   const seedVal = $("seed") ? $("seed").value : "";
@@ -3061,7 +3061,8 @@ function renderHelp() {
     tips.push("<b>Picture 1</b> is the image being edited. Drag or long-press a picture to reorder; prompt references follow the numbers.");
     tips.push("Type <b>@</b> to insert a picture, or write Image 2, img2 or @Image2. They become &lt;Picture 2&gt; when sent.");
     tips.push("<b>Reference</b> mode builds a brand-new scene from all pictures. Tag one <b>Background</b> to use it as the setting.");
-    tips.push("<b>Mark area</b> adds position words for part of Picture 1. The model reads text, not masks.");
+    tips.push("<b>Swaps</b>: Picture 1 is the photo you keep, Picture 2 gives the head, face, person or outfit. Say \"head swap\", \"face swap\", \"body swap\", \"outfit swap\" or \"put the woman from Picture 2 into Picture 1\".");
+    tips.push("<b>Inpaint</b> limits a change to the area you paint or box; everything outside stays as it is.");
     tips.push("Open <b>Will also send</b> under the prompt to see the notes added for you.");
   } else {
     tips.push("Tap <b>+</b> to attach pictures from your library, this PC or this device. That switches to Edit.");
@@ -4294,9 +4295,11 @@ function bindShell() {
     general: { label: "General edit", lora: "general", steps: 8, knobs: "ref_boost 4, aligned, grounding 768" },
     headswap: { label: "Head swap", lora: "head_swap_v", steps: 8, knobs: "BFS head swap: Picture 2's head onto Picture 1, grounding 512" },
     bodyswap: { label: "Body swap", lora: "head_swap_v", steps: 10, knobs: "BFS head swap 1.0 + body swap 0.5: Picture 2's person into Picture 1" },
+    outfit: { label: "Outfit swap", lora: "outfittransfer", steps: 8, knobs: "outfit transfer (v1.1 geometry): Picture 2's outfit onto Picture 1's person" },
   };
   const SWAP_RX = {
     headswap: /\b((head|face)[- ]?swap\w*|swap\w* (the |her |his |their )?(heads?|faces?)|replace (the |her |his |their )?(head|face)|(put|use|give (her|him|them)) (the |picture 2'?s? |image 2'?s? )?(head|face) (of|from))/i,
+    outfit: /\b((outfit|clothes|clothing|dress|costume)[- ]?(swap|transfer)\w*|(wear\w*|put on|dress\w*( (her|him|them))? in) (the |that |this )?(same )?(outfit|clothes|clothing|dress|top|shirt|jacket|look|costume|uniform|bikini|suit)s? (from|in|of)|(transfer|copy|take|bring|swap|put|give)\w* (the |her |his |their )?(outfit|clothes|clothing|dress|costume)s? (from|in|of)|same (outfit|clothes|clothing|dress) as)/i,
     bodyswap: /\b(body[- ]?swap\w*|character[- ]?swap\w*|swap\w* (the |her |his |their )?(body|bodies|person|people|characters?)|replace (the |her |his |their )?(body|person|woman|man|girl|guy|character))/i,
   };
   function swapLora(part) {
@@ -4322,6 +4325,7 @@ function bindShell() {
       // head / body swap needs the BFS head swap LoRA; without it a swap is done as person-into-scene
       if (SWAP_RX.bodyswap.test(p) && swapLora("head_swap_v") && swapLora("body_swap_v")) return "bodyswap";
       if ((SWAP_RX.headswap.test(p) || SWAP_RX.bodyswap.test(p)) && swapLora("head_swap_v")) return "headswap";
+      if (SWAP_RX.outfit.test(p) && swapLora("outfittransfer")) return "outfit";
       return "insert";                                                        // the card: person into a scene = Identity
     }
     if (RX.remove.test(p)) return "remove";                                   // removals are General's job
@@ -4362,9 +4366,9 @@ function bindShell() {
     const sel = editLoraSelect();
     if (!sel) return "";
     const cur = sel.value;
-    if (!/(general|identity)_edit_v2|_swap_v/i.test(cur)) return cur;      // v1.2 / v1.1 / other: yours
-    if (KREA_KINDS[kind].lora === "head_swap_v") {
-      const sw = swapLora("head_swap_v");
+    if (!/(general|identity)_edit_v2|_swap_v|outfittransfer/i.test(cur)) return cur;      // v1.2 / v1.1 / other: yours
+    if (KREA_KINDS[kind].lora === "head_swap_v" || KREA_KINDS[kind].lora === "outfittransfer") {
+      const sw = swapLora(KREA_KINDS[kind].lora);
       if (sw) sel.value = sw;
       return sel.value;
     }
@@ -4387,6 +4391,7 @@ function bindShell() {
     if (/identity_edit_v2/i.test(v)) return "Identity Edit V2" + (/_r128/i.test(v) ? " r128" : "");
     if (/general_edit_v2/i.test(v)) return "General Edit V2" + (/_r128/i.test(v) ? " r128" : "");
     if (/head_swap_v/i.test(v)) return "BFS Head Swap";
+    if (/outfittransfer/i.test(v)) return "Outfit Transfer";
     return v;
   }
 
@@ -7800,26 +7805,35 @@ function bindShell() {
   const box = $("pe-sys-group");
   if (!box) return;
   let cur = { mode: "t2i", def: "", custom: "", engine: "builtin" };
-  function engineId() { return !state.engine || state.engine === "none" ? null : state.engine; }
-  function syncTabs() {
-    document.querySelectorAll("#pe-sys-mode button").forEach((b) => b.classList.toggle("is-on", b.dataset.peSys === cur.mode));
+  // built-in MiniMax H3 has its own instructions too ("builtin"); workflow engines use their id
+  function engineId() { return !state.engine || state.engine === "none" ? "builtin" : state.engine; }
+  function syncTabs(modes, media) {
+    const tabs = $("pe-sys-mode");
+    tabs.classList.toggle("hidden", (modes || []).length < 2);
+    document.querySelectorAll("#pe-sys-mode button").forEach((b) => {
+      b.classList.toggle("is-on", b.dataset.peSys === cur.mode);
+      b.classList.toggle("hidden", (modes || []).indexOf(b.dataset.peSys) < 0);
+      b.textContent = media === "video" ? (b.dataset.peSys === "edit" ? "With pictures" : "Text only")
+        : (b.dataset.peSys === "edit" ? "Edit" : "New");
+    });
   }
   async function load(mode) {
     const eng = engineId();
-    box.classList.toggle("hidden", !eng);
-    if (!eng) return;
-    cur.mode = mode || cur.mode || (state.mode === "edit" ? "edit" : "t2i");
-    syncTabs();
+    cur.mode = mode || cur.mode || "t2i";
     const peMode = state.peMode === "quality" ? "quality" : "fast";
     let d;
     try { d = await api("/api/pe/system?engine=" + encodeURIComponent(eng) + "&mode=" + cur.mode + "&pe_mode=" + peMode); }
     catch (e) { $("pe-sys-status").textContent = e.message || "Couldn't load the instructions."; return; }
-    cur = { mode: cur.mode, def: d.default || "", custom: d.custom || "", engine: eng };
+    // Enhance never rewrites picture edits, so engines that only edit have nothing to show here
+    box.classList.toggle("hidden", !(d.modes || []).length);
+    if (!(d.modes || []).length) return;
+    cur = { mode: d.mode || cur.mode, def: d.default || "", custom: d.custom || "", engine: eng };
+    syncTabs(d.modes, d.media);
     $("pe-sys-text").value = cur.custom || cur.def;
     $("pe-sys-badge").textContent = cur.custom ? "yours" : "";
+    const what = d.media === "video" ? (cur.mode === "edit" ? "videos from your pictures" : "videos from text") : "new pictures";
     $("pe-sys-status").textContent = (cur.custom ? "Your own instructions for " : "Built-in instructions (" + (peMode === "quality" ? "Quality" : "Fast") + ") for ")
-      + (d.engine_name || "this engine") + (cur.mode === "edit" ? ", edits." : ", new pictures and videos.")
-      + " Edit the text and Save to use your own.";
+      + (d.engine_name || "this engine") + ", " + what + ". Edit the text and Save to use your own; the output format is kept for you.";
     $("pe-sys-note").textContent = d.model_note ? "Also sent with each prompt for this model: " + d.model_note : "";
     $("pe-sys-reset").disabled = !cur.custom;
   }
@@ -7838,7 +7852,7 @@ function bindShell() {
   document.querySelectorAll("#pe-sys-mode button").forEach((b) => b.addEventListener("click", () => load(b.dataset.peSys)));
   // refresh whenever Settings opens, and when the engine changes
   const pop = $("settings-pop");
-  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(state.mode === "edit" ? "edit" : "t2i"); })
+  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(state.media === "video" && (state.images || []).length ? "edit" : "t2i"); })
     .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
   const base = window.onEngineChanged;
   window.onEngineChanged = function () {

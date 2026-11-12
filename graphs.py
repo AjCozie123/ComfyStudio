@@ -384,11 +384,23 @@ def _loaders(g, cfg):
 
 
 
-def default_pe_system(mode="t2i", pe_mode="fast"):
-    """The built-in Prompt Enhancer system prompt (what's used unless the user saved their own)."""
+VIDEO_TASK = "pe_video_task.txt"      # video engines (with or without pictures): motion, camera and sound over time
+_INPUT_TAIL = re.compile(r"\n\s*(?:input_text|User input)\s*:\s*\{input text\}.*\Z", re.S | re.I)
+
+
+def pe_task_file(mode="t2i", pe_mode="fast", media="image"):
     import pe as PE
     st = PE.settings(pe_mode)
-    return _read_template(st["system_edit"] if mode == "edit" else st["system_t2i"])
+    if media == "video":
+        return VIDEO_TASK
+    return st["task_edit"] if mode == "edit" else st["task_t2i"]
+
+
+def default_pe_system(mode="t2i", pe_mode="fast", media="image"):
+    """The Prompt Enhancer instructions the Settings box shows and lets the user replace: the task text (what the
+    enhancer is told to do), without the slot where the user's prompt goes. The output-format rules are kept apart,
+    so the result can always be read."""
+    return _INPUT_TAIL.sub("", _read_template(pe_task_file(mode, pe_mode, media))).rstrip() + "\n"
 
 
 def _read_template(name):
@@ -409,13 +421,15 @@ def _pe_chain(g, user_prompt_node, enable, images, system_file, task_file, max_l
     system = _read_template(system_file)
     if pe_system_extra:
         system = system.rstrip() + "\n\n" + str(pe_system_extra).strip() + "\n"
-    if (pe_system_override or "").strip():
-        system = str(pe_system_override).strip() + "\n"     # the user's own system prompt for this engine
-        if "expanded_caption" not in system:
-            # the app reads the result from this field; without it the enhanced prompt would be lost silently
-            system += ('\nOutput format (added by Comfy Studio): reply with exactly one JSON object '
-                       '{"expanded_caption": "<the finished prompt>"} and nothing else.\n')
     task = _read_template(task_file)
+    if (pe_system_override or "").strip():
+        # the user's own instructions for this engine replace the task text; the output-format rules (system) stay,
+        # and the user's prompt still goes in at the end
+        own = str(pe_system_override).strip()
+        task = own if "{input text}" in own else own + "\n\ninput_text: {input text}\noutput_text:\n"
+        if "expanded_caption" not in own:
+            system += ('\nOutput format (added by Comfy Studio): reply with exactly one JSON object '
+                       '{"expanded_caption": "<the finished prompt>", "aspect_ratio": "adaptive"} and nothing else.\n')
     if pe_task_extra:
         task = str(pe_task_extra).strip() + "\n\n" + task
     g["pe_system"] = _node("PrimitiveStringMultiline", {
@@ -597,7 +611,7 @@ def merge_cfg(overrides=None):
 
 
 def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, free_memory=True,
-                   pe_system_extra="", pe_task_extra="", pe_system_override="", pe_tokens=None):
+                   pe_system_extra="", pe_task_extra="", pe_system_override="", pe_tokens=None, media="image"):
     """A Prompt-Enhancer-only graph: no UNET or VAE, so ComfyUI can free the PE model before the image run."""
     import pe as PE
     if not (prompt or "").strip():
@@ -626,6 +640,8 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
             ))
     g["user_prompt"] = _node("PrimitiveStringMultiline", {"value": prompt}, "Text (user_prompt)")
     max_length, thinking = PE.resolve_tokens(st["id"], mode, pe_tokens, prompt, len(links))
+    if media == "video":
+        task = VIDEO_TASK
     _pe_chain(
         g, "user_prompt", True, links,
         system, task, max_length, pe_clip,

@@ -1,0 +1,21 @@
+You are enhancing a short image-editing instruction into a rich, reference-conditioned description of the intended finished image. Output only the required JSON object — no thinking, markdown, or extra text.
+
+You are given:
+- Input image(s) labeled <Picture 1>, <Picture 2>, ... in order. Picture 1 is the image being edited; later pictures are references if present.
+- One user editing instruction, which may be short or informal.
+
+Rules:
+- Preserve every hard fact, name, number, quoted text, and constraint from the instruction and from what is clearly visible in the references.
+- Describe the finished target image, not the process of editing. Say what should appear, stay, change, or be removed.
+- Ground references with <Picture N> when you rely on a specific input image.
+- Do not invent extra subjects or change unmentioned identities, layout, or typography.
+- Keep non-literal description in English. Quoted or requested on-image text stays in its original language and wording.
+- aspect_ratio: if the user asked for a concrete ratio, copy it; otherwise use "adaptive".
+
+Final output contract — exactly:
+{"expanded_caption":"ONE_DETAILED_ENGLISH_CAPTION","aspect_ratio":"ALLOWED_RATIO_OR_adaptive"}
+
+Escape quotation marks inside the caption as \". Do not add or omit keys.
+
+User input: {input text}
+output_text:

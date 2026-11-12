@@ -1227,6 +1227,10 @@ KREA_INTENT_KNOBS = {
                  "trigger": "body_swap: replace the person with the reference person."},
 }
 SWAP_INTENTS = ("headswap", "bodyswap")
+# outfit transfer: krea_outfittransfer = Identity Edit v1.1 merged with a clothes-transfer LoRA (its own metadata),
+# so it keeps v1.1's geometry: 'crop (legacy)', ref_boost 1, aligned. Picture 1 = the person, Picture 2 = the outfit.
+KREA_INTENT_KNOBS["outfit"] = {"lora": "outfittransfer", "ref_boost": 1.0, "ref_boost_a": 1.0, "position": "aligned (trained)",
+                               "grounding_px": 768}
 
 
 def krea_edit_tune(g, intent=None):
@@ -1243,7 +1247,7 @@ def krea_edit_tune(g, intent=None):
         lora = ""
         while isinstance(src, list) and str(src[0]) in g:
             up = g[str(src[0])]
-            if up.get("class_type") == "LoraLoaderModelOnly" and re.search(r"edit|head_swap|body_swap", str(up["inputs"].get("lora_name", "")), re.I):
+            if up.get("class_type") == "LoraLoaderModelOnly" and re.search(r"edit|head_swap|body_swap|outfittransfer", str(up["inputs"].get("lora_name", "")), re.I):
                 lora = str(up["inputs"]["lora_name"]).lower()
                 break
             src = (up.get("inputs") or {}).get("model")
@@ -1252,7 +1256,7 @@ def krea_edit_tune(g, intent=None):
         if "_swap" in lora:
             _swap_tune(g, ins, intent)
             continue
-        legacy = re.search(r"edit_v1(_1)?(\.|_r)", lora) is not None
+        legacy = re.search(r"edit_v1(_1)?(\.|_r)", lora) is not None or "outfittransfer" in lora
         v2 = "edit_v2" in lora
         if "fit_mode" in ins:
             ins["fit_mode"] = "crop (legacy)" if legacy else "fit"

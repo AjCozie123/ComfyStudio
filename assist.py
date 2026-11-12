@@ -815,6 +815,66 @@ def character_sheet_appendix(n_images: int, layout=None, appearances=None) -> st
     return body + extra
 
 
+# ------------------------------------------------------------------ swaps and transfers between two pictures
+# Picture 1 = the picture that is kept (the base); the other picture gives the head / face / person / outfit.
+_WHO = r"(?:the |her |his |their |this |that )?(?:person|woman|man|girl|guy|lady|boy|model|subject|character|people|one|her|him|them)"
+_PIC = r"(?:<\s*picture\s*\d\s*>|@?(?:picture|image|photo|pic|img)\s*\d)"
+_SWAP_HEAD = re.compile(
+    r"\bhead[- ]?swap\w*|\bswap\w* (?:the |their |her |his )?heads?\b|\breplace\w* (?:the |her |his |their )?head\b|\b(?:switch|swap)\w* (?:the |her |his |their )?head (?:with|for)\b"
+    r"|\b(?:put|use|give|place|paste|transfer|copy)\w* (?:the |her |his |their )?(?:" + _PIC + r"'?s? )?head (?:of|from|in|onto|on)\b"
+    r"|\bhead (?:of|from) (?:the )?(?:" + _PIC + r"|person|woman|man|girl|guy)"
+    r"|\b(?:use|put|give|take|paste|copy)\w* (?:the )?" + _PIC + r"'?s? head\b", re.I)
+_SWAP_FACE = re.compile(
+    r"\bface[- ]?swap\w*|\bswap\w* (?:the |their |her |his )?faces?\b|\b(?:replace|switch|swap)\w* (?:the |her |his |their )?face (?:with|for)\b"
+    r"|\b(?:put|use|give|place|paste|transfer|copy)\w* (?:the |her |his |their )?(?:" + _PIC + r"'?s? )?face (?:of|from|in|onto|on)\b"
+    r"|\b(?:with|using) (?:the )?face (?:of|from) (?:the )?(?:" + _PIC + r"|person|woman|man|girl|guy)"
+    r"|\buse the identity\b|\bwith the identity (?:of|from)\b"
+    r"|\b(?:use|put|give|take|paste|copy)\w* (?:the )?" + _PIC + r"'?s? face\b", re.I)
+_SWAP_BODY = re.compile(
+    r"\bbody[- ]?swap\w*|\bcharacter[- ]?swap\w*|\bperson[- ]?swap\w*|\bswap\w* (?:the |their )?(?:bodies|body|people|persons|characters?)\b"
+    r"|\bswap\w* (?:her|him|them) (?:with|for|out)\b|\breplace\w* " + _WHO + r"(?: in " + _PIC + r")? with\b"
+    r"|\b(?:she|he|they) (?:becomes?|turns? into) (?:the )?(?:person|woman|man|girl|guy|one) (?:from|in)\b", re.I)
+_OUTFIT = re.compile(
+    r"\b(?:outfit|clothes|clothing|dress|costume|wardrobe)[- ]?(?:swap|transfer|change)\w*"
+    r"|\b(?:wear\w*|put on|dress\w*(?: (?:her|him|them))? in|change\w* (?:her|his|their|the) (?:outfit|clothes|clothing) to) (?:the |that |this )?(?:same )?"
+    r"(?:outfit|clothes|clothing|dress|top|shirt|jacket|garments?|look|costume|uniform|bikini|suit)s? (?:from|in|of|shown in)\b"
+    r"|\b(?:transfer|copy|move|take|bring|swap|put|give)\w* (?:the |her |his |their )?(?:outfit|clothes|clothing|dress|garments?|costume)s? (?:from|in|of)\b"
+    r"|\bsame (?:outfit|clothes|clothing|dress) as\b|\b(?:" + _PIC + r")'?s? (?:outfit|clothes|clothing|dress)\b", re.I)
+_TRANSFER = re.compile(
+    r"\b(?:transfer|move|bring|take|copy|carry|drop|put|place|insert|add)\w* " + _WHO + r" (?:from|in|out of) " + _PIC
+    + r"|\b(?:transfer|move|bring|copy|carry)\w* (?:him|her|them|it)? ?(?:into|to|onto|over to|in) (?:the )?(?:scene|photo|picture|room|background|" + _PIC + r")"
+    + r"|\b(?:into|onto) (?:the scene (?:of|in|from) )?" + _PIC.replace("\\d", "1"), re.I)
+SWAP_LEAD_INTENTS = ("head_swap", "face_swap", "body_swap")
+
+
+def swap_intent(prompt: str, n_images: int) -> str:
+    """head_swap / face_swap / body_swap / clothing_transfer / subject_into_environment for two or more pictures,
+    or '' when the prompt asks for none of them."""
+    if int(n_images or 0) < 2:
+        return ""
+    t = prompt or ""
+    if _SWAP_HEAD.search(t):
+        return "head_swap"
+    if _SWAP_FACE.search(t):
+        return "face_swap"
+    if _OUTFIT.search(t):
+        return "clothing_transfer"
+    if _SWAP_BODY.search(t):
+        return "body_swap"
+    if _TRANSFER.search(t):
+        return "subject_into_environment"
+    return ""
+
+
+def swap_ref(prompt: str, n_images: int, default: int = 2) -> int:
+    """The picture that gives the head / person / outfit: the first picture number above 1 named in the prompt."""
+    for m in re.finditer(r"(?:<\s*picture\s*(\d)\s*>|@?(?:picture|image|photo|pic|img)\s*(\d))", prompt or "", re.I):
+        k = int(m.group(1) or m.group(2))
+        if 2 <= k <= max(2, int(n_images or 0)):
+            return k
+    return default
+
+
 def classify_intent(prompt: str, roles: list, ref_mode: bool = False) -> str:
     n = len(roles or [])
     if is_before_after_request(prompt):
@@ -837,6 +897,9 @@ def classify_intent(prompt: str, roles: list, ref_mode: bool = False) -> str:
         return "photo_collage"
     if ref_mode:
         return "compose_references"
+    sw = swap_intent(prompt, n)
+    if sw:
+        return sw
     task = single_task_intent(prompt, n)
     if task:
         return task
@@ -1001,11 +1064,31 @@ def _multipanel_appendix(intent: str, n: int, layout=None, appearances=None) -> 
     return sentence
 
 
-def _appendix_for(intent: str, resolved: list, ref_mode: bool, skip_preserve: bool, layout=None, appearances=None) -> str:
+def _appendix_for(intent: str, resolved: list, ref_mode: bool, skip_preserve: bool, layout=None, appearances=None,
+                  prompt: str = "") -> str:
     parts = []
     n = len(resolved)
     base = picture_tag(1) if n else "<Picture 1>"
     extras = _ref_list(resolved, ref_mode=ref_mode)
+    ref = picture_tag(swap_ref(prompt, n, next((i for i, r in extras if r == "subject"), extras[0][0] if extras else 2)))
+
+    # Swaps: the wording the BFS swap LoRAs were trained on (Alissonerdx/BFS-Best-Face-Swap guides). It is also the
+    # clearest instruction for edit models without those LoRAs, so every edit engine gets it.
+    if intent == "head_swap":
+        return ("head_swap: start with %s as the base image, keeping its lighting, environment, and background. "
+                "Remove the head from %s completely and replace it with the head from %s, strictly preserving the hair, "
+                "eye color, and nose structure of %s. Copy the eye direction, head rotation, and micro-expressions from %s. "
+                "Keep the body, clothing, pose, framing, and background of %s intact." % (base, base, ref, ref, base, base))
+    if intent == "face_swap":
+        return ("face_swap: start with %s as the base image. Replace only the face of the person in %s with the face from %s, "
+                "preserving the identity, facial features, eye color, and nose structure of %s and matching the skin tone. "
+                "Keep the hair, head shape, eye direction, head rotation, expression, body, clothing, pose, lighting, and "
+                "background of %s unchanged." % (base, base, ref, ref, base))
+    if intent == "body_swap":
+        return ("body_swap: start with %s as the base image, keeping its lighting, environment, and background. "
+                "Replace the person in %s with the person from %s, strictly preserving the face, hair, clothing, body shape "
+                "and proportions from %s. Copy the pose, eye direction, head rotation, and micro-expressions from %s, at the "
+                "same position and scale in the frame." % (base, base, ref, ref, base))
 
     if intent in MULTIPANEL_INTENTS:
         return _multipanel_appendix(intent, n, layout=layout, appearances=appearances)
@@ -1045,8 +1128,9 @@ def _appendix_for(intent: str, resolved: list, ref_mode: bool, skip_preserve: bo
 
     if intent == "subject_into_environment":
         parts.append("Use %s as the scene to edit." % base)
-        # Prefer an explicit/inferred subject slot, else Picture 2
-        subj = next((i for i, r in extras if r == "subject"), extras[0][0] if extras else 2)
+        # the picture the prompt names, else an explicit/inferred subject slot, else Picture 2
+        subj = swap_ref(prompt, n, next((i for i, r in extras if r == "subject"), extras[0][0] if extras else 2))
+        parts.append("Bring the person from %s into %s." % (picture_tag(subj), base))
         if not skip_preserve:
             parts.append(_subject_preserve(picture_tag(subj), APPEARANCE.slot_attrs(appearances, subj)))
             parts.append(_integration(base))
@@ -1065,11 +1149,13 @@ def _appendix_for(intent: str, resolved: list, ref_mode: bool, skip_preserve: bo
         return " ".join(parts)
 
     if intent == "clothing_transfer":
-        cloth = next((i for i, r in extras if r == "clothing"), extras[0][0] if extras else 2)
-        parts.append("Dress the person in %s in the exact clothing from %s." % (base, picture_tag(cloth)))
+        cloth = next((i for i, r in extras if r == "clothing"), None) or swap_ref(prompt, n, extras[0][0] if extras else 2)
+        parts.append("Dress the person in %s in the exact outfit from %s." % (base, picture_tag(cloth)))
         parts.append(_role_line(cloth, "clothing"))
+        parts.append("Take only the clothing from %s, not its person, pose or background." % picture_tag(cloth))
         if not skip_preserve:
-            parts.append("Keep the person's identity, face, hair and body in %s, and keep the rest of %s unchanged." % (base, base))
+            parts.append("Keep the person's identity, face, hair, skin, body shape and pose in %s exactly the same, with the "
+                         "outfit fitted naturally to their body, and keep the rest of %s unchanged." % (base, base))
         for i, role in extras:
             if i == cloth:
                 continue
@@ -1272,8 +1358,10 @@ def build_assist_prompt(user_prompt: str, image_roles=None, n_images: int = 0,
             ref_mode = True
             camera_mode = "ref" if camera_mode == "edit" else camera_mode
             resolved = infer_roles(user, roles_in, ref_mode=True) if n else resolved
-        skip = already_has_preservation(user) and intent not in (("compose_references",) + tuple(MULTIPANEL_INTENTS))
-        appendix = _norm(_appendix_for(intent, resolved, ref_mode=ref_mode, skip_preserve=skip, layout=layout, appearances=appearances))
+        skip = already_has_preservation(user) and intent not in (("compose_references",) + tuple(MULTIPANEL_INTENTS)
+                                                                 + SWAP_LEAD_INTENTS + ("clothing_transfer",))
+        appendix = _norm(_appendix_for(intent, resolved, ref_mode=ref_mode, skip_preserve=skip, layout=layout,
+                                       appearances=appearances, prompt=user))
         if appendix and appendix.lower() in user.lower():
             appendix = ""
             skip = True
@@ -1283,7 +1371,10 @@ def build_assist_prompt(user_prompt: str, image_roles=None, n_images: int = 0,
     if auto_ref and layout is None:
         layout = panel_layout(intent, aspect=aspect, width=width, height=height,
                               resolution=resolution, prompt=user)
-    body = user if not appendix else (user.rstrip() + "\n\n" + appendix)
+    if appendix and intent in SWAP_LEAD_INTENTS:
+        body = appendix + "\n\n" + user.rstrip()        # the swap instruction first, the user's own words after
+    else:
+        body = user if not appendix else (user.rstrip() + "\n\n" + appendix)
     cam = CAMERA.apply_camera(body, camera, mode=camera_mode)
     final = cam["prompt"]
     return {

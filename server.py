@@ -807,6 +807,54 @@ def _clip_names():
         return []
 
 
+def swap_loras(card, intent, user_loras):
+    """The head-swap LoRA an engine needs for a head / face swap, when it is installed and the user hasn't added one.
+    FLUX.2 Klein 9B: BFS Head V1 (step3500 rank128, else rank64); body first, head second, strength 1.0.
+    Krea 2 Edit picks its BFS LoRA itself (Auto), so it isn't listed here."""
+    if intent not in ("head_swap", "face_swap") or card.get("task") != "edit":
+        return []
+    names = [str((l or {}).get("name") or "") for l in (user_loras or [])]
+    if any("bfs_" in n.lower() for n in names):
+        return []
+    fam = (card.get("family") or "")
+    if fam != "FLUX.2 Klein":
+        return []
+    try:
+        have = combo_list(object_info(), "LoraLoaderModelOnly", "lora_name")
+    except Exception:
+        return []
+    cands = [n for n in have if re.search(r"bfs_head_v1_flux-klein_9b", n, re.I)]
+    cands.sort(key=lambda n: (not re.search(r"step3500_rank128", n, re.I), len(n)))
+    return [{"name": cands[0], "strength": 1.0}] if cands else []
+
+
+def krea_swap_pick(data, sw):
+    """Krea 2 Edit (Auto, two pictures): head / face swap -> BFS head swap; body swap -> BFS head swap + body swap 0.5;
+    outfit -> the outfit-transfer LoRA. Sets data's edit_intent / Edit LoRA / steps; returns extra LoRAs to add.
+    Nothing changes when the LoRA isn't installed (the person-into-scene edit is used, as before)."""
+    want = {"head_swap": "headswap", "face_swap": "headswap", "body_swap": "bodyswap", "clothing_transfer": "outfit"}.get(sw)
+    if not want:
+        return []
+    try:
+        have = combo_list(object_info(), "LoraLoaderModelOnly", "lora_name")
+    except Exception:
+        return []
+    def find(part):
+        return next((n for n in have if part in n.lower()), "")
+    lora = find("outfittransfer") if want == "outfit" else find("bfs_head_swap")
+    if not lora:
+        return []
+    data["edit_intent"] = want
+    models = data.setdefault("models", {})
+    models["1"] = lora
+    data["steps"] = 10 if want == "bodyswap" else 8
+    if want == "bodyswap":
+        body = find("bfs_body_swap")
+        if body and not any(body == (l or {}).get("name") for l in (data.get("loras") or [])):
+            return [{"name": body, "strength": 0.5}]
+    return []
+
+
 def _has_node(name):
     try:
         return name in object_info()
@@ -862,12 +910,12 @@ def pe_tokens_in(v):
 
 
 def make_pe_graph(prompt, mode, images, pe_mode, models, pe_system_extra="", pe_task_extra="", pe_system_override="",
-                  pe_tokens=None):
+                  pe_tokens=None, media="image"):
     free = _has_node("AUSBOSS_NODES_FreeMemory")
     return graphs.build_pe_only(
         prompt, mode=mode, images=images, pe_mode=pe_mode, models=models, free_memory=free,
         pe_system_extra=pe_system_extra, pe_task_extra=pe_task_extra, pe_system_override=pe_system_override,
-        pe_tokens=pe_tokens,
+        pe_tokens=pe_tokens, media=media,
     )
 
 
@@ -885,6 +933,7 @@ def _pe_cache_payload(job):
         "max_length": PE.resolve_tokens(st["id"], job.get("mode"), job.get("pe_tokens"),
                                         job.get("prompt_user") or job.get("prompt"), len(images)),
         "ref_mp": st["ref_megapixels"],
+        "media": job.get("pe_media") or "image",
         "templates": [st.get("system_t2i" if job.get("mode") != "edit" else "system_edit"),
                       st.get("task_t2i" if job.get("mode") != "edit" else "task_edit")],
         "ref_mode": bool(job.get("ref_mode")),
@@ -1009,6 +1058,7 @@ def run_prompt_enhancer(job):
             job.get("pe_mode") or "fast", models,
             pe_system_extra=job.get("pe_system_extra") or "", pe_task_extra=job.get("pe_task_extra") or "",
             pe_system_override=job.get("pe_system_override") or "", pe_tokens=job.get("pe_tokens"),
+            media=job.get("pe_media") or "image",
         )
         oi = object_info()
         problems = validate_graph(graph, oi, input_root=INPUT)
@@ -1019,6 +1069,7 @@ def run_prompt_enhancer(job):
                 models=models, free_memory=False,
                 pe_system_extra=job.get("pe_system_extra") or "", pe_task_extra=job.get("pe_task_extra") or "",
                 pe_system_override=job.get("pe_system_override") or "", pe_tokens=job.get("pe_tokens"),
+                media=job.get("pe_media") or "image",
             )
             problems = validate_graph(graph, oi, input_root=INPUT)
         if problems:
@@ -1522,7 +1573,8 @@ def submit_workflow_job(data):
         # the Krea 2 Edit notes' own fix for faces drifting generic
         prompt = prompt.strip().rstrip(" .") + ". Preserve the exact facial identity."
     # keep the subject's clothing when the edit isn't about clothing (on unless the user switched it off)
-    keep_cloth = data.get("keep_clothing") is not False and card.get("edit_kind") != "anypaint" and card.get("media") == "image"
+    keep_cloth = data.get("keep_clothing") is not False and card.get("edit_kind") != "anypaint" and card.get("media") == "image" \
+        and ASSIST.swap_intent(data.get("prompt") or "", len(images or [])) not in ("body_swap", "subject_into_environment", "clothing_transfer")
     if prompt and keep_cloth:
         style = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
         prompt, _cg = CG.apply(prompt, data.get("prompt") or "", "edit" if images else "t2i", style)
@@ -1595,6 +1647,12 @@ def submit_workflow_job(data):
         cfg_now = 1.0
     if keep_cloth and (slots.get("negative") or []) and cfg_now > 1.05:
         neg_in = CG.negative(neg_in, data.get("prompt") or "", "edit" if images else "t2i")
+    krea_extra_loras = []
+    if card.get("edit_kind") == "krea_edit" and data.get("edit_intent") and len(images or []) >= 2:
+        krea_extra_loras = krea_swap_pick(data, ASSIST.swap_intent(data.get("prompt") or "", len(images)))
+        if data.get("edit_intent") == "outfit":
+            prompt_sent = (prompt_sent.strip().rstrip(" .") + ". Use only the outfit from the second picture; keep "
+                           "their face, hair, body shape, pose and the background exactly the same.")
     values = {
         "prompt": prompt_sent,
         "negative": neg_in,
@@ -1614,7 +1672,8 @@ def submit_workflow_job(data):
         "clip": card.get("clip_seconds"),
         "fps": data.get("fps"),
         "models": data.get("models") or {},
-        "loras": [l for l in (data.get("loras") or []) if isinstance(l, dict)],
+        "loras": [l for l in (data.get("loras") or []) if isinstance(l, dict)]
+                 + swap_loras(card, (assist_info or {}).get("intent"), data.get("loras")) + krea_extra_loras,
         "videos": media_in.get("videos") or [],
         "audios": media_in.get("audios") or [],
         # Auto mode only: the edit type the app read from the instruction (Krea 2 Edit knobs)
@@ -1703,7 +1762,7 @@ def submit_workflow_job(data):
         if assist_info:
             extra = (ASSIST.pe_task_prefix(assist_info) + "\n" + extra).strip()
         job.update({
-            "pe": True, "pe_mode": pe_mode, "pe_tokens": pe_tokens_in(data.get("pe_tokens")),
+            "pe": True, "pe_mode": pe_mode, "pe_tokens": pe_tokens_in(data.get("pe_tokens")), "pe_media": card.get("media") or "image",
             "pe_clip_used": pe_clip_used, "pe_small_model": pe_small,
             "mode": pe_task, "pe_images": list(images) if pe_task == "edit" else [],
             "pe_system_extra": ASSIST.pe_system_addon(assist_info) if assist_info else "",
@@ -2461,7 +2520,7 @@ def submit_job(data):
                 enabled=bool(auto_assist), camera=camera, mode="t2i",
             )
             prompt_sent = assist_info.get("prompt") or prompt_user
-        if data.get("keep_clothing") is not False:
+        if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
@@ -2529,7 +2588,7 @@ def submit_job(data):
             ref_mode = True
             edit_kind = "ref"
             # Keep the user's chosen aspect / Match Picture 1 size. Layout adapts to W x H.
-        if data.get("keep_clothing") is not False:
+        if data.get("keep_clothing") is not False and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
@@ -3409,17 +3468,28 @@ class H(BaseHTTPRequestHandler):
             eng = (q.get("engine") or ["builtin"])[0] or "builtin"
             mode = "edit" if (q.get("mode") or ["t2i"])[0] == "edit" else "t2i"
             pe_mode = "quality" if (q.get("pe_mode") or ["fast"])[0] == "quality" else "fast"
-            note, name = "", "MiniMax H3"
+            note, name, media, modes = "", "MiniMax H3", "image", ["t2i"]   # built-in: Enhance is for new pictures
             if eng != "builtin":
                 try:
                     card, _g = WF.get(eng)
-                    name = card.get("name") or eng
-                    note = PD.for_card(card).get("hint") or ""
                 except Exception:
                     return self.j({"error": "Unknown engine."}, 404)
-            return self.j({"engine": eng, "engine_name": name, "mode": mode, "pe_mode": pe_mode,
-                           "default": graphs.default_pe_system(mode, pe_mode), "custom": pe_override(eng, mode),
-                           "model_note": note})
+                name = card.get("name") or eng
+                note = PD.for_card(card).get("hint") or ""
+                media = card.get("media") or "image"
+                applies = card.get("enhance", True) is not False and bool((card.get("slots") or {}).get("prompt"))
+                if media == "video":
+                    lo, hi = int(card.get("picture_min") or 0), int(card.get("picture_max") or 0)
+                    modes = (["t2i"] if lo == 0 else []) + (["edit"] if hi > 0 else [])
+                else:      # pictures: Enhance only writes new pictures (never edits)
+                    modes = ["t2i"] if int(card.get("picture_min") or 0) == 0 else []
+                if not applies:
+                    modes = []
+            if modes and mode not in modes:
+                mode = modes[0]
+            return self.j({"engine": eng, "engine_name": name, "mode": mode, "pe_mode": pe_mode, "media": media,
+                           "modes": modes, "default": graphs.default_pe_system(mode, pe_mode, media) if modes else "",
+                           "custom": pe_override(eng, mode), "model_note": note})
         if path == "/api/understanding":
             eng = (q.get("engine") or ["builtin"])[0] or "builtin"
             d = UND.load(DATA)

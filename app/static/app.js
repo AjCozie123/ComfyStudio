@@ -4272,6 +4272,15 @@ function bindShell() {
       sel.addEventListener("change", () => LS.set("cs.wfm." + card.id + "." + m.key, sel.value));
       lab.appendChild(sel);
       box.appendChild(lab);
+      if (m.installed === false && m.wanted) {
+        /* the workflow was made with a file this PC doesn't have: say so, keep it usable with your own */
+        const tip = document.createElement("p");
+        tip.className = "pop-note";
+        const short = String(m.wanted).split(/[\/]/).pop();
+        tip.textContent = "This workflow was made with " + short + ", which isn't on this PC. It will use the model picked above. "
+          + "Choose any of yours, or download the original on the Workflows page.";
+        box.appendChild(tip);
+      }
     });
     if (!(opt.models || []).length) box.innerHTML = '<p class="pop-note">This workflow has no model loaders the app can change.</p>';
     // settings follow the model you pick (a Turbo model wants 8 steps, a Base model 50 ...)

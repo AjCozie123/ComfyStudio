@@ -1227,8 +1227,12 @@ def _wf_model_options(card):
         if m.get("only"):          # e.g. the Krea 2 Edit LoRA list: just the edit LoRAs, not every LoRA on the PC
             keep = [c for c in choices if any(s in c.lower() for s in m["only"])]
             choices = keep or choices
+        want = m.get("value")
+        have = (not choices) or want in choices
+        sug = None if have else (WF.match_model_file(want, choices)[0] or (choices[0] if choices else None))
         opts["models"].append({"key": str(i), "label": m.get("label") or m.get("kind") or "Model",
-                               "title": m.get("title"), "value": m.get("value"), "choices": choices})
+                               "title": m.get("title"), "value": want if have else sug, "choices": choices,
+                               "wanted": want, "installed": have})
     for key, inp in (("sampler", "sampler_name"), ("scheduler", "scheduler")):
         sl = ((card.get("slots") or {}).get(key) or [])
         if sl:
@@ -1705,6 +1709,24 @@ def plain_test_problem(msg):
     return msg[:400] or "The test didn't finish."
 
 
+
+def pe_clip_available(name):
+    """The Prompt Enhancer model to use: the chosen one if it's on this PC, else another Qwen text model you have
+    (the enhancer needs one), else None (enhancing is skipped, your own prompt is used)."""
+    try:
+        have = _clip_names()
+    except Exception:
+        return name
+    if not have or name in have:
+        return name
+    hit, _how = WF.match_model_file(name, have)
+    if hit:
+        return hit
+    qwen = [n for n in have if re.search(r"qwen[\s_-]?3", n, re.I) and not re.search(r"(?i)minimax|t5|umt5|clip_l|gemma", n)]
+    pref = sorted(qwen, key=lambda n: (0 if re.search(r"(?i)(9b|8b|7b)", n) else 1 if re.search(r"(?i)4b", n) else 2, len(n)))
+    return pref[0] if pref else None
+
+
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
@@ -1953,6 +1975,11 @@ def submit_workflow_job(data):
     except Exception as e:
         log.info("fix_moved_files skipped: %s", e)
     try:
+        # a model / LoRA the workflow wants but this PC doesn't have never stops the run: use what you have
+        notes += WF.use_installed_models(g, object_info())
+    except Exception as e:
+        log.info("use_installed_models skipped: %s", e)
+    try:
         problems = validate_graph(g, object_info(), input_root=INPUT)
     except Exception as e:
         log.info("workflow validate skipped: %s", e)
@@ -2003,6 +2030,12 @@ def submit_workflow_job(data):
     if pe_on:
         pe_mode = "quality" if data.get("pe_mode") == "quality" else "fast"
         pe_clip_used, pe_small = PE.pe_clip_for(pe_mode, _clip_names(), graphs.DEFAULTS["pe_clip_name"])
+        pe_clip_used = pe_clip_available(pe_clip_used)
+        if not pe_clip_used:            # no enhancer model on this PC: run with your own prompt
+            pe_on = False
+            job["note"] = (job.get("note", "") + " No Prompt Enhancer model is installed, so your own prompt was used.").strip()
+            job["message"] = job["note"]
+    if pe_on:
         pe_task = card.get("pe_task") or ("edit" if images else "t2i")
         pe_media = card.get("media") or "image"
         image_edit = pe_media == "image" and pe_task == "edit"
@@ -2882,6 +2915,14 @@ def submit_job(data):
     else:
         pe_system_extra = ""
         pe_task_extra = ""
+    model_notes = []
+    if pe:
+        clip_ok = pe_clip_available(pe_models.get("pe_clip_name"))
+        if not clip_ok:
+            pe = False
+            model_notes.append("No Prompt Enhancer model is installed, so your own prompt was used.")
+        elif clip_ok != pe_models.get("pe_clip_name"):
+            pe_models["pe_clip_name"] = pe_clip_used = clip_ok
     if pe:
         pe_graph, _pe_meta = make_pe_graph(prompt_sent, mode, images, pe_mode, pe_models, pe_system_extra=pe_system_extra,
                                            pe_task_extra=pe_task_extra, pe_system_override=pe_override("builtin", mode),
@@ -2900,8 +2941,16 @@ def submit_job(data):
             except Exception:
                 pe_problems = []
         if pe_problems:
-            raise ValueError("The Prompt Enhancer workflow did not match this ComfyUI install. " + " | ".join(pe_problems[:8]))
+            # the enhancer can't run here (its model or nodes aren't on this PC): your own prompt is used instead
+            log.info("PE skipped: %s", " | ".join(pe_problems[:4]))
+            pe = False
+            model_notes.append("The Prompt Enhancer can't run on this PC yet (its model isn't installed), so your own "
+                               "prompt was used. Pick a Prompt Enhancer model in Settings, or download one.")
     prompt = prompt_sent
+    try:
+        model_notes += WF.use_installed_models(graph, object_info())
+    except Exception as e:
+        log.info("use_installed_models skipped: %s", e)
     try:
         oi = object_info()
         problems = validate_graph(graph, oi, input_root=INPUT)
@@ -2920,7 +2969,8 @@ def submit_job(data):
         "images": [],
         "source_images": orig_images or images,
         "alias_warnings": alias_info.get("warnings") or [],
-        "message": "Waiting to start…",
+        "message": " ".join(model_notes) or "Waiting to start…",
+        "note": " ".join(model_notes),
         "progress": 0,
         "progress_max": 0,
         "error": "",

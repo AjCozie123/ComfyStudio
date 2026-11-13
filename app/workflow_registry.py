@@ -2338,3 +2338,65 @@ def strip_unknown_inputs(graph, oi):
     for k, extra in keep.items():
         graph[k].setdefault("inputs", {}).update(extra)
     return graph
+
+
+# ------------------------------------------------------------------ models the workflow wants but this PC doesn't have
+def _combo_choices(oi, cls, name):
+    spec = dict(_input_specs(oi, cls)).get(name)
+    if isinstance(spec, (list, tuple)) and spec:
+        if isinstance(spec[0], list):
+            return spec[0]
+        if spec[0] == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
+            return spec[1].get("options") or []
+    return None
+
+
+def use_installed_models(graph, oi):
+    """Never stop a run because a model file isn't on this PC: use the closest model you have (same file elsewhere,
+    your version of it, a near name), else the first one you have of that kind. A missing LoRA is switched off
+    instead (a random LoRA would change the picture). Returns plain notes of what was swapped."""
+    notes = []
+    for nid, n in graph.items():
+        cls = n.get("class_type")
+        ins = n.get("inputs") or {}
+        for name, v in list(ins.items()):
+            # rgthree Power Lora Loader: {"on", "lora", "strength"} entries
+            if isinstance(v, dict) and "lora" in v and re.fullmatch(r"lora_\d+", name):
+                choices = _combo_choices(oi, "LoraLoader", "lora_name") or []
+                if v.get("on") and v.get("lora") and v["lora"] not in choices:
+                    hit, _how = match_model_file(v["lora"], choices)
+                    if hit:
+                        v["lora"] = hit
+                    else:
+                        v["on"] = False
+                        notes.append("LoRA %s isn't on this PC, so it was left out." % _base(v["lora"]))
+                continue
+            if not isinstance(v, str) or not _FILE_EXT.search(v):
+                continue
+            choices = _combo_choices(oi, cls, name)
+            if not choices or v in choices:
+                continue
+            hit, how = match_model_file(v, choices)
+            if hit:
+                ins[name] = hit
+                if how not in ("same file, other folder",):
+                    notes.append("%s isn't on this PC, so %s was used (%s)." % (_base(v), _base(hit), how))
+                continue
+            if "lora" in name.lower() or "lora" in str(cls).lower():
+                # switch the LoRA off: keep a valid file name, strength 0
+                if choices:
+                    ins[name] = choices[0]
+                    for k in list(ins):
+                        if k.startswith("strength") and not _is_link(ins[k]):
+                            ins[k] = 0.0
+                notes.append("LoRA %s isn't on this PC, so it was left out." % _base(v))
+                continue
+            if choices:
+                ins[name] = choices[0]
+                notes.append("%s isn't on this PC, so your %s was used instead. Pick a different one in Settings › "
+                             "Models, or download the original." % (_base(v), _base(choices[0])))
+    return notes
+
+
+def _base(name):
+    return re.split(r"[\/]", str(name))[-1]

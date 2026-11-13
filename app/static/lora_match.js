@@ -386,11 +386,12 @@
       return out;
     };
     const ranked = Object.values(byGroup).sort((a, b) => b.score - a.score || tie(b) - tie(a) || (b.it.mtime || 0) - (a.it.mtime || 0));
+    const cap = Math.max(1, Math.min(6, parseInt(opts.max, 10) || 3));   // how many Auto-pick may load (your setting)
     const chosen = [];
     const kinds = {};
     const claimed = new Set();
     for (const f of ranked) {
-      if (chosen.length >= 3) break;
+      if (chosen.length >= cap) break;
       const k = f.it.kind || "concept";
       if ((k === "style" || k === "character") && kinds[k]) continue;   // two styles / two people fight each other
       const at = where(f.cpos);

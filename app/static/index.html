@@ -475,6 +475,7 @@
     <div class="pop-head"><h3>LoRAs</h3><p class="pop-sub" id="lora-sub">Add a LoRA and set how strongly it applies</p></div>
     <label class="check-row lora-auto-row"><input type="checkbox" id="lora-auto"> Auto-pick LoRAs from my prompt
       <span class="muted">(only LoRAs made for this engine's model)</span></label>
+    <label class="check-row lora-max-row">Auto-pick at most <select id="lora-max" aria-label="Most LoRAs Auto-pick may load"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select> LoRAs <span class="muted">(cross one out to skip it for this picture only)</span></label>
     <div id="lora-auto-list" class="lora-auto-list hidden"></div>
     <div id="lora-list" class="lora-list"></div>
     <div class="lora-add">
@@ -951,7 +952,7 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/lora_match.js?v=20261113e"></script>
-  <script src="/static/app.js?v=20261113k"></script>
+  <script src="/static/lora_match.js?v=20261113l"></script>
+  <script src="/static/app.js?v=20261113l"></script>
 </body>
 </html>

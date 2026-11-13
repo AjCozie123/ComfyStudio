@@ -1178,6 +1178,7 @@ async function generate() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+    if (window.__loraSent) window.__loraSent();
     if (typeof enqueueJob === "function") enqueueJob(res.job);
     else {
       state.jobId = res.job.id;
@@ -4825,7 +4826,7 @@ function bindShell() {
       showError(e.message || "The app didn't answer.");
       return;
     }
-    if (resp.ok && data.job) { enqueueJob(data.job); return; }
+    if (resp.ok && data.job) { if (window.__loraSent) window.__loraSent(); enqueueJob(data.job); return; }
     if (typeof window.showActionError === "function" && data && data.code) { window.showActionError(data); return; }
     showError((data && data.error) || "Couldn't start that.");
   }
@@ -8149,6 +8150,9 @@ function bindShell() {
 (function () {
   let INDEX = null, FAMMAP = {};
   const dismissed = new Set();
+  function loraMax() { try { return parseInt(localStorage.getItem("cs.lora.max"), 10) || 3; } catch (e) { return 3; } }
+  // crossing a LoRA out skips it for the next picture only: after you send, it comes back if the prompt still asks for it
+  window.__loraSent = () => { dismissed.clear(); window.__syncLoraPill && window.__syncLoraPill(); };
   const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const short = (n) => String(n || "").split(/[\\/]/).pop().replace(/\.(safetensors|ckpt|pt|bin)$/i, "");
   const FAM_LABEL = { minimax_h3: "MiniMax H3", krea2: "Krea 2", qwen_image: "Qwen Image", flux2: "FLUX.2", flux1: "FLUX.1",
@@ -8175,7 +8179,7 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     if (!fam) return [];
     const p = ($("prompt") && $("prompt").value || "");
     if (!p.trim()) return [];
-    return window.LoraMatch.pick(p, INDEX, fam, Object.assign({}, LISTS, { dismissed, generic: GENERIC }));
+    return window.LoraMatch.pick(p, INDEX, fam, Object.assign({}, LISTS, { dismissed, generic: GENERIC, max: loraMax() }));
   }
   window.__autoLoras = matches;
 
@@ -8233,6 +8237,13 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   }
   let t = 0;
   $("lora-search").addEventListener("input", async () => { await ensureIndex(); clearTimeout(t); t = setTimeout(renderResults, 120); });
+  if ($("lora-max")) {
+    $("lora-max").value = String(loraMax());
+    $("lora-max").addEventListener("change", async () => {
+      try { localStorage.setItem("cs.lora.max", $("lora-max").value); } catch (e) {}
+      await ensureIndex(); renderAuto(); window.__syncLoraPill && window.__syncLoraPill();
+    });
+  }
   $("lora-auto").addEventListener("change", async () => {
     try { localStorage.setItem("cs.lora.auto", $("lora-auto").checked ? "1" : "0"); } catch (e) {}
     dismissed.clear();   // turning Auto-pick off and on again brings back the ones you crossed out

@@ -5173,10 +5173,13 @@ function bindShell() {
       const none = document.createElement("option");
       none.value = "none"; none.textContent = noneLabel;
       sel.appendChild(none);
+      // best guess first, in plain words: "★ Suggested — Label the user's notes: empty box, goes into the image prompt"
       (draft.candidates || []).forEach((cand) => {
         const o = document.createElement("option");
         o.value = cand.node + ":" + cand.input;
-        o.textContent = cand.title + " · " + cand.input + (cand.preview ? " (“" + cand.preview.slice(0, 40) + "”)" : "");
+        const what = cand.label || cand.input;
+        const peek = cand.kind === "empty" ? "" : (cand.preview ? " (“" + cand.preview.replace(/\s+/g, " ").trim().slice(0, 36) + "”)" : "");
+        o.textContent = (cand.suggested && id === "wf-prompt-pick" ? "★ Suggested — " : "") + cand.title + ": " + what + peek;
         sel.appendChild(o);
       });
       sel.value = slot ? (slot.node + ":" + slot.input) : "none";

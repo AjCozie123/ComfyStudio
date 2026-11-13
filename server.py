@@ -1205,23 +1205,18 @@ def _wf_model_options(card):
 
 
 def _wf_candidates(graph):
-    """Every free-text input, so the check screen can re-point the prompt boxes."""
+    """Free-text fields for the check screen's Prompt box / Negative prompt lists: best guess first, technical
+    fields (separators, maths, file names) left out, each with a plain description."""
     try:
         oi = object_info()
     except Exception:
         oi = {}
     out = []
-    for nid, n in graph.items():
-        specs = dict(WF._input_specs(oi, n.get("class_type")))
-        for name, v in (n.get("inputs") or {}).items():
-            if isinstance(v, list) or not isinstance(v, str):
-                continue
-            spec = specs.get(name)
-            if spec and isinstance(spec, (list, tuple)) and spec and spec[0] != "STRING":
-                continue
-            out.append({"node": nid, "input": name, "title": WF._title(n), "class_type": n.get("class_type"),
-                        "preview": v[:80]})
-    return out[:60]
+    for i, c in enumerate(WF.rank_prompt_candidates(graph, oi)[:60]):
+        c = dict(c)
+        c["suggested"] = (i == 0 and c["score"] >= 4 and not c["negative"])
+        out.append(c)
+    return out
 
 
 def explain_problems(graph, problems):
@@ -3969,7 +3964,7 @@ class H(BaseHTTPRequestHandler):
                 if pick == "none":
                     slots[key] = []
                 elif pick and ":" in pick:
-                    nid, inp = pick.split(":", 1)
+                    nid, inp = pick.rsplit(":", 1)      # node ids inside subgraphs contain ":" ("69:49:165")
                     n = graph.get(nid)
                     if n is not None and inp in (n.get("inputs") or {}):
                         slots[key] = [{"node": nid, "input": inp, "title": WF._title(n), "class_type": n.get("class_type"), "label": key}]

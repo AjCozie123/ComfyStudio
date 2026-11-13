@@ -1469,3 +1469,119 @@ def scan(graph, oi=None):
         notes = c.setdefault("notes", [])
         notes.append("This workflow inpaints: paint the area to change with the Inpaint pill, and the app feeds it in as the mask.")
     return card
+
+
+
+# ------------------------------------------------------------------ finding the prompt box in any workflow
+# Workflows built from text nodes (concatenate, lists, primitives) have no single "CLIP Text Encode" to point at. Each
+# free-text field is scored by how it is wired and what it holds: an EMPTY field whose text reaches the model's prompt
+# is the box the author left for the user; long pre-filled text is the author's own template; separators, regex,
+# maths and file names are never a prompt.
+_TECH_INPUT = re.compile(r"^(delimiter|separator|sep|regex\w*|pattern|replace\w*|expression|filename\w*|prefix|"
+                         r"format\w*|codec|media_state|json\w*|path|url|mode|method|device|dtype|weight_dtype|"
+                         r"sampler\w*|scheduler|seed\w*|control\w*|template_name|preset\w*|lora\w*|ckpt\w*|unet\w*|"
+                         r"vae\w*|clip\w*|model\w*|upscale\w*|crop|interpolation)$", re.I)
+_TECH_CLASS = re.compile(r"(Math|Expression|Regex|Replace|Save|Load|Preview|Loader|Upscale|Resize|Scale|Crop)", re.I)
+_PROMPTISH = re.compile(r"(user|notes?|prompt|positive|describ\w*|description|subject|caption|idea|request|"
+                        r"your text|instruction|what to|details?)", re.I)
+_NEGISH = re.compile(r"(negative|neg\b|avoid|undesired|bad)", re.I)
+_PROMPT_SINKS = ("prompt", "text", "positive", "caption", "string", "instruction", "user_prompt", "text_g", "text_l")
+
+
+def _reaches_prompt(graph, nid, depth=8):
+    """Does text from this node flow (through text nodes) into a model's prompt input? Returns hops, or None."""
+    consumers = {}
+    for k, n in graph.items():
+        for name, v in (n.get("inputs") or {}).items():
+            if isinstance(v, list) and len(v) == 2:
+                consumers.setdefault(str(v[0]), []).append((k, n.get("class_type") or "", name))
+    seen, frontier = {str(nid)}, [str(nid)]
+    for hop in range(1, depth + 1):
+        nxt = []
+        for f in frontier:
+            for k, cls, name in consumers.get(f, []):
+                if re.search(r"(Encode|Conditioning|TextGenerate|Prompt)", cls) and name.lower() in _PROMPT_SINKS:
+                    return hop
+                if k not in seen:
+                    seen.add(k)
+                    nxt.append(k)
+        frontier = nxt
+        if not frontier:
+            break
+    return None
+
+
+def rank_prompt_candidates(graph, oi=None):
+    """Free-text fields, best prompt-box guess first: [{node, input, title, class_type, preview, score, kind, label}]."""
+    out = []
+    for nid, n in graph.items():
+        cls = n.get("class_type") or ""
+        specs = dict(_input_specs(oi or {}, cls)) if oi else {}
+        title = _title(n)
+        ins = n.get("inputs") or {}
+        for name, v in ins.items():
+            if not isinstance(v, str):
+                continue
+            spec = specs.get(name)
+            if spec and isinstance(spec, (list, tuple)) and spec and spec[0] != "STRING":
+                continue
+            base = name.split(".")[-1]
+            if _TECH_INPUT.match(base) or (_TECH_CLASS.search(cls) and not _PROMPTISH.search(title)):
+                continue
+            text = v.strip()
+            hops = _reaches_prompt(graph, nid)
+            sc, kind = 0.0, "text"
+            if hops is not None:
+                sc += 3 - min(2, (hops - 1) * 0.5)
+            if not text:
+                sc += 3
+                kind = "empty"
+            elif len(text) > 200:
+                sc -= 3
+                kind = "template"
+            if _PROMPTISH.search(title) or _PROMPTISH.search(base):
+                sc += 2
+            sib = " ".join(str(x) for k, x in ins.items() if k != name and isinstance(x, str))
+            if re.search(r"\b(from the user|user'?s|your own)\b", sib + " " + title, re.I):
+                sc += 3
+            if cls == "CreateList" or re.search(r"\bversions?\b", title, re.I):
+                sc -= 4
+                kind = "template"
+            neg = bool(_NEGISH.search(title) or _NEGISH.search(base))
+            label = {
+                "empty": "empty box" + (", goes into the image prompt" if hops is not None else ""),
+                "template": "the author's built-in text",
+                "text": "text" + (" that goes into the image prompt" if hops is not None else ""),
+            }[kind]
+            out.append({"node": nid, "input": name, "title": title, "class_type": cls, "preview": v[:80],
+                        "score": round(sc, 2), "kind": kind, "negative": neg, "label": label})
+    out.sort(key=lambda c: -c["score"])
+    return out
+
+
+def pick_prompt(graph, oi=None):
+    """The prompt box to use when the scanner found no encoder prompt: the clear winner, or None when unsure."""
+    pos = [c for c in rank_prompt_candidates(graph, oi) if not c["negative"]]
+    if not pos or pos[0]["score"] < 4:
+        return None
+    if len(pos) > 1 and pos[0]["score"] - pos[1]["score"] < 1:
+        return None
+    return pos[0]
+
+
+_scan_prompt_base = scan
+
+
+def scan(graph, oi=None):
+    card = _scan_prompt_base(graph, oi)
+    c = card[0] if isinstance(card, tuple) else card
+    if isinstance(c, dict) and not (c.get("slots") or {}).get("prompt"):
+        best = pick_prompt(graph, oi)
+        if best:
+            c["slots"]["prompt"] = [{"node": best["node"], "input": best["input"], "label": "Prompt", "title": best["title"],
+                                     "class_type": best["class_type"]}]
+            c["notes"] = [n for n in (c.get("notes") or []) if not n.startswith("No prompt box was found")]
+            c["notes"].append("Your prompt goes into \u201c%s\u201d (%s), picked from how the workflow is wired. "
+                              "Change it under Prompt box if that's wrong." % (best["title"], best["label"]))
+            c["unknown"] = [u for u in (c.get("unknown") or []) if str(u.get("node")) != str(best["node"])]
+    return card

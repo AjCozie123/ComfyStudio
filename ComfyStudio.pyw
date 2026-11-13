@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("H3STUDIO_PORT") or (8199 if "_dev" in HERE.lower() else 8198))
@@ -30,9 +31,14 @@ kernel32 = ctypes.windll.kernel32
 
 
 def server_up():
+    """Is Comfy Studio's server answering? Checks the page itself (instant), not /api/status: that one asks ComfyUI
+    how it is doing, which can take seconds while ComfyUI is down or starting, and made the window start a second
+    server that could never get the port (endless "Starting Comfy Studio")."""
     try:
-        with urllib.request.urlopen(URL + "api/status", timeout=1.5) as r:
+        with urllib.request.urlopen(URL, timeout=4) as r:
             return r.status < 500
+    except urllib.error.HTTPError as e:
+        return e.code < 500
     except Exception:
         return False
 

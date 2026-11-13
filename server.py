@@ -4319,6 +4319,15 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
+def _studio_answers(port):
+    """True when a Comfy Studio page is already served on 127.0.0.1:port (any HTTP answer from our app)."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/" % port, timeout=3) as r:
+            return b"Comfy Studio" in r.read(4096)
+    except Exception:
+        return False
+
+
 def serve(host):
     while True:
         if os.path.exists(STOP_FILE):
@@ -4330,6 +4339,11 @@ def serve(host):
             log.info("listening on http://%s:%d", host, PORT)
             srv.serve_forever()
         except OSError as e:
+            # Another Comfy Studio already answering on this port (the app was opened twice, or an older copy is
+            # still running): this copy is not needed. Without this it retried forever and copies piled up.
+            if host == "127.0.0.1" and _studio_answers(PORT):
+                log.info("another Comfy Studio already serves port %d; this copy exits", PORT)
+                os._exit(0)
             log.info("bind %s:%d failed (%s); retrying in 30 s", host, PORT, e)
             time.sleep(30)
 

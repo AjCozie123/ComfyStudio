@@ -1585,3 +1585,71 @@ def scan(graph, oi=None):
                               "Change it under Prompt box if that's wrong." % (best["title"], best["label"]))
             c["unknown"] = [u for u in (c.get("unknown") or []) if str(u.get("node")) != str(best["node"])]
     return card
+
+
+
+# ------------------------------------------------------------------ uploaded workflows: use the user's own model files
+# A shared workflow names the author's files ("Krea2\krea2_turbo_int8.safetensors"). If that exact file isn't installed,
+# use the same file in another folder, else the user's version of the same model (another quantisation / format).
+_QUANT = re.compile(r"(?:[_\-. ](?:int8|int4|fp8|fp16|fp32|bf16|w4a8|w8a8|nvfp4|nf4|e4m3fn|e5m2|scaled|mixed|convrot|"
+                    r"awq|gptq|gguf|q\d(?:_k)?(?:_[msl])?|q\d_\d|comfyui?|comfy|pruned|distill(?:ed)?|"
+                    r"[a-z0-9]{6,8}(?=\.)))+", re.I)
+
+
+def _core_name(name):
+    base = re.split(r"[\\/]", str(name))[-1]
+    base = re.sub(r"\.(safetensors|gguf|ckpt|pt|pth|bin)$", "", base, flags=re.I)
+    return _QUANT.sub("", base).strip("_-. ").lower()
+
+
+def match_model_file(wanted, options):
+    """(file to use, how) for a model name the workflow asks for, from the installed options; (None, '') if none."""
+    if not wanted or not options or wanted in options:
+        return None, ""
+    base = re.split(r"[\\/]", wanted)[-1].lower()
+    same = [o for o in options if re.split(r"[\\/]", o)[-1].lower() == base]
+    if same:
+        return sorted(same, key=len)[0], "same file, other folder"
+    core = _core_name(wanted)
+    if len(core) >= 6:
+        kin = [o for o in options if _core_name(o) == core]
+        if kin:
+            return sorted(kin, key=len)[0], "your version of the same model"
+        import difflib
+        best = max(options, key=lambda o: difflib.SequenceMatcher(None, core, _core_name(o)).ratio())
+        if difflib.SequenceMatcher(None, core, _core_name(best)).ratio() >= 0.86:
+            return best, "the closest model you have"
+    return None, ""
+
+
+_scan_models_base = scan
+
+
+def scan(graph, oi=None):
+    card = _scan_models_base(graph, oi)
+    c = card[0] if isinstance(card, tuple) else card
+    if not isinstance(c, dict) or not oi:
+        return card
+    notes = c.setdefault("notes", [])
+    for slot in (c.get("slots") or {}).get("models") or []:
+        n = graph.get(str(slot.get("node")))
+        if n is None:
+            continue
+        want = (n.get("inputs") or {}).get(slot.get("input"))
+        if not isinstance(want, str):
+            continue
+        spec = dict(_input_specs(oi, n.get("class_type"))).get(slot.get("input"))
+        options = spec[0] if isinstance(spec, (list, tuple)) and spec and isinstance(spec[0], list) else []
+        lab = slot.get("label") or slot.get("title") or "Model"
+        slot_label = "VAE" if lab.lower() == "vae" else lab
+        use, how = match_model_file(want, options)
+        if use:
+            n["inputs"][slot["input"]] = use
+            slot["value"] = use
+            notes.append("%s: this workflow asks for %s, which isn't installed, so it uses %s (%s)."
+                         % (slot_label, re.split(r"[\\/]", want)[-1],
+                            re.split(r"[\\/]", use)[-1], how))
+        elif want not in options and options:
+            notes.append("%s: %s isn't installed and nothing close was found. Pick a file under Models after saving, "
+                         "or download it." % (slot_label, re.split(r"[\\/]", want)[-1]))
+    return card

@@ -138,9 +138,21 @@ def validate_graph(graph: dict, oi: dict, input_root: str | None = None) -> list
                 # child keys like resize_type.megapixels / sampling_mode.temperature are values; type-check loosely
                 continue
             if kind == "autogrow":
-                # images.image_1 etc. should be links; already handled if they were links
+                # images.image_1 etc. must be links; but a template slot typed "*" (any) or a plain value type
+                # (STRING / INT / FLOAT / BOOLEAN / a list of options) also takes a typed-in value, e.g. CreateList
+                # with its texts written straight into the node
                 if not (isinstance(val, list) and len(val) == 2):
-                    problems.append("Node %s input %s should be a connection to another node." % (nid, key))
+                    tpl_type = None
+                    try:
+                        tpl = ((spec[1] or {}).get("template") or {}).get("input") or {}
+                        first = next(iter((tpl.get("required") or tpl.get("optional") or {}).values()))
+                        tpl_type = first[0] if isinstance(first, (list, tuple)) and first else None
+                    except (StopIteration, AttributeError, IndexError, TypeError):
+                        tpl_type = None
+                    value_type = isinstance(tpl_type, str) and all(t.strip() in ("STRING", "INT", "FLOAT", "BOOLEAN")
+                                                                   for t in tpl_type.split(","))   # "FLOAT,INT,BOOLEAN"
+                    if not (tpl_type == "*" or value_type or isinstance(tpl_type, list)):
+                        problems.append("Node %s input %s should be a connection to another node." % (nid, key))
                 continue
 
             # primitive type checks when a schema exists

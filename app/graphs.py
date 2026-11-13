@@ -388,12 +388,25 @@ VIDEO_TASK = "pe_video_task.txt"      # video engines (with or without pictures)
 _INPUT_TAIL = re.compile(r"\n\s*(?:input_text|User input)\s*:\s*\{input text\}.*\Z", re.S | re.I)
 
 
+GENERIC_MEDIA = "image_generic"     # an image EDIT for a model other than MiniMax H3 (no <Subject N> captions)
+
+
 def pe_task_file(mode="t2i", pe_mode="fast", media="image"):
     import pe as PE
     st = PE.settings(pe_mode)
     if media == "video":
         return VIDEO_TASK
-    return st["task_edit"] if mode == "edit" else st["task_t2i"]
+    if mode == "edit":
+        return st["task_edit_generic"] if media == GENERIC_MEDIA else st["task_edit"]
+    return st["task_t2i"]
+
+
+def pe_system_file(mode="t2i", pe_mode="fast", media="image"):
+    import pe as PE
+    st = PE.settings(pe_mode)
+    if mode == "edit":
+        return st["system_edit_generic"] if media == GENERIC_MEDIA else st["system_edit"]
+    return st["system_t2i"]
 
 
 def default_pe_system(mode="t2i", pe_mode="fast", media="image"):
@@ -622,6 +635,8 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
     pe_clip = cfg.get("pe_clip_name") or PE.QUALITY_PE_DEFAULT
     pe_clip_type = cfg.get("pe_clip_type") or "minimax"
     g = {}
+    generic = media == GENERIC_MEDIA
+    temperature = st["temperature"]
     if mode == "t2i":
         system, task = st["system_t2i"], st["task_t2i"]
         max_length = st.get("max_length") or st.get("max_length_t2i")
@@ -629,7 +644,8 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
     else:
         if not images:
             raise ValueError("Image Edit needs at least one reference image.")
-        system, task = st["system_edit"], st["task_edit"]
+        system, task = pe_system_file(mode, st["id"], media), pe_task_file(mode, st["id"], media)
+        temperature = st.get("temperature_edit", temperature)
         max_length = st.get("max_length") or st.get("max_length_edit")
         used = list(images)[: int(st.get("max_images") or 16)]
         links = []
@@ -639,13 +655,13 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
                 st["ref_megapixels"], cfg["ref_multiple"], cfg["scale_method"],
             ))
     g["user_prompt"] = _node("PrimitiveStringMultiline", {"value": prompt}, "Text (user_prompt)")
-    max_length, thinking = PE.resolve_tokens(st["id"], mode, pe_tokens, prompt, len(links))
+    max_length, thinking = PE.resolve_tokens(st["id"], mode, pe_tokens, prompt, len(links), generic=generic)
     if media == "video":
         task = VIDEO_TASK
     _pe_chain(
         g, "user_prompt", True, links,
         system, task, max_length, pe_clip,
-        thinking=thinking, mtp=st["mtp"], temperature=st["temperature"], top_k=st["top_k"],
+        thinking=thinking, mtp=st["mtp"], temperature=temperature, top_k=st["top_k"],
         pe_clip_type=pe_clip_type, standalone=True, free_memory=bool(free_memory),
         pe_system_extra=pe_system_extra, pe_task_extra=pe_task_extra, pe_system_override=pe_system_override,
     )

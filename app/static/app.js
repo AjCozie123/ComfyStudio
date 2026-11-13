@@ -1142,7 +1142,7 @@ async function generate() {
     mode: state.mode,
     prompt,
     resolution: currentResolution(),
-    pe: state.mode !== "edit" && $("pe").checked,
+    pe: $("pe").checked,      /* new pictures and edits (the server skips it for inpaint) */
     pe_mode: state.peMode || "fast",
     pe_tokens: state.peTokens || null,
     keep_clothing: !$("keep-clothing") || $("keep-clothing").checked,
@@ -4785,7 +4785,7 @@ function bindShell() {
       inpaint_mask: (state.inpaint && state.images[0] && state.inpaint.forName === state.images[0].name) ? state.inpaint.mask : null,
       inpaint_areas: (state.inpaint && state.inpaint.areas) || [],
       inpaint_explicit: !!(state.inpaint && state.inpaint.explicit),
-      pe: (card.media === "video" || (card.media === "image" && !state.images.length && state.mode !== "edit")) && $("pe").checked,
+      pe: (card.media === "video" || card.media === "image") && $("pe").checked,
       pe_mode: state.peMode || "fast",
       pe_tokens: state.peTokens || null,
       auto_assist: !!(card.media === "image" && state.images.length && (!$("auto-assist") || $("auto-assist").checked)),
@@ -4920,6 +4920,8 @@ function bindShell() {
       hidePops();
       closeAddMenu();
       window.scrollTo(0, 0);
+      // start reading-in help early (ComfyUI's page opens in the background) so an upload is quick
+      fetch("/api/workflows/warm", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
       renderList();
       return;
     }
@@ -5133,20 +5135,184 @@ function bindShell() {
     await inspect(f.name.replace(/\.json$/i, "").replace(/[_-]+/g, " ").trim());
   });
 
+  /* ---- the upload sheet in plain words: loading -> one workflow (ready / needs one thing) or a list of parts ---- */
+  function sheetState(which) {
+    $("wf-loading").classList.toggle("hidden", which !== "loading");
+    $("wf-parts").classList.toggle("hidden", which !== "parts");
+    $("wf-simple").classList.toggle("hidden", which !== "one");
+    $("wf-advanced").classList.toggle("hidden", which !== "one");
+    $("wf-save").classList.toggle("hidden", which === "loading");
+  }
+  let parts = null;      /* several workflows in one file: [{draft, title, task, plain, ready, card, ...}] */
+
   async function inspect(name) {
-    toast("Reading workflow…", 1500);
+    parts = null;
+    $("wf-sheet-title").textContent = "Add a workflow";
+    $("wf-loading-note").textContent = "The first one takes about 20 seconds while ComfyUI opens in the background. After that it's quick.";
+    sheetState("loading");
+    $("wf-sheet").classList.remove("hidden");
+    let res;
     try {
-      draft = await api("/api/workflows/inspect", { method: "POST", headers: { "Content-Type": "application/json" },
+      res = await api("/api/workflows/inspect", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: draftText, name: name || ($("wf-name").value || "") }) });
     } catch (e) {
-      toast(e.message || "Couldn't read that file", 3500);
+      $("wf-sheet").classList.add("hidden");
+      showError((e.message || "Couldn't read that file.") + " If it keeps happening, check that ComfyUI is running.");
       return;
     }
+    if (res.parts) { parts = res.parts; draft = null; renderParts(res); return; }
+    draft = res;
     renderSheet();
-    $("wf-sheet").classList.remove("hidden");
+    sheetState("one");
   }
 
+  function partIcon(media) { return media === "video" ? "\u{1F3AC}" : "\u{1F5BC}️"; }
+
+  function renderParts(res) {
+    $("wf-sheet-title").textContent = "Add workflows";
+    $("wf-parts-lead").textContent = (res.message || "This file contains several workflows.") + " We'll add each one:";
+    const box = $("wf-part-list");
+    box.innerHTML = "";
+    parts.forEach((p, i) => {
+      const row = document.createElement("label");
+      row.className = "wf-part" + (p.ready ? "" : " needs");
+      row.innerHTML = '<input type="checkbox"><span class="wf-part-ic" aria-hidden="true"></span><span class="wf-part-txt"><strong></strong><small></small><em></em></span>';
+      const cb = row.querySelector("input");
+      cb.checked = !!p.ready;
+      cb.dataset.i = i;
+      row.querySelector(".wf-part-ic").textContent = partIcon(p.media);
+      row.querySelector("strong").textContent = p.title;
+      row.querySelector("small").textContent = p.plain || "";
+      row.querySelector("em").textContent = p.ready ? "✓ Ready to use"
+        : ((p.missing_nodes || []).length ? "Needs an add-on that isn't installed yet" : "Needs one quick answer");
+      if (!p.ready) {
+        const fix = document.createElement("button");
+        fix.type = "button"; fix.className = "chip-btn"; fix.textContent = "Set up";
+        fix.addEventListener("click", (e) => { e.preventDefault(); openPart(i); });
+        row.appendChild(fix);
+      }
+      box.appendChild(row);
+    });
+    const n = () => box.querySelectorAll("input:checked").length;
+    const sync = () => { $("wf-save").textContent = n() ? "Add " + n() : "Add"; $("wf-save").disabled = !n(); };
+    box.addEventListener("change", sync);
+    sync();
+    sheetState("parts");
+  }
+
+  let partsBackup = null;
+  function openPart(i) {
+    /* one part of a several-workflows file, on its own: same screen as a single upload, with a way back */
+    const p = parts[i];
+    partsBackup = { parts, i };
+    parts = null;
+    draft = { draft: p.draft, card: p.card, summary: p.summary, candidates: p.candidates, tasks: WF_TASKS, warnings: [], nodes: null };
+    renderSheet();
+    $("wf-sheet-title").textContent = p.title;
+    sheetState("one");
+  }
+  const WF_TASKS = { t2i: "Text to image", edit: "Image edit", t2v: "Text to video", i2v: "Image to video",
+                     r2v: "Reference to video", v2v: "Video to video", other: "Other" };
+
+  function renderPlain() {
+    /* the top of the sheet: one sentence, then Ready / the one thing it needs */
+    const c = draft.card, s = c.slots || {};
+    $("wf-plain").textContent = c.plain || draft.plain || "";
+    const missing = c.missing_nodes || [];
+    const noPrompt = !(s.prompt || []).length;
+    const st = $("wf-status");
+    st.className = "wf-status " + (missing.length || noPrompt ? "warn" : "ok");
+    st.textContent = missing.length ? "Needs an add-on that isn't installed yet. Install it below, then tap Check again."
+      : noPrompt ? "Needs one quick answer below."
+      : "✓ Ready to use. Tap Add.";
+    const ask = $("wf-ask");
+    ask.classList.toggle("hidden", !noPrompt || !(draft.candidates || []).length);
+    if (noPrompt && (draft.candidates || []).length) {
+      const sel = $("wf-ask-pick");
+      sel.innerHTML = "";
+      const none = document.createElement("option");
+      none.value = "none"; none.textContent = "None of these (the workflow has no prompt)";
+      const seen = new Set();
+      (draft.candidates || []).filter((c2) => !c2.negative && c2.kind !== "template").slice(0, 8).forEach((c2) => {
+        const label = (c2.title || "Text box") + (c2.preview ? " — “" + c2.preview.replace(/\s+/g, " ").trim().slice(0, 40) + "”" : " (empty)");
+        if (seen.has(label)) return;
+        seen.add(label);
+        const o = document.createElement("option");
+        o.value = c2.node + ":" + c2.input;
+        o.textContent = label;
+        sel.appendChild(o);
+      });
+      sel.appendChild(none);
+      sel.onchange = () => { $("wf-prompt-pick").value = sel.value; };
+      $("wf-prompt-pick").value = sel.value;
+    }
+  }
+
+  /* ---- Test run: one small generation with this upload, before it's added ---- */
+  let testToken = 0;
+  function resetTest() {
+    testToken++;
+    const btn = $("wf-test-btn");
+    btn.disabled = false; btn.textContent = "Test run";
+    $("wf-test-note").classList.remove("hidden");
+    const r = $("wf-test-result");
+    r.classList.add("hidden"); r.className = "wf-test-result hidden"; r.innerHTML = "";
+  }
+  function testBody() {
+    return { draft: draft.draft, name: $("wf-name").value.trim() || "My workflow", family: $("wf-family-in").value.trim() || "Custom",
+             task: $("wf-task").value, prompt_pick: $("wf-prompt-pick").value, negative_pick: $("wf-negative-pick").value };
+  }
+  function testShow(kind, html) {
+    const r = $("wf-test-result");
+    r.className = "wf-test-result " + kind;
+    r.innerHTML = html;
+  }
+  const esc = (t) => String(t || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+  $("wf-test-btn").addEventListener("click", async () => {
+    if (!draft) return;
+    const my = ++testToken;
+    const btn = $("wf-test-btn");
+    btn.disabled = true; btn.textContent = "Testing…";
+    $("wf-test-note").classList.add("hidden");
+    testShow("busy", '<span class="wf-spinner" aria-hidden="true"></span><span class="wf-test-msg">Starting the test…</span>');
+    let r;
+    try { r = await api("/api/workflows/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(testBody()) }); }
+    catch (e) { r = { ok: false, problem: e.message || "The test couldn't start." }; }
+    if (r.test_id) lastTestId = r.test_id;
+    if (my !== testToken) return;
+    if (!r.ok) {
+      testShow("bad", "<strong>✕ It didn't run.</strong><p>" + esc(r.problem) + "</p>");
+      btn.disabled = false; btn.textContent = "Test again";
+      return;
+    }
+    const t0 = Date.now();
+    for (;;) {
+      await new Promise((res) => setTimeout(res, 2000));
+      if (my !== testToken) return;
+      let j;
+      try { j = await api("/api/workflows/test/status?id=" + encodeURIComponent(r.job)); } catch (e) { continue; }
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (j.status === "success" || j.status === "done") {
+        const im = (j.images || [])[0] || {};
+        const url = "/api/image?id=" + encodeURIComponent(r.job) + "&t=" + Date.now();
+        const media = im.kind === "video" ? '<video src="' + url + '" controls muted loop playsinline></video>' : '<img src="' + url + '" alt="Test result">';
+        testShow("good", "<strong>✓ It works.</strong><p>Made in " + secs + " s with the test prompt “" + esc(r.prompt) + "”. Tap <b>Add</b>.</p>" + media);
+        btn.disabled = false; btn.textContent = "Test again";
+        return;
+      }
+      if (j.status === "error" || j.status === "cancelled") {
+        testShow("bad", "<strong>✕ It didn't work.</strong><p>" + esc(j.problem || j.error || "The test stopped.") + "</p>");
+        btn.disabled = false; btn.textContent = "Test again";
+        return;
+      }
+      const m = $("wf-test-result").querySelector(".wf-test-msg");
+      if (m) m.textContent = (j.message && !/^Waiting/.test(j.message) ? j.message : "Testing…") + " (" + secs + " s)";
+      if (secs > 900) { testShow("bad", "<strong>The test is taking very long.</strong><p>It may still finish; you can add the workflow anyway.</p>"); btn.disabled = false; return; }
+    }
+  });
+
   function renderSheet() {
+    resetTest();
     const c = draft.card, sm = draft.summary || {};
     $("wf-name").value = c.name || "";
     $("wf-family-in").value = c.family || "Custom";
@@ -5190,6 +5356,7 @@ function bindShell() {
     notes.innerHTML = "";
     (draft.warnings || []).concat(c.notes || []).forEach((n) => { const li = document.createElement("li"); li.textContent = n; notes.appendChild(li); });
     renderMissing();
+    renderPlain();
   }
 
   function renderMissing() {
@@ -5198,7 +5365,8 @@ function bindShell() {
     const missing = draft.card.missing_nodes || [];
     box.classList.toggle("hidden", !missing.length);
     if (!missing.length) return;
-    box.innerHTML = "<h3>Missing nodes</h3><p class=\"pop-note\">These parts of the workflow aren't installed in your ComfyUI.</p>";
+    box.innerHTML = "<h3>Add-on needed</h3><p class=\"pop-note\">This workflow uses parts that aren't in your ComfyUI yet. " +
+      "Tap <b>Install</b>, wait until it says done, then tap <b>Restart ComfyUI</b>. The app checks the workflow again by itself.</p>";
     if (nodes && nodes.message) { const p = document.createElement("p"); p.className = "pop-note"; p.textContent = nodes.message; box.appendChild(p); }
     ((nodes && nodes.packs) || []).forEach((p) => {
       const row = document.createElement("div");
@@ -5227,8 +5395,8 @@ function bindShell() {
       row.innerHTML = "<div><strong></strong><small></small></div>";
       row.querySelector("strong").textContent = n;
       row.querySelector("small").textContent = gh
-        ? "Not in the ComfyUI registry. The workflow says it comes from " + gh.replace("https://github.com/", "") + "."
-        : "Not in the ComfyUI registry. Paste its GitHub link below, or add it from a zip.";
+        ? "From " + gh.replace("https://github.com/", "") + " on GitHub."
+        : "We couldn't find where this add-on comes from. Ask the workflow's author for a link, then use “I have a link” below.";
       if (gh) {
         const b = document.createElement("button");
         b.type = "button"; b.className = "chip-btn primary"; b.textContent = "Install from GitHub";
@@ -5237,10 +5405,11 @@ function bindShell() {
       }
       box.appendChild(row);
     });
-    // any other pack: a GitHub link or a zip
-    const add = document.createElement("div");
+    // any other pack: a GitHub link or a zip (folded away: most people never need it)
+    const add = document.createElement("details");
     add.className = "wf-pack wf-pack-add";
-    add.innerHTML = '<div class="wf-pack-add-row"><input type="url" class="wf-gh-url" placeholder="https://github.com/owner/repo" aria-label="GitHub link of a node pack">'
+    add.innerHTML = '<summary>I have a link or a zip file for the add-on</summary>'
+      + '<div class="wf-pack-add-row"><input type="url" class="wf-gh-url" placeholder="https://github.com/owner/repo" aria-label="GitHub link of a node pack">'
       + '<button type="button" class="chip-btn wf-gh-go">Install</button><button type="button" class="chip-btn wf-zip-go">Add from zip</button>'
       + '<input type="file" class="wf-zip-file" accept=".zip,application/zip" hidden></div>';
     add.querySelector(".wf-gh-go").addEventListener("click", (e) => installGithub(add.querySelector(".wf-gh-url").value.trim(), e.currentTarget));
@@ -5335,7 +5504,44 @@ function bindShell() {
     if (draft) inspect($("wf-name").value);
   }
 
+  async function saveDraft(body) {
+    return api("/api/workflows/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  }
+  function whereItIs(card) {
+    return (TASK_MEDIA[card.task] === "video" ? "Video" : "Image") + " › " + (TASK_LABEL[card.task] || WF_TASKS[card.task] || "Other");
+  }
+  async function afterAdded(cards) {
+    lastTestId = null;
+    $("wf-sheet").classList.add("hidden");
+    cards.forEach((card) => { if (!isImageTask(card.task) && !chosenId(card.task)) LS.set("cs.wf." + card.task, card.id); });
+    await loadList();
+    renderList();
+    applyEngine();
+    if (cards.length === 1) {
+      const w = (list || []).find((x) => x.id === cards[0].id);
+      if (w && window.confirm("Added “" + cards[0].name + "”. You'll find it under " + whereItIs(cards[0]) + ".\n\nUse it now?")) useWorkflow(w);
+      else toast("Added. It's under " + whereItIs(cards[0]) + ".", 4000);
+    } else {
+      toast("Added " + cards.length + " workflows. Tap Use on any of them below.", 4500);
+    }
+  }
+
   $("wf-save").addEventListener("click", async () => {
+    const btn = $("wf-save");
+    if (parts) {                                  // several workflows from one file
+      const picked = [...$("wf-part-list").querySelectorAll("input:checked")].map((cb) => parts[+cb.dataset.i]);
+      if (!picked.length) return;
+      btn.disabled = true;
+      const done = [];
+      for (const [k, p] of picked.entries()) {
+        btn.textContent = "Adding " + (k + 1) + "/" + picked.length + "…";
+        try { done.push((await saveDraft({ draft: p.draft, name: p.card.name, family: p.card.family, task: p.task })).card); }
+        catch (e) { showError("Couldn't add “" + p.title + "”: " + e.message); }
+      }
+      btn.disabled = false; btn.textContent = "Add";
+      if (done.length) afterAdded(done);
+      return;
+    }
     if (!draft) return;
     const body = {
       draft: draft.draft,
@@ -5346,18 +5552,31 @@ function bindShell() {
       negative_pick: $("wf-negative-pick").value,
     };
     let res;
-    try { res = await api("/api/workflows/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
-    catch (e) { toast(e.message, 3500); return; }
-    $("wf-sheet").classList.add("hidden");
-    const card = res.card;
-    const key = card.task;
-    if (!isImageTask(key) && !chosenId(key)) LS.set("cs.wf." + key, card.id);
-    await loadList();
-    renderList();
-    applyEngine();
-    toast("Saved. It's under " + (TASK_MEDIA[card.task] === "video" ? "Video" : "Image") + " › " + TASK_LABEL[card.task] + ".", 3500);
+    try { res = await saveDraft(body); }
+    catch (e) { showError(e.message || "Couldn't add it."); return; }
+    if (partsBackup) {                            // came from the list: mark it done and go back
+      const back = partsBackup;
+      partsBackup = null;
+      back.parts.splice(back.i, 1);
+      if (back.parts.length) {
+        parts = back.parts; draft = null;
+        renderParts({ message: "Added “" + res.card.name + "”." });
+        toast("Added. Add the others, or close this.", 3000);
+        await loadList(); renderList();
+        return;
+      }
+    }
+    afterAdded([res.card]);
   });
-  const closeSheet = () => $("wf-sheet").classList.add("hidden");
+  let lastTestId = null;     /* the hidden Test run entry of the open upload, removed when the sheet closes unsaved */
+  const closeSheet = () => {
+    $("wf-sheet").classList.add("hidden");
+    testToken++;
+    if (lastTestId) {
+      const id = lastTestId; lastTestId = null;
+      api("/api/workflows/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) }).catch(() => {});
+    }
+  };
   $("wf-sheet-close").addEventListener("click", closeSheet);
   $("wf-sheet-backdrop").addEventListener("click", closeSheet);
   if (window.__swipeClose) window.__swipeClose(document.querySelector("#wf-sheet .sheet-card"), closeSheet);
@@ -6205,9 +6424,8 @@ function bindShell() {
     if (!a) {
       if (video || state.engine === "none") return new Set(["help"]);
       /* built-in MiniMax H3 image */
-      const r = ["size_image", "seed", "loras", "camera", "help"];
+      const r = ["size_image", "seed", "loras", "camera", "help", "enhance"];   /* Enhance: new pictures and edits */
       if (state.mode === "edit") r.push("edit_kind", "roles", "inpaint", "mark");
-      else r.push("enhance");   /* Enhance is for new pictures only: it rewrites edit instructions badly */
       return new Set(r);
     }
     const c = a.card || {}, s = c.slots || {};
@@ -6220,7 +6438,7 @@ function bindShell() {
     if ((s.prompt || []).length) r.add("camera");
     // Mark (outline areas to refer to) goes with Inpaint: the same area tools feed both
     if (c.media === "image" && (c.picture_min || 0) >= 1 && c.inpaint !== false) { r.add("inpaint"); r.add("mark"); }
-    if ((c.media === "video" || (c.media === "image" && state.mode !== "edit" && !(c.picture_min > 0))) && c.enhance !== false && (s.prompt || []).length) r.add("enhance");
+    if ((c.media === "video" || c.media === "image") && c.enhance !== false && (s.prompt || []).length) r.add("enhance");
     if (c.media === "image" && (c.picture_max || 0) >= 1 && c.assist !== false) {
       r.add("edit_kind");
       if ((c.picture_max || 0) >= 2) r.add("roles");
@@ -7205,6 +7423,31 @@ function bindShell() {
   btn.setAttribute("aria-label", "Start ComfyUI");
   btn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.2v9.6c0 .5.5.8.9.5l7.2-4.8a.6.6 0 0 0 0-1L5.9 2.7c-.4-.3-.9 0-.9.5z"/></svg><span>Start</span>';
   chip.parentNode.insertBefore(btn, chip);
+  // Stop: shown while ComfyUI is running (there may be no console window to close)
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.id = "comfy-stop";
+  stop.className = "comfy-start comfy-stop hidden";
+  stop.setAttribute("aria-label", "Stop ComfyUI");
+  stop.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg><span>Stop</span>';
+  chip.parentNode.insertBefore(stop, chip);
+  stop.addEventListener("click", async () => {
+    if (!window.confirm("Stop ComfyUI? Anything it's generating will stop.")) return;
+    stop.disabled = true;
+    const post = (force) => api("/api/comfy/stop", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force }) });
+    try {
+      let res;
+      try { res = await post(false); }
+      catch (e) {
+        if (!/generating/i.test(e.message || "") || !window.confirm("ComfyUI is still generating. Stop it anyway?")) throw e;
+        res = await post(true);
+      }
+      toast((res && res.message) || "ComfyUI stopped.");
+    } catch (e) { toast(e.message || "Couldn't stop ComfyUI"); }
+    stop.disabled = false;
+    setTimeout(refreshStatus, 1500);
+  });
   let startingUntil = 0;
   const base = refreshStatus;
   function sync() {
@@ -7214,6 +7457,7 @@ function bindShell() {
     if (down && starting && st !== "starting") { chip.dataset.state = "starting"; chip.textContent = "Starting ComfyUI…"; }
     if (!down) startingUntil = 0;
     btn.classList.toggle("hidden", !down || starting);
+    stop.classList.toggle("hidden", !(st === "up" || st === "busy"));
   }
   refreshStatus = async function () {
     const r = await base.apply(this, arguments);
@@ -7835,14 +8079,15 @@ function bindShell() {
     let d;
     try { d = await api("/api/pe/system?engine=" + encodeURIComponent(eng) + "&mode=" + cur.mode + "&pe_mode=" + peMode); }
     catch (e) { $("pe-sys-status").textContent = e.message || "Couldn't load the instructions."; return; }
-    // Enhance never rewrites picture edits, so engines that only edit have nothing to show here
+    // engines whose workflow has no prompt box (or turns Enhance off) have nothing to show here
     box.classList.toggle("hidden", !(d.modes || []).length);
     if (!(d.modes || []).length) return;
     cur = { mode: d.mode || cur.mode, def: d.default || "", custom: d.custom || "", engine: eng };
     syncTabs(d.modes, d.media);
     $("pe-sys-text").value = cur.custom || cur.def;
     $("pe-sys-badge").textContent = cur.custom ? "yours" : "";
-    const what = d.media === "video" ? (cur.mode === "edit" ? "videos from your pictures" : "videos from text") : "new pictures";
+    const what = d.media === "video" ? (cur.mode === "edit" ? "videos from your pictures" : "videos from text")
+      : (cur.mode === "edit" ? "picture edits" : "new pictures");
     $("pe-sys-status").textContent = (cur.custom ? "Your own instructions for " : "Built-in instructions (" + (peMode === "quality" ? "Quality" : "Fast") + ") for ")
       + (d.engine_name || "this engine") + ", " + what + ". Edit the text and Save to use your own; the output format is kept for you.";
     $("pe-sys-note").textContent = d.model_note ? "Also sent with each prompt for this model: " + d.model_note : "";
@@ -7863,7 +8108,7 @@ function bindShell() {
   document.querySelectorAll("#pe-sys-mode button").forEach((b) => b.addEventListener("click", () => load(b.dataset.peSys)));
   // refresh whenever Settings opens, and when the engine changes
   const pop = $("settings-pop");
-  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load(state.media === "video" && (state.images || []).length ? "edit" : "t2i"); })
+  if (pop) new MutationObserver(() => { if (!pop.hidden && !pop.classList.contains("hidden")) load((state.mode === "edit" || (state.images || []).length) ? "edit" : "t2i"); })
     .observe(pop, { attributes: true, attributeFilter: ["hidden", "class"] });
   const base = window.onEngineChanged;
   window.onEngineChanged = function () {
@@ -7901,7 +8146,7 @@ function bindShell() {
     moss: "MOSS", sdxl: "SDXL", sd15: "SD 1.5", ltx: "LTX", wan: "Wan", hunyuan: "Hunyuan", z_image: "Z-Image" };
   async function ensureIndex() {
     if (INDEX) return INDEX;
-    try { const d = await api("/api/loras/index"); INDEX = d.items || []; FAMMAP = d.engine_family || {}; GENERIC = new Set(d.generic || []); } catch (e) { INDEX = []; }
+    try { const d = await api("/api/loras/index"); INDEX = d.items || []; FAMMAP = d.engine_family || {}; GENERIC = new Set(d.generic || []); LISTS = Object.assign({}, d); delete LISTS.items; delete LISTS.engine_family; delete LISTS.generic; } catch (e) { INDEX = []; }
     return INDEX;
   }
   function engineFam() {
@@ -7912,6 +8157,7 @@ function bindShell() {
   }
   const isOn = () => { try { return localStorage.getItem("cs.lora.auto") === "1"; } catch (e) { return false; } };
   let GENERIC = new Set();
+let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress words, sfw phrases) for LoraMatch
   // picks from the prompt (static/lora_match.js): whole phrases only, ordinary words never alone, "no X" respected,
   // one copy per LoRA, at most one style and one person, strength from the maker or the kind, lower when stacked
   function matches() {
@@ -7920,7 +8166,7 @@ function bindShell() {
     if (!fam) return [];
     const p = ($("prompt") && $("prompt").value || "");
     if (!p.trim()) return [];
-    return window.LoraMatch.pick(p, INDEX, fam, { dismissed, generic: GENERIC });
+    return window.LoraMatch.pick(p, INDEX, fam, Object.assign({}, LISTS, { dismissed, generic: GENERIC }));
   }
   window.__autoLoras = matches;
 

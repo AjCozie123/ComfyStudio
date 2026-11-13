@@ -104,6 +104,15 @@ def list_cards():
                 card = _read_json(os.path.join(folder, name))
             except (OSError, ValueError):
                 continue
+            if card.get("test_only"):
+                # an upload's Test run entry: hidden; left over after 2 hours (screen closed) -> removed
+                if time.time() - float(card.get("saved") or 0) > 7200:
+                    for ext in (".card.json", ".graph.json"):
+                        try:
+                            os.remove(os.path.join(folder, name[:-len(".card.json")] + ext))
+                        except OSError:
+                            pass
+                continue
             card["source"] = src
             cards.append(card)
     cards.sort(key=lambda c: (c.get("family") or "", c.get("task") or "", c.get("name") or ""))
@@ -431,6 +440,12 @@ def simplify(g, oi):
                 for v in (n.get("inputs") or {}).values() if _is_link(v)}
     for k in [k for k, n in g.items() if n.get("class_type") in _PRIMS and k not in math_fed]:
         _repoint(g, k, 0, (g[k].get("inputs") or {}).get("value"))
+        # remember the folded box's title on the inputs it now fills: authors name the prompt box there
+        t = ((g[k].get("_meta") or {}).get("title") or "").strip()
+        if t and not t.startswith("Primitive"):
+            for tk, ta in SIMPLIFY_MOVES.get(str(k), []):
+                if tk in g:
+                    g[tk].setdefault("_meta", {}).setdefault("from_titles", {})[ta] = t
         del g[k]
     saves = [k for k, n in g.items() if str(n.get("class_type", "")).startswith(("Save", "VHS_VideoCombine"))]
     if saves:
@@ -510,10 +525,313 @@ def apply_app_mode(card, graph, picks, oi):
     return used
 
 
-def load_any(data, oi):
-    """Accept UI or API JSON (dict or text). Returns (api_graph, warnings)."""
+def _link_parts(l):
+    """(id, origin_id, origin_slot, target_id, target_slot) from a list-style or dict-style link."""
+    if isinstance(l, list) and len(l) >= 5:
+        return l[0], l[1], l[2], l[3], l[4]
+    if isinstance(l, dict):
+        return l.get("id"), l.get("origin_id"), l.get("origin_slot"), l.get("target_id"), l.get("target_slot")
+    return None
+
+
+def _set_link_origin(l, origin_id, origin_slot):
+    if isinstance(l, list):
+        l[1], l[2] = origin_id, origin_slot
+    elif isinstance(l, dict):
+        l["origin_id"], l["origin_slot"] = origin_id, origin_slot
+
+
+def _prepare_ui_level(nodes, links, oi):
+    """One graph level (the top or one subgraph), edited in place:
+    * KJNodes SetNode passes its value straight through: anything wired OUT of a SetNode (not via a GetNode) is
+      re-wired to whatever feeds the SetNode. Converters drop SetNodes as screen-only, which cut those wires
+      (a video save fed from Set_video_1 lost its pictures and the whole workflow was thrown away).
+    * screen-only nodes that ComfyUI never runs (rgthree Label / Fast Groups buttons / Bookmark, Notes, and any
+      node type this ComfyUI doesn't know that nothing reads from) are removed, so they aren't reported missing."""
+    by_id = {str(n.get("id")): n for n in nodes}
+    lmap = {}
+    for l in links:
+        p = _link_parts(l)
+        if p:
+            lmap[p[0]] = l
+
+    def source_of(link_id, depth=0):
+        l = lmap.get(link_id)
+        if l is None or depth > 40:
+            return None
+        _id, o, os_, _t, _ts = _link_parts(l)
+        n = by_id.get(str(o))
+        if n is not None and n.get("type") == "SetNode":
+            ins = n.get("inputs") or []
+            return source_of(ins[0].get("link"), depth + 1) if ins and ins[0].get("link") is not None else None
+        return (o, os_)
+
+    for l in links:
+        p = _link_parts(l)
+        if not p:
+            continue
+        n = by_id.get(str(p[1]))
+        if n is not None and n.get("type") == "SetNode":
+            src = source_of(p[0])
+            if src:
+                _set_link_origin(l, src[0], src[1])
+    # who reads from whom (after the re-wiring)
+    read_from = set()
+    for l in links:
+        p = _link_parts(l)
+        if p and str(p[3]) in by_id:
+            read_from.add(str(p[1]))
+    drop = set()
+    for nid, n in by_id.items():
+        t = n.get("type") or ""
+        if t in UI_ONLY and t not in ("Reroute", "PrimitiveNode"):   # those carry a wire / value: converters follow them
+            drop.add(nid)
+        elif oi is not None and t not in oi and not _is_subgraph_type(t) and t not in ("SetNode", "GetNode") \
+                and nid not in read_from and not (n.get("outputs") and any((o or {}).get("links") for o in n["outputs"])):
+            # unknown to ComfyUI and nothing reads from it: a screen-only helper (comparer, label ...), not a
+            # missing node that matters
+            drop.add(nid)
+    if drop:
+        nodes[:] = [n for n in nodes if str(n.get("id")) not in drop]
+        links[:] = [l for l in links if (_link_parts(l) or (0, 0, 0, 0, 0))[1] is not None
+                    and str(_link_parts(l)[1]) not in drop and str(_link_parts(l)[3]) not in drop]
+    return len(drop)
+
+
+def _is_subgraph_type(t):
+    return bool(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(t or "")))
+
+
+def prepare_ui(data, oi):
+    """Clean a UI-format workflow before it is converted (see _prepare_ui_level). Returns the cleaned copy."""
+    data = copy.deepcopy(data)
+    _prepare_ui_level(data.setdefault("nodes", []), data.setdefault("links", []), oi)
+    for sg in ((data.get("definitions") or {}).get("subgraphs") or []):
+        _prepare_ui_level(sg.setdefault("nodes", []), sg.setdefault("links", []), oi)
+    return data
+
+
+_OUT_HINT = re.compile(r"^(Save|VHS_VideoCombine|PreviewImage)|StreamLive.*VHS|VideoCombine", re.I)
+
+
+def _node_xy(n):
+    p = n.get("pos")
+    if isinstance(p, dict):
+        p = [p.get("0"), p.get("1")]
+    try:
+        return float(p[0]), float(p[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _in_group(n, g):
+    xy, b = _node_xy(n), g.get("bounding") or []
+    if not xy or len(b) < 4:
+        return False
+    return b[0] <= xy[0] <= b[0] + b[2] and b[1] <= xy[1] <= b[1] + b[3]
+
+
+def sections(data):
+    """A 'toolbox' workflow keeps several workflows in one file, each in its own group, with all but one (or all)
+    switched off (rgthree group buttons). Returns [{"id", "title", "on"}] for the groups that make a result, when
+    that's what this file is; [] for a normal workflow."""
+    if not isinstance(data, dict) or "nodes" not in data:
+        return []
+    nodes = data.get("nodes") or []
+    groups = data.get("groups") or []
+    if len(groups) < 2 or not nodes:
+        return []
+    off = sum(1 for n in nodes if n.get("mode") in (2, 4))
+    out = []
+    for i, g in enumerate(groups):
+        inside = [n for n in nodes if _in_group(n, g)]
+        if len(inside) < 3 or not any(_OUT_HINT.search(str(n.get("type") or "")) for n in inside):
+            continue
+        on = sum(1 for n in inside if n.get("mode", 0) == 0)
+        out.append({"id": i, "title": (g.get("title") or "Part %d" % (i + 1)).strip(), "nodes": len(inside),
+                    "on": on >= max(3, len(inside) // 2)})
+    # only a toolbox when at least two separate parts make results and a good share of the file is switched off
+    if len(out) < 2 or off < max(10, len(nodes) // 4):
+        return []
+    return out
+
+
+def enable_section(data, section_id, prune=False):
+    """Switch on one part of a toolbox workflow (every node in that group) and switch off the other parts' nodes,
+    so only that part runs. Shared nodes outside every part keep the author's setting."""
+    data = copy.deepcopy(data)
+    groups = data.get("groups") or []
+    try:
+        g = groups[int(section_id)]
+    except (TypeError, ValueError, IndexError):
+        raise ValueError("That part of the workflow wasn't found. Upload the file again.")
+    parts = [x for x in sections(data) if x["id"] != int(section_id)]
+    others = [groups[x["id"]] for x in parts]
+    gb = g.get("bounding") or [0, 0, 0, 0]
+
+    def within(o):        # a smaller group drawn inside this part: an optional add-on (speed-up, Sage ...)
+        b = o.get("bounding") or []
+        return (o is not g and len(b) >= 4 and b[0] >= gb[0] and b[1] >= gb[1]
+                and b[0] + b[2] <= gb[0] + gb[2] and b[1] + b[3] <= gb[1] + gb[3] and b[2] * b[3] < gb[2] * gb[3])
+    addons = [o for o in groups if within(o)]
+    defs = {sg.get("id"): sg for sg in ((data.get("definitions") or {}).get("subgraphs") or [])}
+
+    def switch_on_inside(sub_id, seen):
+        sg = defs.get(sub_id)
+        if not sg or sub_id in seen:
+            return
+        seen.add(sub_id)
+        for inner in sg.get("nodes") or []:
+            if inner.get("mode") in (2, 4):
+                inner["mode"] = 0          # the group buttons also switch off everything inside a grouped node
+            if inner.get("type") in defs:
+                switch_on_inside(inner.get("type"), seen)
+
+    for n in data.get("nodes") or []:
+        if _in_group(n, g):
+            if any(_in_group(n, a) for a in addons):
+                continue                   # optional add-on: keep it as the author left it
+            if n.get("mode") in (2, 4):
+                n["mode"] = 0
+            if n.get("type") in defs:
+                switch_on_inside(n.get("type"), set())
+        elif any(_in_group(n, o) for o in others):
+            n["mode"] = 4
+    if prune:
+        # the other parts are switched off anyway: leave them out so ComfyUI's page reads the file ~10x faster.
+        # SetNodes stay (a part may read a shared value through a GetNode).
+        gone = {str(n.get("id")) for n in data.get("nodes") or []
+                if not _in_group(n, g) and any(_in_group(n, o) for o in others) and n.get("type") != "SetNode"}
+        data["nodes"] = [n for n in data.get("nodes") or [] if str(n.get("id")) not in gone]
+        data["links"] = [l for l in data.get("links") or []
+                         if (_link_parts(l) and str(_link_parts(l)[1]) not in gone and str(_link_parts(l)[3]) not in gone)]
+        data["groups"] = [x for x in groups if x is g or within(x)]
+        used = set()
+
+        def mark(t):
+            if t in defs and t not in used:
+                used.add(t)
+                for inner in defs[t].get("nodes") or []:
+                    mark(inner.get("type"))
+        for n in data["nodes"]:
+            mark(n.get("type"))
+        if (data.get("definitions") or {}).get("subgraphs"):
+            data["definitions"]["subgraphs"] = [sg for sg in data["definitions"]["subgraphs"] if sg.get("id") in used]
+    return data
+
+
+USE_COMFY_PAGE = True
+LAST_PAGE_ERROR = {"text": ""}
+
+
+def missing_in_ui(data, oi):
+    """Node types a UI-format workflow needs that this ComfyUI doesn't have. Screen-only helpers (labels, group
+    buttons, comparers: unknown types nothing reads from) and switched-off nodes don't count."""
+    if not oi:
+        return []
+    found = set()
+
+    def level(nodes, links):
+        reads = set()
+        for l in links or []:
+            p = _link_parts(l)
+            if p:
+                reads.add(str(p[1]))
+        for n in nodes or []:
+            t = n.get("type") or ""
+            if not t or t in oi or t in UI_ONLY or _is_subgraph_type(t) or t in ("SetNode", "GetNode"):
+                continue
+            if n.get("mode") in (2, 4):
+                continue
+            if str(n.get("id")) not in reads and not any((o or {}).get("links") for o in (n.get("outputs") or [])):
+                continue
+            found.add(t)
+    level(data.get("nodes"), data.get("links"))
+    for sg in ((data.get("definitions") or {}).get("subgraphs") or []):
+        level(sg.get("nodes"), sg.get("links"))
+    return sorted(found)
+
+
+def plain_part_name(title):
+    """'TEXT TO VIDEO' -> 'Text to video' (words with digits keep their capitals: 'H3', 'SDXL 1.0')."""
+    words = re.sub(r"[_\-]+", " ", str(title or "")).split()
+    out = []
+    for i, w in enumerate(words):
+        if re.search(r"\d", w):
+            out.append(w.upper())
+        else:
+            out.append(w.capitalize() if i == 0 else w.lower())
+    return " ".join(out) or "Workflow"
+
+
+_PLAIN_TASK = {"t2i": "Makes a picture from your words", "edit": "Changes a picture you give it",
+               "t2v": "Makes a video from your words", "i2v": "Turns a picture into a video",
+               "r2v": "Makes a video from your pictures", "v2v": "Changes a video you give it",
+               "long": "Makes a long video from your words", "other": "Makes something from your settings"}
+
+
+def plain_what(card):
+    """One short sentence a beginner understands: what it makes and what they can change in the app."""
+    s = card.get("slots") or {}
+    can = []
+    if s.get("prompt"):
+        can.append("your prompt")
+    n_pics = len(s.get("images") or [])
+    if n_pics:
+        can.append("%d picture%s" % (n_pics, "" if n_pics == 1 else "s"))
+    elif s.get("media"):
+        can.append("pictures (up to %d)" % int((s.get("media") or {}).get("max") or 9))
+    if s.get("width") or s.get("megapixels") or s.get("size_combo") or s.get("aspect_combo") or s.get("res_label"):
+        can.append("size")
+    if s.get("length") or s.get("seconds"):
+        can.append("length")
+    if s.get("seed"):
+        can.append("seed")
+    if s.get("steps"):
+        can.append("steps")
+    if s.get("loras"):
+        can.append("LoRAs")
+    first = _PLAIN_TASK.get(card.get("task") or "other", _PLAIN_TASK["other"])
+    text = first + (". You control: " + ", ".join(can) + "." if can else ".")
+    if card.get("native_mask"):
+        text += " You paint the area to change: tap Inpaint on Picture 1 before you send."
+    pmin = int(card.get("picture_min") or 0)
+    if pmin >= 2:
+        text += " It needs %d pictures." % pmin
+    return text
+
+
+def load_any(data, oi, section=None):
+    """Accept UI or API JSON (dict or text). Returns (api_graph, warnings).
+    section: for a toolbox workflow, the part to use (see sections())."""
     if isinstance(data, (bytes, str)):
         data = json.loads(data)
+    if isinstance(data, dict) and "nodes" in data and not is_api_format(data):
+        if section is not None and section != "":
+            data = enable_section(data, section, prune=True)
+        # 1st choice: ComfyUI's own page converts it, exactly like its Export (API) button (every custom node's
+        # own code is loaded there, so Set/Get, group buttons, subgraphs and odd widgets come out right)
+        if USE_COMFY_PAGE and oi:
+            try:
+                import comfy_convert
+                g = comfy_convert.convert(data)
+                outs = [v for v in g.values() if (oi.get(v.get("class_type")) or {}).get("output_node")
+                        or _OUT_HINT.search(str(v.get("class_type") or ""))]
+                if outs and not any(_is_link(x) for v in outs for x in (v.get("inputs") or {}).values()):
+                    g = None      # nothing reaches a save node: a hand-made file without wire details -> other converter
+                if g:
+                    for k, v in g.items():
+                        v.setdefault("_meta", {}).setdefault("title", v.get("class_type"))
+                    note = (["Grouped nodes (subgraphs) were opened automatically."]
+                            if (data.get("definitions") or {}).get("subgraphs") else [])
+                    g = simplify(g, oi)
+                    for t in missing_in_ui(data, oi):   # after tidying, so the missing-node check still sees them
+                        if not any(v.get("class_type") == t for v in g.values()):
+                            g["missing_%s" % re.sub(r"\W+", "_", t)] = {"class_type": t, "inputs": {}, "_meta": {"title": t}}
+                    return g, note
+            except Exception as e:
+                LAST_PAGE_ERROR["text"] = "%s: %s" % (type(e).__name__, str(e)[:200])
+        data = prepare_ui(data, oi)
     if isinstance(data, dict) and "prompt" in data and is_api_format(data.get("prompt")):
         data = data["prompt"]  # a saved /prompt body
     if is_api_format(data):
@@ -1519,6 +1837,10 @@ def _reaches_prompt(graph, nid, depth=8):
             for k, cls, name in consumers.get(f, []):
                 if re.search(r"(Encode|Conditioning|TextGenerate|Prompt)", cls) and name.lower() in _PROMPT_SINKS:
                     return hop
+                # a model / video node that takes the prompt itself (MiniMaxH3ImageToVideo.prompt, KreaAIO.prompt ...)
+                if name.lower() in ("prompt", "positive", "positive_prompt", "user_prompt") \
+                        and not re.search(r"(String|Text|Concat|Join|Replace|Switch|Primitive)", cls):
+                    return hop
                 if k not in seen:
                     seen.add(k)
                     nxt.append(k)
@@ -1545,9 +1867,27 @@ def rank_prompt_candidates(graph, oi=None):
             base = name.split(".")[-1]
             if _TECH_INPUT.match(base) or (_TECH_CLASS.search(cls) and not _PROMPTISH.search(title)):
                 continue
+            # the title of a text box that was folded into this input ("(input:prompt) Text Prompt")
+            from_title = ((n.get("_meta") or {}).get("from_titles") or {}).get(name) or ""
+            # only text-like fields can be a prompt box (an empty "blocks" field on a patch node is not)
+            textlike = (base.lower() in _PROMPT_SINKS or base.lower() in ("value", "string_a", "string_b", "text_a", "text_b",
+                                                                           "positive_prompt", "user_prompt", "input_prompt")
+                        or bool(_PROMPTISH.search(base)) or bool(_PROMPTISH.search(from_title)))
+            if not textlike:
+                continue
             text = v.strip()
             hops = _reaches_prompt(graph, nid)
             sc, kind = 0.0, "text"
+            # the author marked it ("(input:prompt)", App-builder style titles) -> that's the box
+            if re.search(r"\binput\s*:\s*prompt\b|\(prompt\)|\buser prompt\b|\byour prompt\b", from_title + " " + title, re.I):
+                sc += 6
+            if from_title and _PROMPTISH.search(from_title):
+                sc += 2
+            # the node's own prompt field (an all-in-one node such as KreaAIO.prompt)
+            if base.lower() in ("prompt", "positive", "positive_prompt", "user_prompt") and not _NEGISH.search(base) \
+                    and specs.get(name) and isinstance(specs[name], (list, tuple)) and len(specs[name]) > 1 \
+                    and isinstance(specs[name][1], dict) and specs[name][1].get("multiline"):
+                sc += 3
             if hops is not None:
                 sc += 3 - min(2, (hops - 1) * 0.5)
             if not text:
@@ -1789,3 +2129,212 @@ def fill(card, graph, values, out_prefix):
             if pick:
                 _set(g, slot, pick)
     return g, used_seed
+
+
+# ------------------------------------------------------------------ uploads: picture inputs the scanner missed
+_scan_media_base = scan
+
+
+def scan(graph, oi=None):
+    """MiniMax H3's Media Loader (pictures as a list in one node) counts as the workflow's picture input, so the
+    app's pictures go into it, like the built-in H3 engines."""
+    card = _scan_media_base(graph, oi)
+    c = card[0] if isinstance(card, tuple) else card
+    if not isinstance(c, dict):
+        return card
+    s = c.setdefault("slots", {})
+    if not s.get("images") and not s.get("media") and not c.get("aio_mode"):   # built-in H3 cards set their own
+        loaders = [k for k, n in graph.items() if n.get("class_type") == "MiniMaxH3MediaLoader"]
+        if loaders:
+            s["media"] = {"node": loaders[0], "input": "media_state", "label": "Pictures", "max": 9,
+                          "class_type": "MiniMaxH3MediaLoader", "title": _title(graph[loaders[0]])}
+            c["picture_max"] = max(int(c.get("picture_max") or 0), 9)
+            c.setdefault("picture_min", 0)
+            if c.get("task") == "t2i":
+                c["task"] = "edit"
+    return card
+
+
+def task_from_title(title, card):
+    """A part called 'Image to video' / 'Inpainting' / 'Image editing' says what it is; trust that over guessing."""
+    t = str(title or "").lower()
+    media = card.get("media") or TASK_MEDIA.get(card.get("task"), "image")
+    rules = ((r"\b(img|image|picture|photo)\w*\s*(2|to)\s*(vid|video)", "i2v"), (r"\bref\w*\s*(2|to)?\s*(vid|video)?", "r2v" if media == "video" else None),
+             (r"\b(txt|text)\w*\s*(2|to)\s*(vid|video)", "t2v"), (r"\bextend", "v2v"), (r"\blong\b", "t2v"),
+             (r"\b(edit|inpaint|outpaint|swap|retouch)", "edit"), (r"\b(txt|text)\w*\s*(2|to)\s*(img|image)", "t2i"))
+    for pat, task in rules:
+        if task and re.search(pat, t) and task in TASKS:
+            return task
+    return card.get("task")
+
+
+# ------------------------------------------------------------------ uploads: settings saved by an older node version
+_FILE_EXT = re.compile(r"\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx|png|jpe?g|webp|mp4|wav|mp3)$", re.I)
+
+
+def _spec_default(spec):
+    """The value a node uses when nothing is set (its default, else the first option)."""
+    if not isinstance(spec, (list, tuple)) or not spec:
+        return None
+    meta = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+    if "default" in meta:
+        return meta["default"]
+    if isinstance(spec[0], list) and spec[0]:
+        return spec[0][0]
+    if spec[0] == "COMBO" and isinstance(meta.get("options"), list) and meta["options"]:
+        return meta["options"][0]
+    return {"INT": 0, "FLOAT": 0.0, "BOOLEAN": False, "STRING": ""}.get(spec[0])
+
+
+def fit_values(graph, oi):
+    """Settings that don't fit the installed node (saved by an older or newer version of it: values shifted into
+    the wrong boxes, removed options) are set to the node's normal value, so the workflow runs instead of being
+    refused at Generate. File names are left alone (the model / picture matching handles those).
+    Returns {display name: [input, ...]} of what was changed."""
+    changed = {}
+    for nid, n in graph.items():
+        cls = n.get("class_type")
+        info = (oi or {}).get(cls)
+        if not info:
+            continue
+        sch = info.get("input") or {}
+        known = dict(sch.get("required") or {})
+        known.update(sch.get("optional") or {})
+        ins = n.setdefault("inputs", {})
+        for key, spec in known.items():
+            if not isinstance(spec, (list, tuple)) or not spec:
+                continue
+            typ = spec[0]
+            if key not in ins:
+                continue
+            val = ins[key]
+            if _is_link(val):
+                continue
+            opts = typ if isinstance(typ, list) else ((spec[1] or {}).get("options") if typ == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict) else None)
+            bad = False
+            if opts is not None:
+                if key in ("image", "video", "audio") or any(isinstance(o, str) and _FILE_EXT.search(o) for o in opts[:50]) \
+                        or (isinstance(val, str) and _FILE_EXT.search(val)):
+                    continue                               # a file: matched elsewhere
+                bad = val not in opts
+            elif typ == "BOOLEAN":
+                bad = not isinstance(val, bool)
+            elif typ in ("INT", "FLOAT"):
+                bad = isinstance(val, bool) or not isinstance(val, int if typ == "INT" else (int, float))
+                meta = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+                if not bad:      # in range? (a shifted value often lands in a box with other limits)
+                    lo, hi = meta.get("min"), meta.get("max")
+                    bad = (isinstance(lo, (int, float)) and val < lo) or (isinstance(hi, (int, float)) and val > hi)
+            elif typ == "STRING":
+                bad = not isinstance(val, str)
+            if bad:
+                d = _spec_default(spec)
+                if d is not None:
+                    ins[key] = d
+                    name = (info.get("display_name") or cls)
+                    changed.setdefault(name, []).append(key)
+    return changed
+
+
+def fit_note(changed):
+    if not changed:
+        return ""
+    parts = ["%s (%d setting%s)" % (k, len(v), "" if len(v) == 1 else "s") for k, v in changed.items()]
+    return ("Some settings in this file didn't match the version of %s installed here (it was probably saved with "
+            "an older version), so they were set to their normal values. You can change them under Workflow settings."
+            % ", ".join(parts))
+
+
+_load_any_fit_base = load_any
+
+
+def load_any(data, oi, section=None):
+    g, notes = _load_any_fit_base(data, oi, section=section)
+    try:
+        strip_unknown_inputs(g, oi)     # screen-only fields a node's own panel adds (KreaAIO's kaio_ui ...)
+    except Exception:
+        pass
+    try:
+        note = fit_note(fit_values(g, oi))
+    except Exception:
+        note = ""
+    return g, (list(notes) + [note]) if note else notes
+
+
+# ------------------------------------------------------------------ uploads: sockets the author left unplugged
+def _required_types(oi, cls):
+    req = (((oi or {}).get(cls) or {}).get("input") or {}).get("required") or {}
+    out = {}
+    for name, spec in req.items():
+        if isinstance(spec, (list, tuple)) and spec and isinstance(spec[0], str) and spec[0].isupper() \
+                and spec[0] not in ("INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"):
+            out[name] = spec[0]
+    return out
+
+
+def repair_unplugged(data, oi):
+    """A required socket left empty inside a grouped node (subgraph), when the group has exactly one input of that
+    type to give it (e.g. the sampler's 'model' with the group's unused 'model' input), gets that wire, like a
+    person fixing it in ComfyUI would. Returns the number of wires added (data is edited in place)."""
+    added = 0
+    for sg in ((data.get("definitions") or {}).get("subgraphs") or []):
+        sg_inputs = sg.get("inputs") or []
+        links = sg.setdefault("links", [])
+        next_id = max([(l.get("id") if isinstance(l, dict) else l[0]) or 0 for l in links] + [0]) + 100000
+        for n in sg.get("nodes") or []:
+            if n.get("mode") in (2, 4):
+                continue
+            need = _required_types(oi, n.get("type"))
+            for slot, inp in enumerate(n.get("inputs") or []):
+                typ = need.get(inp.get("name"))
+                if not typ or inp.get("link") is not None:
+                    continue
+                cands = [(i, x) for i, x in enumerate(sg_inputs) if str(x.get("type")) == typ]
+                unused = [c for c in cands if not c[1].get("linkIds")]
+                pick = unused[0] if len(unused) == 1 else (cands[0] if len(cands) == 1 else None)
+                if not pick:
+                    continue
+                idx, src = pick
+                next_id += 1
+                links.append({"id": next_id, "origin_id": -10, "origin_slot": idx, "target_id": n.get("id"),
+                              "target_slot": slot, "type": typ})
+                inp["link"] = next_id
+                src.setdefault("linkIds", []).append(next_id)
+                added += 1
+    return added
+
+
+_load_any_repair_base = load_any
+
+
+def load_any(data, oi, section=None):
+    if isinstance(data, (bytes, str)):
+        data = json.loads(data)
+    note = []
+    if isinstance(data, dict) and "nodes" in data and not is_api_format(data) and oi:
+        data = copy.deepcopy(data)
+        try:
+            n = repair_unplugged(data, oi)
+        except Exception:
+            n = 0
+        if n:
+            note = ["%d connection%s inside this workflow %s unplugged (the sampler had no model or prompt), so the "
+                    "app plugged %s in." % (n, "" if n == 1 else "s", "was" if n == 1 else "were", "it" if n == 1 else "them")]
+    g, notes = _load_any_repair_base(data, oi, section=section)
+    return g, note + list(notes)
+
+
+# rgthree Power Lora Loader keeps each LoRA as an extra field (lora_1, lora_2 ...) the node reads from **kwargs;
+# they aren't in its input list, so they must not be thrown away as screen-only fields
+_strip_base = strip_unknown_inputs
+
+
+def strip_unknown_inputs(graph, oi):
+    keep = {}
+    for k, n in graph.items():
+        if "Power Lora Loader" in str(n.get("class_type")):
+            keep[k] = {a: v for a, v in (n.get("inputs") or {}).items() if re.fullmatch(r"lora_\d+", a)}
+    _strip_base(graph, oi)
+    for k, extra in keep.items():
+        graph[k].setdefault("inputs", {}).update(extra)
+    return graph

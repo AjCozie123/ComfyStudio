@@ -979,16 +979,18 @@ def _pe_cache_payload(job):
     return {
         "mode": job.get("mode"),
         "pe_mode": st["id"],
-        "prompt": job.get("prompt_user") or job.get("prompt"),
+        "prompt": job.get("pe_input") or job.get("prompt_user") or job.get("prompt"),
         "pe_clip": job.get("pe_clip_used"),
         "images": [PE.image_fingerprint(INPUT, n) for n in images],
         "thinking": st["thinking"],
         "max_length": PE.resolve_tokens(st["id"], job.get("mode"), job.get("pe_tokens"),
-                                        job.get("prompt_user") or job.get("prompt"), len(images)),
+                                        job.get("pe_input") or job.get("prompt_user") or job.get("prompt"), len(images),
+                                        generic=job.get("pe_media") == graphs.GENERIC_MEDIA),
         "ref_mp": st["ref_megapixels"],
         "media": job.get("pe_media") or "image",
-        "templates": [st.get("system_t2i" if job.get("mode") != "edit" else "system_edit"),
-                      st.get("task_t2i" if job.get("mode") != "edit" else "task_edit")],
+        "templates": [graphs.pe_system_file(job.get("mode"), st["id"], job.get("pe_media") or "image"),
+                      graphs.pe_task_file(job.get("mode"), st["id"], job.get("pe_media") or "image"),
+                      "edit_v2" if job.get("mode") == "edit" else ""],
         "ref_mode": bool(job.get("ref_mode")),
         "auto_assist": bool(job.get("auto_assist")),
         "roles": job.get("roles") or {},
@@ -1091,7 +1093,7 @@ def _wait_for_pe(job):
 
 def run_prompt_enhancer(job):
     """Fill job['enhanced_prompt'] from cache or a PE-only ComfyUI run. Never fails the image job: falls back to the user prompt."""
-    raw = (job.get("prompt_user") or job.get("prompt") or "").strip()
+    raw = (job.get("pe_input") or job.get("prompt_user") or job.get("prompt") or "").strip()
     job["enhanced_prompt"] = ""
     job["pe_fallback"] = False
     job["pe_cached"] = False
@@ -1170,8 +1172,16 @@ def run_prompt_enhancer(job):
 
 
 def apply_enhanced_prompt(job):
-    """Rebuild the image graph with the (enhanced or original) prompt, same seed and size."""
+    """Put the (enhanced or original) prompt into the image graph, same seed and size."""
     prompt = (job.get("prompt") or job.get("prompt_user") or "").strip()
+    prompt = lora_trigger_prompt(prompt, job.get("pe_loras"))   # the rewrite would otherwise drop LoRA trigger words
+    g_now = job.get("graph") or {}
+    node = g_now.get("user_prompt")
+    if node and node.get("class_type") == "PrimitiveStringMultiline" and "value" in (node.get("inputs") or {}):
+        # change only the prompt text: rebuilding would throw away what was added after the build (LoRAs ...)
+        node["inputs"]["value"] = prompt
+        job["prompt_sent"] = prompt
+        return g_now
     graph, meta = build_main_graph(
         job["mode"], prompt, job.get("resolution_in") or "2048x2048",
         job.get("seed"), job.get("steps"), job.get("models") or {},
@@ -1538,6 +1548,163 @@ def start_comfy(profile="everyday"):
     return "Starting ComfyUI. This takes about a minute."
 
 
+def stop_comfy(force=False):
+    """Stop the ComfyUI running on this PC (the process listening on its port, with its child processes).
+    Refuses while it is generating unless force is set. Only works for a ComfyUI on this PC."""
+    import subprocess, urllib.parse
+    u = urllib.parse.urlsplit(COMFY)
+    if (u.hostname or "") not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError("ComfyUI runs on another computer, so it can't be stopped from here.")
+    if not comfy_up():
+        return "ComfyUI isn't running."
+    if not force:
+        try:
+            q = comfy("GET", "/queue", timeout=5)
+            if (q.get("queue_running") or []) or (q.get("queue_pending") or []):
+                raise ValueError("ComfyUI is still generating. Stop anyway?")
+        except ValueError:
+            raise
+        except Exception:
+            pass
+    port = u.port or 8188
+    out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+                         creationflags=0x08000000).stdout
+    pids = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[3].upper() == "LISTENING" and parts[1].rsplit(":", 1)[-1] == str(port):
+            pids.add(parts[4])
+    pids.discard(str(os.getpid()))
+    if not pids:
+        raise ValueError("Couldn't find the ComfyUI process to stop.")
+    for pid in pids:
+        subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], capture_output=True, creationflags=0x08000000)
+    _comfy_start["t"] = 0
+    log.info("stopped ComfyUI (pid %s)", ",".join(sorted(pids)))
+    return "ComfyUI stopped."
+
+
+_wf_test_ids = {}      # upload draft -> its hidden test-run entry
+
+
+def _card_from_draft(data):
+    """The card + graph the upload screen describes (name, family, task, prompt box), not saved yet."""
+    d = _wf_drafts.get(data.get("draft") or "")
+    if not d:
+        raise ValueError("This upload expired. Upload the file again.")
+    card, graph = dict(d[0]), d[1]
+    card["name"] = (data.get("name") or card.get("name") or "My workflow").strip()[:80]
+    card["family"] = (data.get("family") or card.get("family") or "Custom").strip()[:40]
+    task = data.get("task") or card.get("task")
+    if task in WF.TASKS:
+        card["task"] = task
+        card["media"] = WF.TASK_MEDIA[task]
+    slots = dict(card.get("slots") or {})
+    for key in ("prompt", "negative"):
+        pick = data.get(key + "_pick")
+        if pick == "none":
+            slots[key] = []
+        elif pick and ":" in pick:
+            nid, inp = pick.rsplit(":", 1)      # node ids inside subgraphs contain ":" ("69:49:165")
+            n = graph.get(nid)
+            if n is not None and inp in (n.get("inputs") or {}):
+                slots[key] = [{"node": nid, "input": inp, "title": WF._title(n), "class_type": n.get("class_type"), "label": key}]
+    card["slots"] = slots
+    if not card.get("description"):
+        # a short line for the card, from what the app understood
+        found = [k for k in ("prompt", "images", "videos", "audios", "width", "seed", "steps", "length", "loras") if slots.get(k)]
+        words = {"prompt": "prompt", "images": "pictures", "videos": "video input", "audios": "audio input",
+                 "width": "size", "seed": "seed", "steps": "steps", "length": "length", "loras": "LoRAs"}
+        kind = {"t2i": "Text to image", "edit": "Image edit", "t2v": "Text to video", "i2v": "Image to video",
+                "r2v": "Reference to video", "v2v": "Video to video", "long": "Long video"}.get(card.get("task"), "Workflow")
+        card["description"] = "%s, uploaded. The app controls: %s." % (kind, ", ".join(words[k] for k in found) or "the prompt")
+    try:
+        card["requires"] = WF.requirements(graph, card, object_info())
+    except Exception as e:
+        log.info("requirements skipped: %s", e)
+    return card, graph
+
+
+_TEST_PROMPTS = {
+    "t2i": "a red apple on a wooden table by a window, soft daylight",
+    "edit": "make the sky in the picture a warm sunset orange",
+    "t2v": "a slow camera pan across a calm beach at sunset",
+    "i2v": "the camera slowly pushes in, gentle natural movement",
+    "r2v": "the subject turns slowly and smiles, gentle camera movement",
+    "v2v": "keep the scene, make the colours warmer",
+    "other": "a red apple on a wooden table by a window, soft daylight",
+}
+
+
+def _test_picture():
+    """A plain test picture in the input folder (made once): sky, hills and a sun, so edit and video workflows have
+    something to work on."""
+    rel = INPUT_SUB + "/_test/test_picture.png"
+    full = os.path.join(INPUT, rel.replace("/", os.sep))
+    if not os.path.isfile(full):
+        from PIL import Image, ImageDraw
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        w, h = 768, 1024
+        im = Image.new("RGB", (w, h))
+        dr = ImageDraw.Draw(im)
+        for y in range(h):
+            t = y / h
+            dr.line([(0, y), (w, y)], fill=(int(120 + 90 * t), int(170 + 40 * t), int(235 - 60 * t)) if t < .62
+                    else (int(70 + 40 * t), int(120 + 30 * t), int(60 + 10 * t)))
+        dr.ellipse([w * .62, h * .12, w * .82, h * .27], fill=(255, 226, 150))
+        dr.polygon([(0, h * .62), (w * .35, h * .48), (w * .7, h * .6), (w, h * .52), (w, h * .66), (0, h * .7)],
+                   fill=(88, 128, 82))
+        im.save(full)
+    return rel
+
+
+def _test_mask(rel):
+    """A painted area in the middle of the test picture (for workflows that repaint an area you choose)."""
+    import base64
+    from PIL import Image, ImageDraw
+    full = os.path.join(INPUT, rel.replace("/", os.sep))
+    with Image.open(full) as im:
+        w, h = im.size
+    m = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(m).ellipse([w * .3, h * .3, w * .7, h * .6], fill=255)
+    buf = io.BytesIO()
+    m.convert("RGB").save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _test_request(card):
+    """A small, quick Generate request for a test run of this card."""
+    task = card.get("task") or "t2i"
+    slots = card.get("slots") or {}
+    pic = _test_picture()
+    need = max(int(card.get("picture_min") or 0), 1 if task in ("edit", "i2v", "r2v") else 0)
+    lengths = [x for x in (card.get("lengths") or []) if isinstance(x, (int, float))]
+    req = {"mode": "workflow", "workflow_id": card["id"], "prompt": _TEST_PROMPTS.get(task, _TEST_PROMPTS["t2i"]),
+           "images": [pic] * need, "random_seed": True, "pe": False, "auto_assist": False, "understanding": False,
+           "res": (card.get("resolutions") or [card.get("default_resolution")])[0] if card.get("media") == "video" else card.get("default_resolution"),
+           "aspect": "1:1" if card.get("media") != "video" else ((card.get("aspects") or ["16:9"])[0]),
+           "seconds": (min(lengths) if lengths else (1 if card.get("media") == "video" else None))}
+    if slots.get("width") or slots.get("megapixels") or slots.get("size_combo") or slots.get("aspect_combo"):
+        req["width"], req["height"] = 640, 640          # small: a test only has to prove the workflow runs
+    if card.get("native_mask") and need:
+        req["inpaint_mask"] = _test_mask(pic)
+    return req
+
+
+def plain_test_problem(msg):
+    """A test-run problem in plain words, with what to do about it."""
+    low = (msg or "").lower()
+    if "out of memory" in low or "oom" in low:
+        return "Your graphics card ran out of memory with this workflow. It may be too big for this PC."
+    if "no node type" in low or "missing" in low and "node" in low:
+        return "This workflow needs an add-on that isn't installed. Install it on this screen, then test again. (" + msg[:200] + ")"
+    if "not an option comfyui currently lists" in low or ".safetensors" in low:
+        return "This workflow uses a model file that isn't on this PC. (" + msg[:220] + ")"
+    if "comfyui" in low and ("not running" in low or "refused" in low or "connect" in low):
+        return "ComfyUI isn't running. Start it, then test again."
+    return msg[:400] or "The test didn't finish."
+
+
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
@@ -1616,10 +1783,12 @@ def submit_workflow_job(data):
         elif prompt:
             prompt = (prompt.rstrip(" .") + ". Keep the framing, lighting, colours and edges of the picture the same "
                       "so the change blends in seamlessly.")
+    pe_keep_tail = []      # sentences that must survive the Prompt Enhancer's rewrite (added back after it)
     if prompt and card.get("edit_kind") == "krea_edit" and guard_on(data, "keep_face", len(images or [])) \
             and "facial identity" not in prompt.lower():
         # the Krea 2 Edit notes' own fix for faces drifting generic
         prompt = prompt.strip().rstrip(" .") + ". Preserve the exact facial identity."
+        pe_keep_tail.append("Preserve the exact facial identity.")
     # keep the subject's clothing when the edit isn't about clothing (on unless the user switched it off)
     keep_cloth = guard_on(data, "keep_clothing", len(images or [])) and card.get("edit_kind") != "anypaint" and card.get("media") == "image" \
         and ASSIST.swap_intent(data.get("prompt") or "", len(images or [])) not in ("body_swap", "subject_into_environment", "clothing_transfer")
@@ -1648,6 +1817,7 @@ def submit_workflow_job(data):
     if prompt and data.get("understanding") is not False:
         prompt = UND.apply_extra(prompt, DATA, card.get("id"))   # the user's "always add" sentences
     camera = CAMERA.normalize_camera(data.get("camera") or {})
+    pe_input = prompt      # an edit's enhancer reads your words WITH the keep-clothing / removal / quality guards
     prompt_sent = prompt
     dialect = PD.for_card(card)
     is_image = card.get("media") == "image"
@@ -1670,8 +1840,9 @@ def submit_workflow_job(data):
             prompt_sent = prompt
     prompt_sent = PD.translate(prompt_sent, dialect)
     prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
+    # Enhance: new pictures, videos and picture EDITS (inpaint keeps your own words: its area wording is exact)
     pe_on = bool(card.get("media") in ("image", "video") and prompt and data.get("pe") and card.get("enhance", True) is not False
-                 and not (card.get("media") == "image" and (data.get("images") or []))
+                 and not (card.get("media") == "image" and data.get("inpaint_mask"))
                  and (slots.get("prompt") or []))
     seed = data.get("seed")
     if data.get("random_seed") or seed in (None, "", "random"):
@@ -1719,6 +1890,8 @@ def submit_workflow_job(data):
         if data.get("edit_intent") == "outfit":
             prompt_sent = (prompt_sent.strip().rstrip(" .") + ". Use only the outfit from the second picture; keep "
                            "their face, hair, body shape, pose and the background exactly the same.")
+            pe_keep_tail.append("Use only the outfit from the second picture; keep their face, hair, body shape, "
+                                "pose and the background exactly the same.")
     values = {
         "prompt": prompt_sent,
         "negative": neg_in,
@@ -1831,11 +2004,23 @@ def submit_workflow_job(data):
         pe_mode = "quality" if data.get("pe_mode") == "quality" else "fast"
         pe_clip_used, pe_small = PE.pe_clip_for(pe_mode, _clip_names(), graphs.DEFAULTS["pe_clip_name"])
         pe_task = card.get("pe_task") or ("edit" if images else "t2i")
-        extra = dialect.get("hint") or ""
+        pe_media = card.get("media") or "image"
+        image_edit = pe_media == "image" and pe_task == "edit"
+        if image_edit and dialect.get("id") != "minimax_h3_image":
+            # not MiniMax H3: a plain edit instruction (these models don't read <Subject N> captions), and no
+            # new-picture style note (it asks for a full scene description, which makes an edit redraw everything)
+            pe_media = graphs.GENERIC_MEDIA
+            extra = "Target edit model: %s." % (card.get("name") or card.get("family") or "an image-editing model")
+        else:
+            extra = dialect.get("hint") or ""
         if assist_info:
             extra = (ASSIST.pe_task_prefix(assist_info) + "\n" + extra).strip()
         job.update({
-            "pe": True, "pe_mode": pe_mode, "pe_tokens": pe_tokens_in(data.get("pe_tokens")), "pe_media": card.get("media") or "image",
+            "pe": True, "pe_mode": pe_mode, "pe_tokens": pe_tokens_in(data.get("pe_tokens")), "pe_media": pe_media,
+            # edits: the enhancer reads your words plus the guards; sentences in pe_keep_tail are added back after it
+            "pe_input": pe_input if image_edit else "",
+            "pe_keep_tail": list(pe_keep_tail) if image_edit else [],
+            "pe_loras": [l for l in (data.get("loras") or []) if isinstance(l, dict)],
             "pe_clip_used": pe_clip_used, "pe_small_model": pe_small,
             "mode": pe_task, "pe_images": list(images) if pe_task == "edit" else [],
             "pe_system_extra": ASSIST.pe_system_addon(assist_info) if assist_info else "",
@@ -1868,7 +2053,11 @@ def apply_wf_enhanced_prompt(job):
             text = CAMERA.apply_camera(text, camera, mode=job.get("mode") or "t2i")["prompt"]
         except Exception:
             pass
+    for s in job.get("pe_keep_tail") or []:      # e.g. Krea's "Preserve the exact facial identity."
+        if s.lower().rstrip(" .") not in text.lower():
+            text = text.rstrip(" .") + ". " + s
     text = PD.translate(text, dialect)
+    text = lora_trigger_prompt(text, job.get("pe_loras"))   # the rewrite would otherwise drop LoRA trigger words
     if job.get("prompt_style") == "h3":
         text = WF.h3_wrap(text, job.get("prompt_trigger") or "")
     elif job.get("prompt_style") == "h3_frames":
@@ -2550,8 +2739,10 @@ def submit_job(data):
     if not prompt:
         raise ValueError("Enter a prompt.")
     resolution = data.get("resolution") or ("2048x2048")
-    # Enhance is for making new pictures; an edit keeps your own words (rewriting them loses "brush 1" etc.)
-    pe = bool(data.get("pe")) and (data.get("mode") or "t2i") != "edit"
+    # Enhance works for new pictures AND edits. Edits get the H3 edit caption (Subject definitions + "is fully
+    # preserved"), which is what keeps the rest of Picture 1 unchanged. Brush numbers are turned into place words
+    # before the enhancer sees the prompt. Inpaint keeps your own words: its crop + marked-area wording is exact.
+    pe = bool(data.get("pe")) and not data.get("inpaint_mask")
     pe_mode = (data.get("pe_mode") or "fast").strip().lower()
     if pe_mode not in ("fast", "quality"):
         pe_mode = "fast"
@@ -2757,6 +2948,7 @@ def submit_job(data):
     job["input_size"] = input_size
     job["auto_assist"] = bool(auto_assist)
     job["roles"] = assist_info.get("roles") or roles
+    job["pe_loras"] = [l for l in (data.get("loras") or []) if isinstance(l, dict)]
     job["camera"] = camera
     job["ref_mode"] = bool(ref_mode)
     job["edit_kind"] = "inpaint" if inpaint else edit_kind
@@ -2904,7 +3096,8 @@ def _wait_for_job(job):
                     if parent:
                         rec["parent_id"] = parent
                     job["input_snapshots"] = rec.get("input_snapshots") or []
-                    gallery_add(rec)
+                    if not job.get("test_run"):      # a workflow's Test run stays out of the Library
+                        gallery_add(rec)
                 job["t_done"] = time.time()
                 return
             job["status"] = "error"
@@ -3564,7 +3757,8 @@ class H(BaseHTTPRequestHandler):
             eng = (q.get("engine") or ["builtin"])[0] or "builtin"
             mode = "edit" if (q.get("mode") or ["t2i"])[0] == "edit" else "t2i"
             pe_mode = "quality" if (q.get("pe_mode") or ["fast"])[0] == "quality" else "fast"
-            note, name, media, modes = "", "MiniMax H3", "image", ["t2i"]   # built-in: Enhance is for new pictures
+            note, name, media, modes = "", "MiniMax H3", "image", ["t2i", "edit"]   # built-in: new pictures and edits
+            tpl_media = "image"
             if eng != "builtin":
                 try:
                     card, _g = WF.get(eng)
@@ -3577,14 +3771,19 @@ class H(BaseHTTPRequestHandler):
                 if media == "video":
                     lo, hi = int(card.get("picture_min") or 0), int(card.get("picture_max") or 0)
                     modes = (["t2i"] if lo == 0 else []) + (["edit"] if hi > 0 else [])
-                else:      # pictures: Enhance only writes new pictures (never edits)
-                    modes = ["t2i"] if int(card.get("picture_min") or 0) == 0 else []
+                else:      # pictures: new pictures (no Picture 1 needed) and edits (takes pictures)
+                    modes = (["t2i"] if int(card.get("picture_min") or 0) == 0 else []) \
+                        + (["edit"] if int(card.get("picture_max") or 0) > 0 else [])
+                    if PD.for_card(card).get("id") != "minimax_h3_image":
+                        tpl_media = graphs.GENERIC_MEDIA      # edits for other models: plain instruction
                 if not applies:
                     modes = []
+                if media == "video":
+                    tpl_media = "video"
             if modes and mode not in modes:
                 mode = modes[0]
             return self.j({"engine": eng, "engine_name": name, "mode": mode, "pe_mode": pe_mode, "media": media,
-                           "modes": modes, "default": graphs.default_pe_system(mode, pe_mode, media) if modes else "",
+                           "modes": modes, "default": graphs.default_pe_system(mode, pe_mode, tpl_media) if modes else "",
                            "custom": pe_override(eng, mode), "model_note": note})
         if path == "/api/understanding":
             eng = (q.get("engine") or ["builtin"])[0] or "builtin"
@@ -3700,11 +3899,21 @@ class H(BaseHTTPRequestHandler):
             info["orig_width"] = spec.get("orig_width")
             info["orig_height"] = spec.get("orig_height")
             return self.j(info)
+        if path == "/api/workflows/test/status":
+            j = jobs.get((q.get("id") or [""])[0])
+            if not j:
+                return self.j({"error": "That test run wasn't found."}, 404)
+            v = job_view(j)
+            if v.get("status") == "error":
+                v["problem"] = plain_test_problem(v.get("error") or "")
+            return self.j(v)
         if path == "/api/jobs":
             out = []
             for i in reversed(order[-80:]):
                 if i not in jobs:
                     continue
+                if jobs[i].get("test_run"):
+                    continue                    # Test runs show on the upload screen, not in the feed
                 view = job_view(jobs[i])
                 view["has_preview"] = bool(
                     live.get("preview")
@@ -3950,18 +4159,72 @@ class H(BaseHTTPRequestHandler):
                 if isinstance(data[k], (list, dict)):      # never turn a list into the text "['x']" and run it
                     return self.j({"error": "That request wasn't understood (%s)." % k}, 400)
                 data[k] = str(data[k])
+        if path == "/api/workflows/warm":
+            # the Workflows page is open: start the hidden ComfyUI page now, so the first upload is quick
+            def _warm():
+                try:
+                    import comfy_convert
+                    with comfy_convert._lock:
+                        comfy_convert._ensure_page()
+                        comfy_convert._state["t"] = time.time()
+                        comfy_convert._schedule_idle_close()
+                except Exception as e:
+                    log.info("warm converter: %s", e)
+            threading.Thread(target=_warm, daemon=True).start()
+            return self.j({"ok": True})
         if path == "/api/workflows/inspect":
+            text = data.get("text") or ""
             try:
-                oi = object_info(force=True)
-                graph, warnings = WF.load_any(data.get("text") or "", oi)
+                parsed = json.loads(text) if isinstance(text, str) else text
+            except ValueError:
+                return self.j({"error": "That file isn't a ComfyUI workflow (it isn't readable JSON). In ComfyUI use "
+                                        "Workflow > Save, or Export, and upload that file."}, 400)
+            section = data.get("section")
+            # several workflows in one file (each in its own group, switched on with buttons): one entry per part
+            parts = WF.sections(parsed) if section in (None, "") else []
+            if parts:
+                try:
+                    oi = object_info()
+                    out = []
+                    for p in parts:
+                        try:
+                            g, w = WF.load_any(parsed, oi, section=p["id"])
+                            c = WF.scan(g, oi)
+                            c["task"] = WF.task_from_title(p["title"], c)
+                            c["media"] = WF.TASK_MEDIA.get(c["task"], c.get("media") or "image")
+                        except Exception as e:
+                            log.info("part %s: %s", p["title"], e)
+                            continue
+                        c["name"] = (WF.plain_part_name(p["title"]) + " · " + ((data.get("name") or "").strip() or "Workflow"))[:80]
+                        dkey = uuid.uuid4().hex[:12]
+                        _wf_drafts[dkey] = (c, g, time.time())
+                        out.append({"draft": dkey, "title": WF.plain_part_name(p["title"]), "task": c.get("task"),
+                                    "media": c.get("media"), "plain": WF.plain_what(c),
+                                    "ready": bool((c.get("slots") or {}).get("prompt")) and not c.get("missing_nodes"),
+                                    "missing_nodes": c.get("missing_nodes") or [], "card": c, "summary": WF.summary(c),
+                                    "candidates": _wf_candidates(g)})
+                except Exception as e:
+                    return self.j({"error": "Couldn't read that workflow: %s" % e}, 400)
+                if out:
+                    return self.j({"parts": out, "tasks": WF.TASKS,
+                                   "message": "This file contains %d different workflows." % len(out)})
+            try:
+                oi = object_info()
+                graph, warnings = WF.load_any(parsed, oi, section=section)
                 card = WF.scan(graph, oi)
-                if WF.apply_app_mode(card, graph, WF.app_mode_inputs(data.get("text") or ""), oi):
+                if card.get("missing_nodes"):
+                    # the cached node list may be older than a pack the user just installed: check once more
+                    oi = object_info(force=True)
+                    graph, warnings = WF.load_any(parsed, oi, section=section)
+                    card = WF.scan(graph, oi)
+                if WF.apply_app_mode(card, graph, WF.app_mode_inputs(parsed), oi):
                     warnings = ["Using the controls the workflow's author chose in ComfyUI App Mode."] + list(warnings)
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
             except Exception as e:
                 return self.j({"error": "Couldn't read that workflow: %s" % e}, 400)
             card["name"] = (data.get("name") or "").strip()[:80] or "My workflow"
+            card["plain"] = WF.plain_what(card)
             draft = uuid.uuid4().hex[:12]
             _wf_drafts[draft] = (card, graph, time.time())
             for k in [k for k, v in _wf_drafts.items() if time.time() - v[2] > 3600]:
@@ -3998,40 +4261,40 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/install/cancel":
             INST.cancel()
             return self.j({"ok": True})
+        if path == "/api/workflows/test":
+            # Test run: the upload, saved as a hidden test entry, run once small through the normal Generate path
+            try:
+                card, graph = _card_from_draft(data)
+            except ValueError as e:
+                return self.j({"error": str(e)}, 400)
+            card["id"] = "wft_" + re.sub(r"[^A-Za-z0-9]", "", data.get("draft") or "")[:12]
+            card["test_only"] = True
+            card["name"] = "Test run: " + (card.get("name") or "workflow")
+            WF.save(card, graph)
+            _wf_test_ids[data.get("draft")] = card["id"]
+            try:
+                job = submit_workflow_job(_test_request(card))
+            except ValueError as e:
+                return self.j({"ok": False, "test_id": card["id"], "problem": plain_test_problem(str(e))})
+            except Exception as e:
+                log.exception("test run")
+                return self.j({"ok": False, "test_id": card["id"], "problem": plain_test_problem(str(e))})
+            job["test_run"] = True
+            return self.j({"ok": True, "job": job["id"], "test_id": card["id"], "prompt": job.get("prompt_user") or ""})
         if path == "/api/workflows/save":
             d = _wf_drafts.get(data.get("draft") or "")
             if not d:
                 return self.j({"error": "This upload expired. Upload the file again."}, 400)
-            card, graph = dict(d[0]), d[1]
-            card["name"] = (data.get("name") or card.get("name") or "My workflow").strip()[:80]
-            card["family"] = (data.get("family") or card.get("family") or "Custom").strip()[:40]
-            task = data.get("task") or card.get("task")
-            if task in WF.TASKS:
-                card["task"] = task
-                card["media"] = WF.TASK_MEDIA[task]
-            slots = dict(card.get("slots") or {})
-            for key in ("prompt", "negative"):
-                pick = data.get(key + "_pick")
-                if pick == "none":
-                    slots[key] = []
-                elif pick and ":" in pick:
-                    nid, inp = pick.rsplit(":", 1)      # node ids inside subgraphs contain ":" ("69:49:165")
-                    n = graph.get(nid)
-                    if n is not None and inp in (n.get("inputs") or {}):
-                        slots[key] = [{"node": nid, "input": inp, "title": WF._title(n), "class_type": n.get("class_type"), "label": key}]
-            card["slots"] = slots
-            if not card.get("description"):
-                # a short line for the card, from what the app understood
-                found = [k for k in ("prompt", "images", "videos", "audios", "width", "seed", "steps", "length", "loras") if slots.get(k)]
-                words = {"prompt": "prompt", "images": "pictures", "videos": "video input", "audios": "audio input",
-                         "width": "size", "seed": "seed", "steps": "steps", "length": "length", "loras": "LoRAs"}
-                kind = {"t2i": "Text to image", "edit": "Image edit", "t2v": "Text to video", "i2v": "Image to video",
-                        "r2v": "Reference to video", "v2v": "Video to video", "long": "Long video"}.get(card.get("task"), "Workflow")
-                card["description"] = "%s, uploaded. The app controls: %s." % (kind, ", ".join(words[k] for k in found) or "the prompt")
             try:
-                card["requires"] = WF.requirements(graph, card, object_info())
-            except Exception as e:
-                log.info("requirements skipped: %s", e)
+                card, graph = _card_from_draft(data)
+            except ValueError as e:
+                return self.j({"error": str(e)}, 400)
+            tid = _wf_test_ids.pop(data.get("draft"), None)
+            if tid:
+                try:
+                    WF.delete(tid)          # the hidden test entry: the real one replaces it
+                except ValueError:
+                    pass
             saved = WF.save(card, graph)
             _wf_drafts.pop(data.get("draft"), None)
             return self.j({"card": saved})
@@ -4122,6 +4385,11 @@ class H(BaseHTTPRequestHandler):
                 return self.j({"ok": True, "message": start_comfy(data.get("profile") or "everyday")})
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
+        if path == "/api/comfy/stop":
+            try:
+                return self.j({"ok": True, "message": stop_comfy(bool(data.get("force")))})
+            except ValueError as e:
+                return self.j({"error": str(e), "busy": "generating" in str(e)}, 400)
         if path == "/api/comfy/switch":
             try:
                 return self.j({"ok": True, "message": switch_comfy_profile(data.get("profile") or "")})

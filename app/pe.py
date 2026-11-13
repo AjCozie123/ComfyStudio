@@ -32,22 +32,31 @@ FAST = {
     "task_t2i": "pe_t2i_task_fast.txt",
     "system_edit": "pe_edit_system_fast.txt",
     "task_edit": "pe_edit_task_fast.txt",
+    # edits for models other than MiniMax H3 (Klein, Qwen Edit, Krea, ...): a plain instruction, no <Subject N>
+    "system_edit_generic": "pe_edit_system_fast.txt",
+    "task_edit_generic": "pe_edit_task_generic.txt",
+    "temperature_edit": 0.5,      # edits want literal, steady wording
 }
 
 QUALITY = {
     "id": "quality",
     "max_length_t2i": 8192,
-    "max_length_edit": 512,
+    "max_length_edit": 6144,
     "thinking": True,
     "mtp": "auto",
     "temperature": 1.0,
     "top_k": 20,
-    "ref_megapixels": 8.0,
+    # what the enhancer LOOKS at (not what the image model gets). 8 MP was ~8,000 vision tokens per picture; H3's own
+    # text encoder looks at references at a 1024 px short edge, so ~1 MP shows the enhancer the same detail.
+    "ref_megapixels": 1.0,
     "max_images": 16,
     "system_t2i": "pe_t2i_system.txt",
     "task_t2i": "pe_t2i_task.txt",
     "system_edit": "pe_edit_system.txt",
     "task_edit": "pe_edit_task.txt",
+    "system_edit_generic": "pe_edit_system_fast.txt",
+    "task_edit_generic": "pe_edit_task_generic.txt",
+    "temperature_edit": 0.7,
 }
 
 
@@ -186,28 +195,36 @@ def image_fingerprint(input_root, rel_name):
 TOKEN_STEPS = [256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096, 6144, 8192]
 # Quality "thinks" before it writes, and the limit covers the thinking AND the answer. Below these limits it
 # writes directly instead, so the thinking can never use up the room and leave no prompt.
-THINK_MIN = {"t2i": 4096, "edit": 512}
+# (The edit limit used to be 512: thinking switched on with no room to finish, so Quality edits came back empty.)
+THINK_MIN = {"t2i": 4096, "edit": 4096}
 
 
-def auto_tokens(pe_mode, mode, prompt="", n_images=0):
-    """The token limit Auto picks for what the user is doing."""
+def auto_tokens(pe_mode, mode, prompt="", n_images=0, generic=False):
+    """The token limit Auto picks for what the user is doing. It is a ceiling: the enhancer stops when it is done,
+    so a roomy limit costs nothing, while a tight one cuts the answer off (no JSON -> original prompt used)."""
     words = len(str(prompt or "").split())
     edit = mode == "edit"
-    if (pe_mode or "fast") != "quality":
-        return 512 if (words > 40 or (edit and n_images > 2)) else 384
     if edit:
-        return 768 if n_images > 2 else 512
+        if generic:                      # a 2-5 sentence instruction
+            return 768
+        if (pe_mode or "fast") != "quality":
+            return 1536 if n_images > 2 else 1024     # the Subject caption is ~350 words
+        return 8192 if n_images > 2 else 6144         # Quality thinks first, then writes the caption
+    if (pe_mode or "fast") != "quality":
+        return 768      # the sectioned caption is up to ~250 words (~350 tokens); 384 could cut it off
     return 4096
 
 
-def resolve_tokens(pe_mode, mode, choice=None, prompt="", n_images=0):
-    """(max_length, thinking) for a run. choice: None / 'auto' / a number of tokens from the dial."""
+def resolve_tokens(pe_mode, mode, choice=None, prompt="", n_images=0, generic=False):
+    """(max_length, thinking) for a run. choice: None / 'auto' / a number of tokens from the dial.
+    generic: an edit for a model other than MiniMax H3 (short instruction, never thinks)."""
     st = settings(pe_mode)
     mode = "edit" if mode == "edit" else "t2i"
     try:
         n = int(choice)
     except (TypeError, ValueError):
         n = 0
-    max_length = min(TOKEN_STEPS, key=lambda s: abs(s - n)) if n > 0 else auto_tokens(st["id"], mode, prompt, n_images)
-    thinking = bool(st.get("thinking")) and max_length >= THINK_MIN[mode]
+    max_length = (min(TOKEN_STEPS, key=lambda s: abs(s - n)) if n > 0
+                  else auto_tokens(st["id"], mode, prompt, n_images, generic=generic))
+    thinking = bool(st.get("thinking")) and not (generic and mode == "edit") and max_length >= THINK_MIN[mode]
     return max_length, thinking

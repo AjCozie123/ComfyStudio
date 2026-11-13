@@ -95,6 +95,8 @@ def validate_graph(graph: dict, oi: dict, input_root: str | None = None) -> list
             if key in hidden or key in HIDDEN_OK:
                 continue
             if base not in known and key not in known:
+                if "Power Lora Loader" in ctype and key.startswith("lora_"):
+                    continue    # rgthree reads its LoRAs (lora_1, lora_2 ...) as extra fields
                 problems.append("Node %s (%s) has unexpected input %s." % (nid, ctype, key))
                 continue
             spec = known.get(key) or known.get(base)

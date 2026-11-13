@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261113d">
+  <link rel="stylesheet" href="/static/app.css?v=20261113j">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -170,11 +170,14 @@
           (subgraphs) are fine; the app opens them for you. If you set the workflow up in ComfyUI's <b>App Mode</b>,
           the app uses the controls you chose there.</li>
         <li><b>Upload it.</b> On this page, tap <b>+ Upload workflow</b> (top right) and choose the file.</li>
-        <li><b>Check the setup screen.</b> The app reads the workflow and lists what it understood under <b>Found</b>
-          (prompt, pictures, size, seed, steps, models and so on). Give it a <b>Name</b>, check <b>Shows up under</b>
-          (for example Image · Text to image), and make sure <b>Prompt box</b> points at the text you normally type into.
-          If something is missing from your PC, it says so and offers to install the needed nodes.</li>
-        <li><b>Save.</b> Tap <b>Save</b>. The new engine appears on this page under its model family, marked <b>Yours</b>.</li>
+        <li><b>Wait a moment.</b> The app opens the workflow the same way ComfyUI does and sets it up for you: your
+          prompt, pictures, size, seed and so on go into the app's own buttons. It tells you in one line what the
+          workflow makes. Most workflows say <b>✓ Ready to use</b>.</li>
+        <li><b>If it needs something</b>, it asks one plain question (for example which text box is the prompt) or
+          shows an <b>Install</b> button for an add-on your ComfyUI doesn't have yet.</li>
+        <li><b>A file with several workflows in it</b> (one for text to video, one for image to video ...) shows a list.
+          Each one becomes its own choice; untick any you don't want.</li>
+        <li><b>Tap Add.</b> The app offers to use it straight away. It also appears on this page, marked <b>Yours</b>.</li>
         <li><b>Use it.</b> Tap <b>Use</b> on its card. You go to <b>Create</b> with it selected; type a prompt and press the
           send arrow. The pills below the prompt (Size, Seed, LoRA and so on) now control this workflow.</li>
         <li><b>Switch back any time</b> with the sliders button next to the send arrow (Settings → Engine), or tap
@@ -869,24 +872,53 @@
       <div class="sheet-top">
         <div class="sheet-head">
           <button type="button" class="icon-btn sm" id="wf-sheet-close" aria-label="Close">✕</button>
-          <h2 id="wf-sheet-title">Check the setup</h2>
-          <button type="button" class="send-text" id="wf-save">Save</button>
+          <h2 id="wf-sheet-title">Add a workflow</h2>
+          <button type="button" class="send-text" id="wf-save">Add</button>
         </div>
       </div>
       <div class="wf-body" id="wf-body">
-        <div class="field-grid">
+        <!-- while the file is being read -->
+        <div class="wf-loading hidden" id="wf-loading" role="status" aria-live="polite">
+          <span class="wf-spinner" aria-hidden="true"></span>
+          <div><strong>Reading your workflow…</strong><p class="pop-note" id="wf-loading-note">The first one takes about 20 seconds while ComfyUI opens in the background. After that it's quick.</p></div>
+        </div>
+        <!-- a file that holds several workflows -->
+        <div class="wf-parts hidden" id="wf-parts">
+          <p class="wf-lead" id="wf-parts-lead"></p>
+          <p class="pop-note">Each one becomes its own choice in the model menu. Untick any you don't want.</p>
+          <div class="wf-part-list" id="wf-part-list"></div>
+        </div>
+        <!-- one workflow -->
+        <div class="wf-simple" id="wf-simple">
           <label class="field">Name <input id="wf-name" maxlength="80" placeholder="My workflow"></label>
-          <label class="field">Model family <input id="wf-family-in" maxlength="40" list="wf-family-list"></label>
+          <p class="wf-lead" id="wf-plain"></p>
+          <div class="wf-status" id="wf-status"></div>
+          <div class="wf-ask hidden" id="wf-ask">
+            <p class="wf-ask-q">Where do you type your idea?</p>
+            <p class="pop-note">We couldn't tell which text box is the prompt. Pick the one you'd normally type into in ComfyUI.</p>
+            <select id="wf-ask-pick" aria-label="Which text box is the prompt"></select>
+          </div>
+          <div class="wf-missing hidden" id="wf-missing"></div>
+          <div class="wf-test" id="wf-test">
+            <button type="button" class="chip-btn primary" id="wf-test-btn">Test run</button>
+            <p class="pop-note" id="wf-test-note">Makes one small picture or a short clip to check it really works before you add it. Usually under a minute.</p>
+            <div class="wf-test-result hidden" id="wf-test-result"></div>
+          </div>
         </div>
-        <datalist id="wf-family-list"></datalist>
-        <label class="field">Shows up under <select id="wf-task"></select></label>
-        <div class="wf-found" id="wf-found"></div>
-        <div class="wf-missing hidden" id="wf-missing"></div>
-        <div class="field-grid one">
-          <label class="field">Prompt box <select id="wf-prompt-pick"></select></label>
-          <label class="field">Negative prompt <select id="wf-negative-pick"></select></label>
-        </div>
-        <ul class="wf-notes" id="wf-notes"></ul>
+        <details class="wf-advanced" id="wf-advanced">
+          <summary>Advanced (you don't need this)</summary>
+          <div class="field-grid">
+            <label class="field">Model family <input id="wf-family-in" maxlength="40" list="wf-family-list"></label>
+            <label class="field">Shows up under <select id="wf-task"></select></label>
+          </div>
+          <datalist id="wf-family-list"></datalist>
+          <div class="wf-found" id="wf-found"></div>
+          <div class="field-grid one">
+            <label class="field">Prompt box <select id="wf-prompt-pick"></select></label>
+            <label class="field">Negative prompt <select id="wf-negative-pick"></select></label>
+          </div>
+          <ul class="wf-notes" id="wf-notes"></ul>
+        </details>
       </div>
     </div>
   </div>
@@ -919,7 +951,7 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/lora_match.js?v=20261113d"></script>
-  <script src="/static/app.js?v=20261113d"></script>
+  <script src="/static/lora_match.js?v=20261113e"></script>
+  <script src="/static/app.js?v=20261113j"></script>
 </body>
 </html>

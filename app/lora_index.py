@@ -38,6 +38,7 @@ ENGINE_FAMILY = {  # engine card family -> key
     "MiniMax H3": "minimax_h3", "MiniMax H3 Fast": "minimax_h3", "Krea 2": "krea2", "Qwen Image": "qwen_image",
     "FLUX.2 Klein": "flux2", "FLUX.3 Klein": "flux2", "FLUX.1": "flux1", "Flux": "flux1", "MOSS": "moss",
     "SDXL": "sdxl", "LTX Video": "ltx", "Wan": "wan", "Hunyuan Video": "hunyuan", "Hunyuan": "hunyuan",
+    "Klein": "flux2", "Moss": "moss",
 }
 
 # words in LoRA names that say nothing about what the LoRA does (model names, versions, trainer words)
@@ -64,13 +65,18 @@ morning evening sunset sunrise rain snow background foreground white black red b
 brown grey gray gold silver new fake only through see wet dry dirty clean direction motion move moving
 clothes clothing outfit dress shirt top pants jeans skirt shorts jacket coat hat shoe shoes boots bag
 bikini swimsuit lingerie underwear bra panties socks gloves glasses sunglasses
-breast breasts boob boobs ass butt buttock buttocks nipple nipples penis vagina pussy crotch cleavage bust abs
+crotch cleavage bust abs
 muscle muscles muscular curvy thick thickness slim facial expression covered bounce bouncing crowded crowd zoom
 micro mini cinematic film movie vintage retro
-anatomy beautiful pretty cute hot sexy model art artistic painting drawing render illustration""".split())
+anatomy beautiful pretty cute hot sexy model art artistic painting drawing render illustration
+nsfw sex sexual porn porno explicit erotic erotica xxx lewd horny naughty seductive sensual provocative""".split())
+# explicit body words can pick a LoRA now ("pussy close-up"), but they are still too common in training captions and
+# tag lists to become a trigger or a tag phrase on their own
+BODY_WORDS = set("breast breasts boob boobs ass butt buttock buttocks nipple nipples penis vagina pussy".split())
+_STOP_TAGS = GENERIC | BODY_WORDS
 
 KIND_DEFAULT_STRENGTH = {"character": 1.0, "style": 0.8, "clothing": 0.85, "body": 0.75, "pose": 0.8, "concept": 0.85,
-                         "quality": 0.7}
+                         "quality": 0.7, "nsfw": 0.8}
 
 _RE_UTILITY = re.compile(r"turbo|lightning|lightx2v|distill|dmd2?|\blcm\b|hyper[-_ ]?sd|\d+[-_ ]?steps?\b|speed|"
                          r"\bfast\b|accelerat", re.I)
@@ -104,6 +110,222 @@ _FOLDER_KIND = [  # folder words -> kind
     (re.compile(r"realism|quality", re.I), "quality"),
 ]
 NEVER_AUTO = {"utility", "tool", "slider"}
+
+# ---------------------------------------------------------------- adult (NSFW) wording
+# Prompts and LoRA names say the same adult thing in many ways. Each group is one meaning: its first word is the
+# meaning's key, the rest are slang, synonyms and multi-word ways of saying it. The page matches a prompt word to a LoRA
+# phrase when both are in one group (static/lora_match.js). English only, like GENERIC.
+_PRON = ("", "her ", "his ", "their ", "the ", "my ", "your ", "any ", "a ")
+
+
+def _px(*phrases):
+    """'without {p}clothes' -> 'without clothes', 'without her clothes', 'without his clothes' ..."""
+    out = []
+    for ph in phrases:
+        for p in (_PRON if "{p}" in ph else ("",)):
+            t = " ".join(ph.replace("{p}", p).split())
+            if t not in out:
+                out.append(t)
+    return out
+
+
+ADULT_CONCEPTS = [
+    ["nude", "naked", "nudity", "nudes", "nudist", "nekkid", "unclothed", "disrobed", "in the buff", "birthday suit",
+     "au naturel", "bare naked", "stark naked", "fully nude", "completely nude", "completely naked", "totally naked",
+     "not wearing anything", "wearing nothing", "with nothing on", "has nothing on"]
+    + _px("no {p}clothes", "no {p}clothing", "without {p}clothes", "without {p}clothing", "clothes off", "clothing off"),
+    ["topless", "bare breasted", "tits out", "boobs out", "breasts out", "titties out", "no top"] + _px("without {p}top"),
+    ["bottomless", "pantyless", "pantiless"] + _px("no {p}panties", "without {p}panties", "no {p}underwear",
+                                                   "without {p}underwear", "no {p}knickers", "without {p}knickers"),
+    ["undress", "undresses", "undressing", "undressed", "disrobe", "disrobing", "strips", "stripping", "striptease",
+     "strip tease", "stripper", "strip off", "strip down", "strips off", "strips down", "strip naked", "strips naked",
+     "stripped naked", "nudify", "nudified", "nudifying", "unclothe", "unclothing"],
+    ["braless", "bra less"] + _px("no {p}bra", "without {p}bra"),
+    ["nsfw", "not safe for work", "xxx", "porn", "porno", "pornographic", "pornography", "uncensored", "x rated",
+     "rated x", "hardcore", "explicit", "adult content"],
+    ["sex", "intercourse", "fucking", "fuck", "fucked", "fucks", "having sex", "making love", "make love", "makes love",
+     "shagging", "screwing", "coitus", "sexual intercourse", "lovemaking"],
+    ["breast", "breasts", "tits", "titties", "titty", "boobs", "boobies", "boob", "knockers", "bosom", "bosoms", "tatas"],
+    ["nipple", "nipples"],
+    ["areola", "areolas", "areolae"],
+    ["pokies", "nipple poke", "nipples poking", "pointy nipples"],
+    ["pussy", "pussies", "vagina", "vaginas", "vulva", "cunt", "twat", "labia", "coochie", "cooch", "cooter"],
+    ["clitoris", "clit"],
+    ["penis", "penises", "cock", "cocks", "dick", "dicks", "phallus", "dong", "schlong"],
+    ["testicles", "testicle", "scrotum", "ballsack", "nutsack"],
+    ["ass", "asses", "butt", "butts", "buttocks", "buttock", "booty", "bootie", "arse", "bum", "derriere", "tush"],
+    ["anus", "asshole", "butthole", "rectum"],
+    ["anal", "anal sex", "ass fucking", "assfucking", "butt sex", "sodomy"],
+    ["blowjob", "blow job", "blowjobs", "bj", "fellatio", "giving head", "gives head", "give head", "cocksucking",
+     "cock sucking", "dick sucking", "sucking him off", "sucks him off"]
+    + _px("sucking {p}cock", "sucking {p}dick", "sucking {p}penis", "sucks {p}cock", "sucks {p}dick", "sucks {p}penis",
+          "suck {p}cock", "suck {p}dick"),
+    ["deepthroat", "deep throat", "deepthroating", "deep throating", "throat fucking", "throatfuck", "face fucking",
+     "facefuck", "irrumatio"],
+    ["oral", "oral sex"],
+    ["cunnilingus", "pussy licking", "licking pussy", "eating pussy", "eating her out", "eats her out",
+     "going down on her", "goes down on her"] + _px("licking {p}pussy", "licks {p}pussy", "eating {p}pussy", "eats {p}pussy"),
+    ["handjob", "hand job", "handjobs", "jerking him off", "jerks him off"]
+    + _px("stroking {p}cock", "strokes {p}cock", "stroking {p}dick", "strokes {p}dick"),
+    ["footjob", "foot job", "footjobs"],
+    ["titjob", "titsjob", "tit job", "tits job", "titfuck", "tit fuck", "tittyfuck", "titty fuck", "paizuri"],
+    ["masturbation", "masturbating", "masturbate", "masturbates", "touching herself", "touches herself",
+     "playing with herself", "plays with herself", "pleasuring herself", "pleasures herself", "jerking off",
+     "jacking off", "wanking", "jerks off", "jacks off"],
+    ["fingering", "fingers herself", "fingering herself", "finger fucking", "fingerfucking", "fingered"],
+    ["dildo", "dildos", "sex toy", "sex toys", "vibrator", "vibrators"],
+    ["strapon", "strap on"],
+    ["cum", "semen", "sperm", "jizz", "spunk", "cumming", "ejaculate", "ejaculating", "ejaculation", "ejaculates"],
+    ["cumshot", "cum shot", "cumshots", "money shot"],
+    ["creampie", "creampied", "creampies"],
+    ["bukkake", "gokkun"],
+    ["doggystyle", "doggy style", "doggy", "doggie style", "doggy position"],
+    ["cowgirl", "cowgirl position", "riding him", "rides him"] + _px("riding {p}cock", "riding {p}dick", "rides {p}cock"),
+    ["missionary", "missionary position"],
+    ["spooning", "spoon position"],
+    ["gangbang", "gang bang", "group sex", "orgy"],
+    ["threesome", "3some"],
+    ["futanari", "futa", "dickgirl", "shemale"],
+    ["bdsm", "bondage", "shibari"],
+    ["penetration", "penetrated", "penetrating", "penetrates", "insertion"],
+    ["orgasm", "orgasms", "orgasming", "climax", "climaxing"],
+    ["squirting", "squirts"],
+    ["cameltoe", "camel toe"],
+    ["facesitting", "face sitting", "sitting on his face", "sits on his face"],
+    ["rimming", "rimjob", "rim job", "anilingus"],
+    ["upskirt", "up skirt"],
+    ["downblouse", "down blouse"],
+]
+# size words: a LoRA made to enlarge a body part is only picked when the prompt asks for it
+ADULT_SIZES = {
+    "big": ["large", "bigger", "larger"],
+    "huge": ["hyper", "gigantic", "giant", "massive", "enormous", "humongous", "colossal", "immense", "oversized"],
+    "small": ["tiny", "little", "petite", "flat", "smaller", "itty bitty"],
+}
+ADULT_BODY = ["breast", "nipple", "areola", "ass", "penis", "pussy", "testicles", "thigh", "hip", "lip", "clitoris", "anus"]
+ADULT_IMPLIES = {"undress": ["nude"], "topless": ["nude"], "bottomless": ["nude"]}
+# negated, these mean "no adult LoRAs" ("no nudity", "not naked", "not nsfw")
+ADULT_NUDEISH = ["nude", "topless", "bottomless", "undress", "nsfw"]
+# a word that isn't adult when followed by one of these ("nude lipstick" is a colour, "naked eye", "a cock crowing")
+ADULT_SKIP = {
+    "nude": ["lipstick", "lip", "lips", "makeup", "heels", "heel", "shoes", "pumps", "color", "colour", "colors", "tone",
+             "tones", "palette", "nails", "nail", "polish", "beige", "dress", "stockings", "pantyhose", "tights", "bra",
+             "underwear", "gloss", "shade", "shades", "eyeshadow", "blush", "leotard", "bodysuit", "mesh", "sandals",
+             "boots", "gown", "swimsuit", "bikini", "lingerie", "panties", "thong", "top", "suit", "manicure",
+             "toned", "tinted", "lining", "lined", "rose", "pink", "peach", "brown", "taupe", "coloured", "colored",
+             "hued", "fabric", "satin", "silk", "slip", "skirt", "trousers", "pants", "shorts", "jacket", "coat",
+             "cardigan", "sweater", "knit", "blazer", "blouse", "camisole", "corset", "socks", "gloves", "liner"],
+    "naked": ["eye", "eyes", "flame", "flames", "truth", "bulb", "lightbulb", "wire", "wires", "tree", "trees",
+              "branches", "branch", "ambition", "aggression"],
+    "nothing": ["but"],
+    "strip": ["of", "club", "clubs", "mall", "malls", "light", "lights", "steak", "poker", "search", "lighting", "led"],
+    "topless": ["man", "men", "guy", "guys", "male", "boy", "boys", "dude", "bodybuilder", "surfer", "swimmer"],
+    "cock": ["crow", "crowing", "crows", "fight", "fighting", "rooster", "pit", "tail", "tails"],
+    "doggy": ["bag", "door", "paddle"],
+    "cowgirl": ["hat", "boots"],
+    "bum": ["bag"],
+    "booty": ["shorts", "call"],
+    "dick": ["tracy"],
+}
+ADULT_UNDRESS = {   # "take off her bra", "she pulls her panties down", "removes her top", "with her bra off"
+    "verbs": ["remove", "removes", "removed", "removing", "strip", "strips", "stripped", "stripping", "unbutton",
+              "unbuttons", "unbuttoned", "unbuttoning", "unzip", "unzips", "unzipped", "unzipping", "unhook", "unhooks",
+              "unhooked", "unhooking", "unclasp", "unclasps", "unclasped", "unclasping", "shed", "sheds", "shedding",
+              "lose", "loses", "losing", "ditch", "ditches", "ditched", "ditching", "drop", "drops", "dropped",
+              "dropping", "lift", "lifts", "lifted", "lifting", "discard", "discards", "discarded", "discarding"],
+    "pverbs": ["take", "takes", "took", "taking", "taken", "pull", "pulls", "pulled", "pulling", "slip", "slips",
+               "slipped", "slipping", "peel", "peels", "peeled", "peeling", "tear", "tears", "tore", "tearing", "torn",
+               "rip", "rips", "ripped", "ripping", "yank", "yanks", "yanked", "yanking", "push", "pushes", "pushed",
+               "pushing", "tug", "tugs", "tugged", "tugging", "get", "gets", "got", "getting"],
+    "particles": ["off", "down", "aside", "away", "open"],
+    "garments": ["clothes", "clothing", "everything", "outfit", "dress", "bra", "top", "shirt", "tshirt", "blouse",
+                 "bikini", "swimsuit", "lingerie", "panties", "underwear", "knickers", "thong", "pants", "trousers",
+                 "jeans", "shorts", "skirt", "towel", "robe", "bathrobe", "nightgown", "nightie", "gown", "leotard",
+                 "corset", "bodysuit", "sweater", "hoodie", "jumpsuit", "kimono", "uniform", "bottoms", "undies",
+                 "briefs", "boxers", "bodice", "garments", "negligee", "camisole"],
+    "bottoms": ["panties", "pants", "trousers", "jeans", "shorts", "underwear", "knickers", "thong", "bottoms", "undies",
+                "briefs", "boxers"],
+    "full": ["clothes", "clothing", "everything", "garments"],
+    "owners": ["her", "his", "their", "my", "your", "with"],
+    "cancel": ["replace", "replaces", "replaced", "replacing", "swap", "swaps", "swapped", "swapping", "change",
+               "changes", "changed", "changing", "instead", "new", "different", "another", "recolor", "recolour"],
+}
+# these keep adult LoRAs out entirely (so do "no nudity", "not naked" ...)
+ADULT_SFW = ["safe for work", "family friendly", "fully clothed", "fully dressed", "non nude", "nonnude",
+             "stays clothed", "stay clothed", "remains clothed", "clothes stay on", "clothes stays on",
+             "clothing stays on", "keeps clothes on"] + _px("keep {p}clothes on", "keep {p}clothing on",
+                                                             "keeps {p}clothes on", "keeping {p}clothes on")
+# words around an adult word in a LoRA name or trigger that don't change what it does (maker / quality / filler words)
+ADULT_IGNORABLE = """improved improve better best realistic real enhanced enhancer enhance ultimate perfect detailed detail
+details hd pro plus super master god gods helper lora aio beta alpha revamped fix fixed diffusion edition pack collection
+concept nsfw sfw sex porn she he has have is are was there it this that very photo photograph photographic image
+picture closeup closeups close up shot min max maxh3 lo ra""".split()
+# general adult LoRAs whose name says only "nsfw / uncensored / all-in-one" are found by these words
+GENERAL_ADULT = ("nude", "nsfw")
+
+_ADULT_EXPLICIT = set("""nude nudes naked nudity nsfw porn porno pornographic xxx hentai uncensored sex sexual penis
+penises cock cocks dick dicks pussy pussies vagina vulva labia clit clitoris nipple nipples areola areolas areolae cum
+cumshot cumshots semen sperm jizz creampie blowjob blowjobs fellatio deepthroat handjob footjob titjob titsjob paizuri
+anal anus dildo dildos masturbation masturbating fingering orgasm squirting bukkake gokkun futanari futa shemale bdsm
+bondage missionary cowgirl doggy doggystyle gangbang threesome orgy strapon penetration genitals genital testicles
+scrotum erect flaccid topless bottomless lewd cunnilingus rimming nudify undress undressed undressing striptease
+ahegao irrumatio facesitting""".split())
+_ADULT_GLUED = ("nsfw", "porn", "hentai", "uncensor", "nipple", "areola", "blowjob", "cumshot", "creampie", "deepthroat",
+                "bukkake", "gangbang", "masturbat", "dildo", "pussy", "penis", "vagina", "nudity", "naked", "nudes",
+                "futanari", "handjob", "footjob", "titjob", "titsjob", "fellatio", "cunnilingus", "penetrat")
+_ADULT_BODY_WORDS = set("""ass butt buttocks booty breast breasts tits titties boobs pawg thicc bimbo busty cleavage saggy
+macromastia cellulite voluptuous curvy hip hips waist thigh thighs thighgap bust lingerie bikini microbikini thong panties
+pokies sexy seductive downblouse upskirt cameltoe""".split())
+_ADULT_WEAK = {"nsfw", "porn", "porno", "sex", "sexual", "uncensored", "xxx"}
+_RE_REALISM = re.compile(r"realism|realistic|real[-_ ]?skin|ultra[-_ ]?real|detail|fidelity|enhance|crisp|sharpen|dpo\b", re.I)
+_RE_DOGGY = re.compile(r"dogg(?:y|ie)[-_ ]?style", re.I)
+_HYPER_BODY = {"breasts", "breast", "ass", "butt", "booty", "thighs", "thigh", "hips", "lips", "tits", "boobs", "penis",
+               "cock", "dick", "nipples", "areola", "areolas"}
+
+
+def adult_level(texts, weak=True):
+    """'explicit' (nudity, sex, genitals ...), 'body' (body shape, lingerie, sexy ...) or '' for some names / words."""
+    level = ""
+    for t in texts:
+        for w in _split_words(str(t or "")):
+            if w in _ADULT_EXPLICIT and (weak or w not in _ADULT_WEAK):
+                return "explicit"
+            if len(w) >= 5 and any(g in w for g in _ADULT_GLUED) and (weak or not any(g in w for g in ("nsfw", "porn", "uncensor"))):
+                return "explicit"
+            if w in _ADULT_BODY_WORDS:
+                level = "body"
+    return level
+
+
+def _pystem(w):   # the page's stem() (static/lora_match.js)
+    if len(w) > 4 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 4 and re.search(r"(sses|shes|ches|xes)$", w):
+        return w[:-2]
+    if len(w) > 3 and w.endswith("s") and not re.search(r"(ss|us|is)$", w):
+        return w[:-1]
+    return w
+
+
+_CONCEPT_OF = {}
+for _g in ADULT_CONCEPTS:
+    for _w in _g:
+        if " " not in _w:
+            _CONCEPT_OF.setdefault(_pystem(_w), _pystem(_g[0]))
+
+
+def _adult_concepts(words):
+    """The adult meanings in a list of name words ('xynsfw' and 'pornmix' count as nsfw)."""
+    out = set()
+    for w in words:
+        c = _CONCEPT_OF.get(_pystem(w))
+        if c:
+            out.add(c)
+        elif any(g in w for g in ("nsfw", "porn", "uncensor")):
+            out.add("nsfw")
+        elif any(g in w for g in ("nudity", "nudes", "naked")):
+            out.add("nude")
+    return out
 
 MAX_HEADER = 32 * 1024 * 1024
 
@@ -150,7 +372,11 @@ def name_words(name):
     out = []
     # family words glued into a name ('micro-bikiniflux2v2') come apart
     stem = re.sub(r"(?i)(flux\.?[12]?|klein|krea[ _]?2?|qwen|minimax|mmh3|ltx)", " ", _stem_name(name))
-    for w in _split_words(stem):
+    ws = _split_words(stem)
+    for k, w in enumerate(ws):
+        if w == "hyper" and k + 1 < len(ws) and ws[k + 1] in _HYPER_BODY:   # 'Hyper_Breasts' is a size, not speed
+            out.append(w)
+            continue
         if w in NAME_NOISE or len(w) < 2:
             continue
         if re.fullmatch(r"\d{2,4}s", w) or re.fullmatch(r"(19|20)\d\d", w):   # 1980s, 90s, 2007: keep
@@ -193,7 +419,7 @@ def _triggers(meta):
                 for tag, c in (ds or {}).items():
                     counts[tag.strip()] = counts.get(tag.strip(), 0) + int(c)
             for tag, _c in sorted(counts.items(), key=lambda x: -x[1])[:2]:
-                if tag.lower() not in GENERIC and len(tag) >= 3 and len(tag.split()) <= 6:
+                if tag.lower() not in _STOP_TAGS and len(tag) >= 3 and len(tag.split()) <= 6:
                     trig.append(tag)
         except Exception:
             pass
@@ -287,9 +513,9 @@ def load_cards(lora_dirs):
     return cards
 
 
-def kind_of(name, folder, tags, about="", triggers=()):
+def kind_of(name, folder, tags, about="", triggers=(), adult="", adult_name=""):
     """What sort of LoRA this is: utility / tool / slider (never auto) or character / style / clothing / pose / body /
-    quality / concept."""
+    quality / nsfw / concept. adult: adult_level() of everything known about it; adult_name: of its file name."""
     stem = _stem_name(name)
     low_tags = " ".join(t.lower() for t in tags or [])
     words = name_words(name)
@@ -304,21 +530,30 @@ def kind_of(name, folder, tags, about="", triggers=()):
     for rx, kind in _FOLDER_KIND:
         if rx.search(folder or ""):
             return kind
+    explicit = adult == "explicit"
     if re.search(r"\bcharacter|celebrit|\bperson\b", low_tags):
-        return "character"
+        return "nsfw" if explicit else "character"   # a 'casting / character sheet' of nudes isn't one person
     if _RE_QUALITY.search(stem):
+        # 'uncensored', 'nsfw aio', 'massive realistic breast' are content; 'realism' with an nsfw tag stays quality
+        if explicit and (adult_name == "explicit" or not _RE_REALISM.search(stem)):
+            return "nsfw"
+        if adult_name:
+            return "nsfw" if explicit else "body"
         return "quality"
-    if _RE_STYLE.search(stem) or re.search(r"\bstyle\b|\banime\b|\bart ?style", low_tags):
+    if _RE_STYLE.search(_RE_DOGGY.sub(" ", stem)):   # 'doggy style' is a position, not a style
         return "style"
+    if re.search(r"\bstyle\b|\banime\b|\bart ?style", low_tags):
+        return "nsfw" if explicit else "style"
     if _RE_CLOTHING.search(stem) or re.search(r"cloth|outfit|fashion", low_tags):
         return "clothing"
     if _RE_POSE.search(stem) or "pose" in low_tags:
         return "pose"
-    # a LoRA named after its one made-up trigger word ('Elowen', 'xq7person') is a person
+    # a LoRA named after its one made-up trigger word ('Elowen', 'xq7person') is a person, unless what it's about is
+    # adult content or a body shape (then it would block a real person's LoRA, as only one person is used)
     if len(words) == 1 and any(words[0].startswith(t.lower()) or t.lower().startswith(words[0])
                                for t in triggers if len(t.split()) == 1 and len(t) >= 4):
-        return "character"
-    return "concept"
+        return "nsfw" if explicit else ("body" if adult == "body" else "character")
+    return "nsfw" if explicit else "concept"
 
 
 def group_key(family, name, words):
@@ -337,7 +572,13 @@ def describe(rec, card, side):
     tags = [t for t in (list(card.get("tags") or []) + side["tags"]) if isinstance(t, str)][:16]
     about = str(card.get("about") or side.get("about") or "")
     words = name_words(name)
-    kind = kind_of(name, folder, tags, about, triggers)
+    # adult content? from the name, folder, trigger words, title and tags (not the free description). A LoRA tagged
+    # both "sfw" and "nsfw" is a general one: its tags alone don't make it adult.
+    dual = any(str(t).strip().lower() == "sfw" for t in list(tags) + list(triggers))
+    raw_name = _split_words(_stem_name(name))
+    adult_name = adult_level(raw_name)
+    adult = adult_level([folder, title] + raw_name) or adult_level(list(triggers) + list(tags), weak=not dual)
+    kind = kind_of(name, folder, tags, about, triggers, adult, adult_name)
     # "3D Render Style. 3DRenderAF." is two triggers
     phrases = [[p.strip(), "trigger"] for t in triggers for p in re.split(r"\.\s+|\.$", t) if len(p.strip()) >= 2]
     if words:
@@ -355,8 +596,15 @@ def describe(rec, card, side):
             phrases.append([" ".join(tw[:6]), "title"])
     for t in tags:
         tl = t.strip().lower()
-        if tl and tl not in GENERIC and tl not in ("style", "lora", "concept", "character", "clothing", "base model"):
+        if tl and tl not in _STOP_TAGS and tl not in ("style", "lora", "concept", "character", "clothing", "base model"):
             phrases.append([tl, "tag"])
+    # a general adult LoRA ('<maker>_NSFW_AIO', '<maker>_Uncensored'): its name says nothing but "nsfw", so it is found
+    # by "nude" / "nsfw" in a prompt (weakly: any LoRA named for what the prompt says comes first)
+    ign = set(ADULT_IGNORABLE) | NAME_NOISE
+    rest = [w for w in raw_name if w not in ign and not _adult_concepts([w]) and not re.fullmatch(r"v?\d+[a-z]?\d*", w)]
+    if adult == "explicit" and _adult_concepts(raw_name) == {"nsfw"} and not rest and \
+            not (_adult_concepts(_split_words(" ".join(triggers + [title]))) - {"nude", "nsfw", "sex", "topless"}):
+        phrases = phrases[:16 - len(GENERAL_ADULT)] + [[w, "concept"] for w in GENERAL_ADULT]
     hint = side.get("weight") or strength_hint(_stem_name(name), about)
     strength = hint if hint else KIND_DEFAULT_STRENGTH.get(kind, 0.85)
     auto = bool(rec.get("family")) and kind not in NEVER_AUTO and name.lower().endswith(".safetensors")
@@ -366,7 +614,7 @@ def describe(rec, card, side):
         "kind": kind, "auto": auto, "strength": round(float(strength), 2), "phrases": phrases[:16], "triggers": triggers,
         "title": title[:80], "group": group_key(rec.get("family"), name, words) if words else
         "%s|%s/%s" % (rec.get("family") or "", folder.lower(), series),
-        "weight_from": "maker" if hint else "kind",
+        "weight_from": "maker" if hint else "kind", "nsfw": adult == "explicit",
     }
 
 
@@ -390,14 +638,14 @@ def build(names, lora_dirs, data_dir):
             sig = "%d|%d" % (st.st_size, int(st.st_mtime))
             mtime = int(st.st_mtime)
         hit = cache.get(key)
-        if hit and hit.get("sig") == sig and hit.get("v") == 3:
+        if hit and hit.get("sig") == sig and hit.get("v") == 4:
             rec = hit
         else:
             meta = read_meta(full) if full else {}
             base = meta.get("ss_base_model_version") or meta.get("modelspec.architecture") or meta.get("ss_sd_model_name") or ""
             fam = family_of(base) or family_of(os.path.dirname(name)) or family_of(os.path.basename(name))
             rec = {"name": name, "folder": os.path.dirname(name).replace("\\", "/"), "family": fam, "base": base[:80],
-                   "triggers": _triggers(meta), "sig": sig, "v": 3}
+                   "triggers": _triggers(meta), "sig": sig, "v": 4}
         fresh[key] = rec
         side = sidecar_info(full) if full else {"triggers": [], "tags": [], "weight": None, "about": "", "title": ""}
         card = cards.get(name.replace("\\", "/").lower())
@@ -415,4 +663,6 @@ def build(names, lora_dirs, data_dir):
 
 def client_lists():
     """Word lists the page's matcher uses (one source of truth)."""
-    return {"generic": sorted(GENERIC)}
+    return {"generic": sorted(GENERIC), "concepts": ADULT_CONCEPTS, "sizes": ADULT_SIZES, "body": ADULT_BODY,
+            "implies": ADULT_IMPLIES, "nudeish": ADULT_NUDEISH, "skip": ADULT_SKIP, "undress": ADULT_UNDRESS,
+            "sfw": ADULT_SFW, "ignorable": ADULT_IGNORABLE}

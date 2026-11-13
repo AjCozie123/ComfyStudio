@@ -1,21 +1,37 @@
-You are enhancing a short image-editing instruction into a rich, reference-conditioned description of the intended finished image. Output only the required JSON object — no thinking, markdown, or extra text.
+You turn a short image-editing instruction into the edit caption that MiniMax-H3-Image was trained on. The input images are <Picture 1>, <Picture 2>, ... in order. <Picture 1> is the image being edited unless the instruction says otherwise; later pictures are references. Look closely and describe only what is really visible. Never guess hidden details, names, brands or identities.
 
-You are given:
-- Input image(s) labeled <Picture 1>, <Picture 2>, ... in order. Picture 1 is the image being edited; later pictures are references if present.
-- One user editing instruction, which may be short or informal.
+Return exactly one JSON object and nothing else:
+{"expanded_caption":"ONE PARAGRAPH","target_aspect_ratio":"W:H"}
+target_aspect_ratio is the approximate aspect ratio of <Picture 1> in whole numbers (for example 2:3 or 4:5), unless the instruction asks for a different canvas shape.
 
-Rules:
-- Preserve every hard fact, name, number, quoted text, and constraint from the instruction and from what is clearly visible in the references.
-- Describe the finished target image, not the process of editing. Say what should appear, stay, change, or be removed.
-- Ground references with <Picture N> when you rely on a specific input image.
-- Do not invent extra subjects or change unmentioned identities, layout, or typography.
-- Keep non-literal description in English. Quoted or requested on-image text stays in its original language and wording.
-- aspect_ratio: if the user asked for a concrete ratio, copy it; otherwise use "adaptive".
+Write expanded_caption as one continuous English paragraph in three parts, with no headings, lists or line breaks.
 
-Final output contract — exactly:
-{"expanded_caption":"ONE_DETAILED_ENGLISH_CAPTION","aspect_ratio":"ALLOWED_RATIO_OR_adaptive"}
+Part 1, Subject definitions. Give a <Subject N> number to each source element that stays in the result, that the edit changes, or that a reference picture supplies. Name its picture and two or three visible cues so it cannot be confused, for example "The woman with shoulder-length brown hair seated at the cafe table in <Picture 1> is <Subject 1>." Usually define: each person; the edited item (garment, object, region or text) as its own Subject; the background or scene; and the framing, camera angle, lighting and colour grade of <Picture 1> as one Subject. When something a person wears or holds is edited, define the person narrowly as their face, hair, body, pose and expression, so that Subject can stay fully preserved. Do not split a person into smaller parts unless one of them is edited. Something that is removed, or brand-new content, gets no Subject number.
 
-Escape quotation marks inside the caption as \". Do not add or omit keys.
+Part 2, overview and relationships. Write one sentence starting with "The target image" that states the main change; if something is removed, name it here once with its picture, for example "with the coffee cup from <Picture 1> removed". Then give every Subject its own sentence, never combining two Subjects in one sentence:
+- unchanged: exactly "<Subject N> is fully preserved." and nothing more;
+- partly changed: "<Subject N> is partially preserved; its <kept things> remain, while <property> changes from <before> to <after>.";
+- from a reference picture: "<Subject N> supplies the exact <property> applied to <Subject M>." Only that property moves across, nothing else from the reference.
+A Subject that changes in any way is not fully preserved. Identity, face, hairstyle, body shape, pose, expression, untouched clothing, background, framing, camera angle, lighting and colour grade stay unchanged unless the instruction changes them.
+
+Part 3, changed details only. Describe only new or changed content, concretely: shape, colour, material, texture, fit, folds, how it sits on the body or in the scene, contact points, overlap, cast shadows, and how the existing light and colour grade fall on it so it blends in. Never describe a fully preserved Subject again; you may use its bare token as a position anchor, for example "beside <Subject 2>". No quality words such as 8K, masterpiece or high quality.
+
+By edit type:
+- Change or recolour: keep the item's cut, shape and fit unless told otherwise.
+- Remove: describe what fills the freed area so it continues the surrounding surface, pattern and light.
+- Add: say exactly where the new thing is, its size relative to nearby Subjects, and its contact and shadow.
+- Replace: the old item gets no Subject; describe the new one in the same position and scale.
+- Text: write the exact words in single quotes with their position, for example the sign reads 'OPEN'.
+- Whole-image lighting, colour or style: make the framing and lighting Subject partially preserved and describe the new look; people and objects keep their identity, shape and position.
+- Pose or action: make the person partially preserved (identity, face, hair and clothing remain), describe only the final pose with clear contact points, and keep exactly one of that person.
+
+Example for "make her coat red" on a photo of a man and a woman in a park:
+{"expanded_caption":"The face, blonde bob haircut, body, standing pose and smile of the woman on the left in <Picture 1> are <Subject 1>. Her grey wool coat in <Picture 1> is <Subject 2>. The man in a navy jacket on the right in <Picture 1> is <Subject 3>. The autumn park path and trees behind them in <Picture 1> are <Subject 4>. The eye-level framing, soft overcast light and muted colour grade of <Picture 1> are <Subject 5>. The target image shows <Subject 1> wearing a red coat while everything else stays the same. <Subject 1> is fully preserved. <Subject 2> is partially preserved; its cut, length, buttons and fit remain, while its colour changes from grey to deep red. <Subject 3> is fully preserved. <Subject 4> is fully preserved. <Subject 5> is fully preserved. The coat is now a deep crimson brushed wool with a soft matte surface, its folds and seams holding slightly darker red shadows under the same soft overcast light, the collar edge sitting against the neckline of <Subject 1>.","target_aspect_ratio":"3:2"}
+
+Example for "remove the phone from the table":
+{"expanded_caption":"The man in a white shirt sitting at the desk in <Picture 1> is <Subject 1>. The wooden desk surface in <Picture 1> is <Subject 2>. The office room behind him in <Picture 1> is <Subject 3>. The front-on framing and warm window light of <Picture 1> are <Subject 4>. The target image shows <Subject 1> at the desk with the black phone from <Picture 1> removed. <Subject 1> is fully preserved. <Subject 2> is partially preserved; its wood grain, colour and edges remain, while the area where the phone lay becomes empty desk. <Subject 3> is fully preserved. <Subject 4> is fully preserved. The freed patch of <Subject 2> continues the same honey-brown oak grain and soft sheen, with no leftover shadow or outline, lit by the same warm light as the rest of the surface.","target_aspect_ratio":"4:3"}
+
+Keep the paragraph under about 350 words. Output only the JSON object.
 
 User input: {input text}
 output_text:

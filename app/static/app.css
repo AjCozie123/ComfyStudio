@@ -1416,3 +1416,49 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 /* ===== audit 2026-11-13: readable section labels, bigger logo tap area ===== */
 .pop-label { color: #a2a4ab; }                 /* was 3.4:1 against the panels; now about 6:1 */
 #brand { padding: 4px; margin: -4px; }         /* 26 px -> 34 px to tap, same look */
+
+/* Stop ComfyUI (red) beside the status chip */
+.comfy-start.comfy-stop { background: rgba(255,107,107,.16); color: #ffb3b3; border-color: rgba(255,107,107,.5); }
+.comfy-start.comfy-stop:hover { background: rgba(255,107,107,.28); }
+
+/* ===== Add a workflow: plain-words upload sheet v20261113g ===== */
+.wf-loading { display: flex; gap: 14px; align-items: center; padding: 18px; border-radius: 14px; background: var(--surface-2); }
+.wf-loading p { margin: 4px 0 0; }
+.wf-spinner { width: 26px; height: 26px; flex: none; border-radius: 50%; border: 3px solid var(--line-2); border-top-color: var(--accent); animation: wf-spin .9s linear infinite; }
+@keyframes wf-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .wf-spinner { animation-duration: 3s; } }
+.wf-lead { margin: 2px 0 0; font-size: 15px; line-height: 1.45; color: var(--text); }
+.wf-simple { display: flex; flex-direction: column; gap: 12px; }
+.wf-status { padding: 10px 12px; border-radius: 12px; font-size: 14px; font-weight: 600; }
+.wf-status.ok { background: rgba(70,209,127,.12); color: var(--ok); }
+.wf-status.warn { background: rgba(243,180,75,.10); color: var(--warn); border: 1px solid rgba(243,180,75,.3); }
+.wf-ask { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 14px; background: var(--surface-2); }
+.wf-ask-q { margin: 0; font-weight: 600; font-size: 15px; }
+.wf-ask select { width: 100%; min-height: 40px; border-radius: 10px; background: var(--surface-3); color: var(--text); border: 1px solid var(--line); padding: 0 10px; font: inherit; }
+.wf-parts { display: flex; flex-direction: column; gap: 8px; }
+.wf-part-list { display: flex; flex-direction: column; gap: 6px; }
+.wf-part { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); cursor: pointer; }
+.wf-part input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.wf-part-ic { font-size: 20px; flex: none; }
+.wf-part-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wf-part-txt strong { font-size: 15px; }
+.wf-part-txt small { color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+.wf-part-txt em { font-style: normal; font-size: 12px; color: var(--ok); }
+.wf-part.needs .wf-part-txt em { color: var(--warn); }
+.wf-advanced { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
+.wf-advanced > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.wf-advanced[open] > summary { margin-bottom: 10px; }
+.wf-advanced > * + * { margin-top: 10px; }
+.wf-pack-add > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+#wf-save:disabled { opacity: .45; }
+/* Test run on the upload sheet */
+.wf-test { display: flex; flex-direction: column; gap: 8px; }
+.wf-test > .chip-btn { align-self: flex-start; }
+.wf-test-result { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; font-size: 14px; }
+.wf-test-result.busy { flex-direction: row; align-items: center; background: var(--surface-2); }
+.wf-test-result.good { background: rgba(70,209,127,.10); color: var(--text); }
+.wf-test-result.good strong { color: var(--ok); }
+.wf-test-result.bad { background: rgba(243,180,75,.10); border: 1px solid rgba(243,180,75,.3); }
+.wf-test-result.bad strong { color: var(--warn); }
+.wf-test-result p { margin: 0; color: var(--muted); }
+.wf-test-result img, .wf-test-result video { width: 100%; max-height: 340px; object-fit: contain; border-radius: 10px; background: #000; }

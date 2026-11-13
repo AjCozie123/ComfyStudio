@@ -2351,6 +2351,9 @@ def _combo_choices(oi, cls, name):
     return None
 
 
+_MODEL_EXT = re.compile(r"\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx)$", re.I)
+
+
 def use_installed_models(graph, oi):
     """Never stop a run because a model file isn't on this PC: use the closest model you have (same file elsewhere,
     your version of it, a near name), else the first one you have of that kind. A missing LoRA is switched off
@@ -2371,7 +2374,9 @@ def use_installed_models(graph, oi):
                         v["on"] = False
                         notes.append("LoRA %s isn't on this PC, so it was left out." % _base(v["lora"]))
                 continue
-            if not isinstance(v, str) or not _FILE_EXT.search(v):
+            if not isinstance(v, str) or not _MODEL_EXT.search(v):
+                continue                  # only model files: never a picture / video / audio you attached
+            if name in ("image", "video", "audio", "file", "path") or str(cls).startswith(("LoadImage", "LoadVideo", "LoadAudio", "VHS_Load")):
                 continue
             choices = _combo_choices(oi, cls, name)
             if not choices or v in choices:

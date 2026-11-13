@@ -4219,7 +4219,7 @@ function bindShell() {
     document.body.classList.toggle("wf-active", !!on);
     const card = (on && active && active.card) || {};
     /* Size: width/height inputs, a resolution label (MiniMax H3 AIO) or a megapixel rule (LTX). */
-    const hasSize = !!((s.width || []).length || s.res_label || card.size_rule);
+    const hasSize = !!((s.width || []).length || s.res_label || (s.megapixels || []).length || (s.size_combo || []).length || (s.aspect_combo || []).length || card.size_rule);
     /* Length: a frame count (LTX, Wan...) or seconds (MiniMax H3 AIO). */
     const hasLength = !!((s.length || []).length || (s.seconds || []).length);
     document.body.classList.toggle("wf-no-size", !!on && !hasSize);
@@ -6211,7 +6211,7 @@ function bindShell() {
     }
     const c = a.card || {}, s = c.slots || {};
     const r = new Set(["help"]);
-    const hasSize = !!((s.width || []).length || s.res_label || c.size_rule);
+    const hasSize = !!((s.width || []).length || s.res_label || (s.megapixels || []).length || (s.size_combo || []).length || (s.aspect_combo || []).length || c.size_rule);
     if (hasSize) r.add(c.media === "video" ? "size_video" : "size_image");
     if (c.media === "video" && ((s.length || []).length || (s.seconds || []).length)) r.add("length");
     if ((s.seed || []).length) r.add("seed");

@@ -761,22 +761,39 @@ def _consumers(graph):
 
 
 def _polarity(graph, cons, start):
-    """Walk downstream from a text encoder to find whether it feeds a positive or negative input."""
-    seen, stack = set(), [start]
+    """Walk downstream from a text encoder: does its text reach a positive or a negative input?
+    A ConditioningZeroOut output is an emptied copy (the common FLUX / Klein / LTX way to make a blank negative from
+    the positive), so it says nothing about this text and is not followed. Reaching a positive input wins."""
+    seen, stack, found = set(), [start], set()
     while stack:
         cur = stack.pop()
         if cur in seen:
             continue
         seen.add(cur)
         for nid, name in cons.get(cur, []):
+            if "zeroout" in str((graph.get(nid) or {}).get("class_type") or "").lower():
+                continue
             ln = name.lower()
             if ln in ("negative", "neg", "negative_conditioning", "conditioning_negative"):
-                return "negative"
-            if ln in ("positive", "pos", "positive_conditioning", "conditioning_positive", "conditioning"):
-                if ln != "conditioning":
-                    return "positive"
+                found.add("negative")
+                continue
+            if ln in ("positive", "pos", "positive_conditioning", "conditioning_positive"):
+                found.add("positive")
+                continue
             stack.append(nid)
-    return ""
+    return "positive" if "positive" in found else ("negative" if "negative" in found else "")
+
+
+_NOT_GEN_SIZE = re.compile(r"(Save|Preview|Mask|Solid|Crop|Pad|Upscale|Compare|Grid|Composite|Text|Font|Image(?:Scale|Resize))", re.I)
+
+
+def _gen_size_node(cls, oi):
+    """A node whose own width / height set the size of what is generated: it outputs a latent, conditioning, model or
+    video (MiniMax H3 / Wan image-to-video, ModelSamplingFlux, ...), and isn't a utility (mask, save, crop, upscale)."""
+    if not oi or cls not in oi or _NOT_GEN_SIZE.search(cls):
+        return False
+    outs = [str(o) for o in (oi[cls].get("output") or [])]
+    return any(o in ("LATENT", "CONDITIONING", "MODEL", "VIDEO") for o in outs)
 
 
 def _slot(nid, name, node, label=None):
@@ -848,9 +865,9 @@ def scan(graph, oi=None):
                 slots["scheduler"].append(_slot(nid, name, n, "Scheduler"))
             elif ln == "denoise" and isinstance(v, (int, float)):
                 slots["denoise"].append(_slot(nid, name, n, "Denoise"))
-            elif ln == "width" and isinstance(v, (int, float)) and ("latent" in cls.lower() or "empty" in cls.lower() or "size" in cls.lower() or "resolution" in title_l):
+            elif ln == "width" and isinstance(v, (int, float)) and ("latent" in cls.lower() or "empty" in cls.lower() or "size" in cls.lower() or "resolution" in title_l or _gen_size_node(cls, oi)):
                 slots["width"].append(_slot(nid, name, n, "Width"))
-            elif ln == "height" and isinstance(v, (int, float)) and ("latent" in cls.lower() or "empty" in cls.lower() or "size" in cls.lower() or "resolution" in title_l):
+            elif ln == "height" and isinstance(v, (int, float)) and ("latent" in cls.lower() or "empty" in cls.lower() or "size" in cls.lower() or "resolution" in title_l or _gen_size_node(cls, oi)):
                 slots["height"].append(_slot(nid, name, n, "Height"))
             elif ln in ("length", "num_frames", "frame_count", "frames", "video_frames") and isinstance(v, (int, float)):
                 slots["length"].append(_slot(nid, name, n, "Frames"))
@@ -1653,3 +1670,122 @@ def scan(graph, oi=None):
             notes.append("%s: %s isn't installed and nothing close was found. Pick a file under Models after saving, "
                          "or download it." % (slot_label, re.split(r"[\\/]", want)[-1]))
     return card
+
+
+
+# ------------------------------------------------------------------ more ways workflows set the prompt and the size
+_WXH = re.compile(r"(\d{3,5})\s*[x\u00d7*]\s*(\d{3,5})")
+_RATIO = re.compile(r"(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)")
+_SIZE_COMBO_NAMES = re.compile(r"^(resolution|size|dimensions?|preset|image_size|output_size|res|aspect_ratio|aspect|ratio)$", re.I)
+
+
+def _combo_options(oi, cls, name):
+    spec = dict(_input_specs(oi or {}, cls)).get(name)
+    if not isinstance(spec, (list, tuple)) or not spec:
+        return []
+    if isinstance(spec[0], list):
+        return [str(o) for o in spec[0]]
+    if len(spec) > 1 and isinstance(spec[1], dict) and isinstance(spec[1].get("options"), list):
+        return [str(o) for o in spec[1]["options"]]
+    return []
+
+
+_scan_more_base = scan
+
+
+def scan(graph, oi=None):
+    card = _scan_more_base(graph, oi)
+    c = card[0] if isinstance(card, tuple) else card
+    if not isinstance(c, dict):
+        return card
+    slots = c.setdefault("slots", {})
+    notes = c.setdefault("notes", [])
+    used = {(str(x.get("node")), x.get("input")) for k, v in slots.items() if isinstance(v, list) for x in v if isinstance(x, dict)}
+    # the prompt box built into the node that makes the picture / video (e.g. MiniMax H3 reference-to-video)
+    if not slots.get("prompt"):
+        cons = {}
+        for k2, n2 in graph.items():
+            for nm2, v2 in (n2.get("inputs") or {}).items():
+                if isinstance(v2, list) and len(v2) == 2:
+                    cons.setdefault(str(v2[0]), []).append((k2, nm2))
+        for nid, n in graph.items():
+            cls = n.get("class_type") or ""
+            # never the negative one (e.g. Krea 2 Edit has a positive and a negative encoder of the same kind)
+            if _polarity(graph, cons, nid) == "negative" or "negative" in _title(n).lower():
+                continue
+            for name, v in (n.get("inputs") or {}).items():
+                if isinstance(v, str) and name.lower() in ("prompt", "text", "positive", "positive_prompt") \
+                        and _gen_size_node(cls, oi) and (nid, name) not in used:
+                    slots["prompt"] = [_slot(nid, name, n, "Prompt")]
+                    notes = [x for x in notes if not x.startswith("No prompt box was found")]
+                    c["notes"] = notes
+                    break
+            if slots.get("prompt"):
+                break
+    have_size = bool(slots.get("width") or slots.get("res_label") or c.get("size_rule"))
+    for nid, n in graph.items():
+        cls = n.get("class_type") or ""
+        for name, v in (n.get("inputs") or {}).items():
+            if isinstance(v, list) or (nid, name) in used:
+                continue
+            ln = name.lower().split(".")[-1]
+            # "work at N megapixels" (ImageScaleToTotalPixels and friends): follows the size picked in the app
+            if ln == "megapixels" and isinstance(v, (int, float)):
+                slots.setdefault("megapixels", []).append(_slot(nid, name, n, "Megapixels"))
+            # a resolution / aspect dropdown: the app picks the option closest to the chosen size
+            elif isinstance(v, str) and _SIZE_COMBO_NAMES.match(ln):
+                opts = _combo_options(oi, cls, name)
+                sizes = [o for o in opts if _WXH.search(o)]
+                ratios = [o for o in opts if _RATIO.search(o) and not _WXH.search(o)]
+                if len(sizes) >= 2:
+                    slots.setdefault("size_combo", []).append(dict(_slot(nid, name, n, "Resolution"), options=sizes))
+                elif len(ratios) >= 2:
+                    slots.setdefault("aspect_combo", []).append(dict(_slot(nid, name, n, "Aspect ratio"), options=ratios))
+    if not have_size and (slots.get("megapixels") or slots.get("size_combo") or slots.get("aspect_combo")):
+        notes.append("Size: the size you pick in the app sets this workflow's %s." % ", ".join(
+            w for w, k in (("megapixels", "megapixels"), ("resolution choice", "size_combo"), ("aspect ratio", "aspect_combo"))
+            if slots.get(k)))
+    return card
+
+
+def _nearest_option(options, w, h, ratio_only=False):
+    import math
+    want_a, want_area, best, best_sc = math.log(w / float(h)), math.log(w * h), None, None
+    for o in options:
+        if ratio_only:
+            m = _RATIO.search(o)
+            if not m or float(m.group(2)) == 0:
+                continue
+            sc = abs(math.log(float(m.group(1)) / float(m.group(2))) - want_a)
+        else:
+            m = _WXH.search(o)
+            if not m:
+                continue
+            ow, oh = float(m.group(1)), float(m.group(2))
+            sc = abs(math.log(ow / oh) - want_a) * 3 + abs(math.log(ow * oh) - want_area)
+        if best_sc is None or sc < best_sc:
+            best, best_sc = o, sc
+    return best
+
+
+_fill_more_base = fill
+
+
+def fill(card, graph, values, out_prefix):
+    g, used_seed = _fill_more_base(card, graph, values, out_prefix)
+    s = card.get("slots") or {}
+    w, h = values.get("width"), values.get("height")
+    try:
+        w, h = int(w), int(h)
+    except (TypeError, ValueError):
+        return g, used_seed            # "Original" / no size chosen: the workflow keeps its own values
+    if w <= 0 or h <= 0:
+        return g, used_seed
+    for slot in s.get("megapixels") or []:
+        _set(g, slot, round(max(0.1, min(16.0, w * h / 1e6)), 2))
+    for key, ratio_only in (("size_combo", False), ("aspect_combo", True)):
+        for slot in s.get(key) or []:
+            pick = _nearest_option(slot.get("options") or [], w, h, ratio_only)
+            if pick:
+                _set(g, slot, pick)
+    return g, used_seed

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 title Comfy Studio setup
-cd /d "%~dp0"
+cd /d "%~dp0app"
 echo.
 echo  Comfy Studio setup
 echo  ------------------
@@ -23,16 +23,15 @@ if not exist data mkdir data
 rem 2) ComfyUI
 "%PYEXE%" -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8188/system_stats',timeout=3)" >nul 2>&1
 if errorlevel 1 (
-  echo  ComfyUI is not running. Start ComfyUI first ^(Comfy Studio finds its folders by itself^),
-  echo  then run this setup again. Get ComfyUI from https://www.comfy.org/download
-  pause & exit /b 1
+  echo  Note: ComfyUI isn't running right now. That's fine: start it whenever you like, and Comfy Studio
+  echo  connects to it and finds its folders by itself. No ComfyUI yet? https://www.comfy.org/download
 )
 rem 3) desktop shortcut
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Comfy Studio.lnk');$s.TargetPath='%PYW%';$s.Arguments='\"%~dp0ComfyStudio.pyw\"';$s.WorkingDirectory='%~dp0';$s.IconLocation='%~dp0comfy_studio.ico';$s.Save()"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\Comfy Studio.lnk');$s.TargetPath='%PYW%';$s.Arguments='\"%~dp0app\ComfyStudio.pyw\"';$s.WorkingDirectory='%~dp0app';$s.IconLocation='%~dp0app\comfy_studio.ico';$s.Save()"
 rem the taskbar shows the Comfy Studio logo (not Python) when the shortcut carries the app's identity
 for /f "delims=" %%D in ('powershell -NoProfile -Command "[Environment]::GetFolderPath('Desktop')"') do set "DESK=%%D"
-"%PYEXE%" "%~dp0tools\set_shortcut_appid.py" "%DESK%\Comfy Studio.lnk" >nul 2>&1
-echo  Done. Starting Comfy Studio...
-wscript.exe "%~dp0start_app.vbs"
+"%PYEXE%" "%~dp0app\tools\set_shortcut_appid.py" "%DESK%\Comfy Studio.lnk" >nul 2>&1
+echo  Done. A "Comfy Studio" shortcut is on your desktop. Starting Comfy Studio...
+wscript.exe "%~dp0app\start_app.vbs"
 echo  Open the Workflows page: each engine shows what it needs and a Download button for missing files.
 timeout /t 6 >nul

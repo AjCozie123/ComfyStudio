@@ -94,7 +94,8 @@ def _git(*args, timeout=60):
 
 
 def is_git_install():
-    return os.path.isdir(os.path.join(HERE, ".git"))
+    # the app runs from <download>/app; a git clone keeps .git one folder up (older layouts: in the same folder)
+    return os.path.isdir(os.path.join(HERE, ".git")) or os.path.isdir(os.path.join(os.path.dirname(HERE), ".git"))
 
 
 def _git_status(out, fetch):

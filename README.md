@@ -3,6 +3,31 @@
 A simple, clean desktop front end for **ComfyUI** that runs on your own PC. Pick an engine (MiniMax H3, Krea 2,
 FLUX.2 Klein, MOSS, Qwen Image, LTX, or any workflow you upload), write a prompt, and go.
 
+## Get started
+
+### Method 1: Download (easiest)
+1. At the top of this page click the green **Code** button, then **Download ZIP**.
+2. Unzip it anywhere, for example `C:\ComfyStudio`.
+3. Double-click **Install Comfy Studio.bat**. It sets everything up and puts a **Comfy Studio** shortcut on your
+   desktop, then opens the app.
+
+### Method 2: With Git (easy updates)
+1. Click the green **Code** button, stay on the **Local** tab, choose **HTTPS** and copy the link.
+2. Open **Command Prompt** in the folder where you want it (for example `C:\`) and run:
+   ```
+   git clone https://github.com/AjCozie123/ComfyStudio.git
+   ```
+3. Open the new **ComfyStudio** folder and double-click **Install Comfy Studio.bat**.
+
+To update later, open Command Prompt in that folder and run `git pull` (or just use the app's own Update button).
+
+### Then, inside the app
+Open **Workflows**. Every engine shows what it still needs, and the app downloads it for you with one click: the
+models from their official pages and any ComfyUI node packs. You never have to hunt for files.
+
+**You only ever need two files:** **Install Comfy Studio.bat** (once) and **Start Comfy Studio.bat** (or the desktop
+shortcut). Everything else lives in the `app` folder, and you can ignore it.
+
 ## What you need
 - Windows 10/11 with an NVIDIA GPU (8 GB VRAM or more is best; MiniMax H3 video also needs about 32 GB of RAM)
 - [ComfyUI](https://www.comfy.org/download) (portable or desktop), **updated to the latest version**, running.
@@ -10,12 +35,7 @@ FLUX.2 Klein, MOSS, Qwen Image, LTX, or any workflow you upload), write a prompt
 - Python 3.10+ ([python.org](https://www.python.org/downloads/), tick "Add python.exe to PATH")
 - Optional: [Git for Windows](https://git-scm.com/download/win). Without it, node packs download as zips.
 
-## Install
-1. Download the latest release zip and unzip it anywhere (for example `C:\ComfyStudio`).
-2. Start ComfyUI.
-3. Double-click **Install Comfy Studio.bat**. It checks Python and ComfyUI, adds a desktop shortcut and starts the app.
-
-Comfy Studio finds ComfyUI's folders by itself (saved in `data\settings.json`).
+Comfy Studio finds ComfyUI's folders by itself once ComfyUI is running (saved in `app\data\settings.json`).
 
 ## Node packs, models and engines
 Open **Workflows**.

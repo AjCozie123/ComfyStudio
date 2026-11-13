@@ -1412,3 +1412,7 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
   background: rgba(255, 196, 0, .10); border: 1px solid rgba(255, 196, 0, .35); color: #ffe9a8; font-size: 12.5px; line-height: 1.35; }
 .size-warn.hidden { display: none; }
 .size-warn .chip-btn { flex: 0 0 auto; }
+
+/* ===== audit 2026-11-13: readable section labels, bigger logo tap area ===== */
+.pop-label { color: #a2a4ab; }                 /* was 3.4:1 against the panels; now about 6:1 */
+#brand { padding: 4px; margin: -4px; }         /* 26 px -> 34 px to tap, same look */

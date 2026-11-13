@@ -7,7 +7,7 @@ Talks to ComfyUI at 127.0.0.1:8188. Does not start or stop ComfyUI.
 """
 from __future__ import annotations
 
-import hashlib, hmac, io, ipaddress, json, logging, os, re, secrets, shutil, socket, struct
+import gzip, hashlib, hmac, io, ipaddress, json, logging, os, re, secrets, shutil, socket, struct
 import sys, threading, time, traceback, uuid, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import ThreadingMixIn
@@ -546,7 +546,15 @@ def gallery_all():
                     latest[gid]["fav"] = bool(rec["fav"])
             items = list(latest.values())
     items.sort(key=lambda x: x.get("t") or 0, reverse=True)
-    return items
+    seen, out = set(), []
+    for it in items:                      # newest first: an older entry for the same file is a leftover copy
+        key = ((it.get("subfolder") or "") + "/" + (it.get("filename") or "")).lower() if it.get("filename") else None
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(it)
+    return out
 
 
 # ------------------------------------------------------------------ lineage
@@ -3313,9 +3321,19 @@ class H(BaseHTTPRequestHandler):
     def send_bytes(self, code, body, ctype="application/json", headers=None):
         if isinstance(body, str):
             body = body.encode()
+        # text (JSON, JS, CSS, HTML) is compressed when the browser accepts it: the library list goes from ~800 KB to
+        # ~100 KB, which matters on a phone over Tailscale
+        gz = False
+        if len(body) > 2048 and ctype.split(";")[0] in ("application/json", "text/javascript", "text/css", "text/html") \
+                and "gzip" in (self.headers.get("Accept-Encoding") or "").lower():
+            body = gzip.compress(body, compresslevel=5)
+            gz = True
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         if not any((headers or {}) and k.lower() == "cache-control" for k in (headers or {})):
             if ctype.startswith(("application/json", "text/html")):
                 self.send_header("Cache-Control", "no-store")
@@ -3409,7 +3427,11 @@ class H(BaseHTTPRequestHandler):
             return self.send_bytes(404, "not found", "text/plain")
         ext = os.path.splitext(path)[1].lower()
         ctype = {".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon"}.get(ext, "application/octet-stream")
-        return self.send_bytes(200, open(path, "rb").read(), ctype, {"Cache-Control": "no-store"})
+        # app.js / app.css are asked for as ?v=<version>, and index.html (never cached) names a new version whenever
+        # they change: so a versioned copy can be kept by the browser instead of re-downloading ~500 KB every time
+        versioned = ext in (".js", ".css") and "v=" in urllib.parse.urlsplit(self.path).query
+        cache = "public, max-age=31536000, immutable" if versioned else "no-store"
+        return self.send_bytes(200, open(path, "rb").read(), ctype, {"Cache-Control": cache})
 
     def _get(self):
         if not self.network_ok():
@@ -3701,8 +3723,13 @@ class H(BaseHTTPRequestHandler):
                     continue
                 if fav_only and not it.get("fav"):
                     continue
-                items.append(LIB.decorate(it))
-                if len(items) >= 200:
+                d = LIB.decorate(it)
+                # the page never reads assist_preview, and prompt_sent only as a fall-back for prompt
+                d.pop("assist_preview", None)
+                if d.get("prompt_sent") == d.get("prompt"):
+                    d.pop("prompt_sent", None)
+                items.append(d)
+                if len(items) >= 5000:       # was 200: older pictures were missing from the Library
                     break
             return self.j({"items": items})
         if path in ("/api/image", "/api/thumb", "/api/download"):

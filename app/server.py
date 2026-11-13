@@ -876,6 +876,20 @@ def krea_swap_pick(data, sw):
     return []
 
 
+def lora_trigger_prompt(prompt, loras):
+    """Auto-picked LoRAs picked by their name can need their trigger word: put it in front of the prompt sent to the
+    model (the person's prompt box isn't changed). Only short triggers the prompt doesn't already have."""
+    adds = []
+    low = (prompt or "").lower()
+    for l in loras or []:
+        t = l.get("add_trigger") if isinstance(l, dict) and l.get("auto") else None
+        if isinstance(t, str):
+            t = " ".join(t.split())[:40]
+            if t and t.lower() not in low and t.lower() not in [a.lower() for a in adds]:
+                adds.append(t)
+    return (", ".join(adds[:3]) + ", " + (prompt or "")) if adds else prompt
+
+
 def server_error_text(e):
     """What the person sees when something unexpected breaks: the actual problem, short, and where the details are."""
     what = ("%s: %s" % (type(e).__name__, e)).strip().rstrip(":")[:220]
@@ -1655,6 +1669,7 @@ def submit_workflow_job(data):
         except Exception:
             prompt_sent = prompt
     prompt_sent = PD.translate(prompt_sent, dialect)
+    prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
     pe_on = bool(card.get("media") in ("image", "video") and prompt and data.get("pe") and card.get("enhance", True) is not False
                  and not (card.get("media") == "image" and (data.get("images") or []))
                  and (slots.get("prompt") or []))
@@ -1748,7 +1763,14 @@ def submit_workflow_job(data):
         except Exception as e:
             log.info("manual overrides skipped: %s", e)
     if inpaint and inpaint.get("box"):
-        inpaint["noise_mask"] = inpaint_noise_mask(g, inpaint, pre_id)
+        try:
+            inpaint["noise_mask"] = inpaint_noise_mask(g, inpaint, pre_id)
+        except Exception as e:
+            log.exception("inpaint area")
+            # running without it would redraw the whole picture, so stop with a reason instead
+            raise ValueError("Couldn't prepare the inpaint area (%s: %s). Close and reopen Comfy Studio, then try "
+                             "again; if it keeps happening, app.log in the data folder has the details."
+                             % (type(e).__name__, str(e)[:120]))
     if native_set and native_set[0] in g:
         g[native_set[0]]["inputs"]["image"] = native_set[1]
         if "channel" in g[native_set[0]]["inputs"]:
@@ -2576,6 +2598,7 @@ def submit_job(data):
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
+        prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=False)
     else:
         images = list(data.get("images") or [])
@@ -2651,6 +2674,7 @@ def submit_job(data):
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
+        prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
         if inpaint and inpaint.get("box"):
             # without this the model may redraw the whole cut-out (new framing, people gone); with it, only your area
@@ -3512,7 +3536,7 @@ class H(BaseHTTPRequestHandler):
                 dirs = [d for d in (fp.get("loras") or []) if isinstance(d, str)]
             except Exception:
                 dirs = []
-            return self.j({"items": LI.build(names, dirs, DATA), "engine_family": LI.ENGINE_FAMILY})
+            return self.j(dict({"items": LI.build(names, dirs, DATA), "engine_family": LI.ENGINE_FAMILY}, **LI.client_lists()))
         if path == "/api/loras":
             try:
                 oi = object_info()

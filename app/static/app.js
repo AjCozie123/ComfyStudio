@@ -3263,7 +3263,8 @@ let _alertTimer = 0;
 showError = function (msg) {
   const box = $("dock-alert");
   if (state.view !== "create" || !box) { toast(msg, 3200); return; }
-  $("error").textContent = msg;
+  $("error").textContent = msg || "Something went wrong (no details were sent back).";
+  $("error").classList.remove("hidden");   // Generate hides the text line; without this the box showed empty
   box.classList.remove("hidden");
   clearTimeout(_alertTimer);
   _alertTimer = setTimeout(hideAlert, 9000);
@@ -6107,11 +6108,11 @@ function bindShell() {
   });
   $("lora-add-btn").addEventListener("click", addFromSearch);
   $("lora-search").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addFromSearch(); } });
-  window.__addLora = (name) => {
+  window.__addLora = (name, strength) => {
     const list = load();
     if (list.some((l) => l.name === name)) { toast("Already added"); return; }
     if (list.length >= 6) { toast("6 LoRAs at most"); return; }
-    list.push({ name, strength: 1.0 });
+    list.push({ name, strength: typeof strength === "number" ? strength : 1.0 });
     save(list);
     render();
   };
@@ -7889,7 +7890,7 @@ function bindShell() {
 /* ===== Auto LoRAs + LoRA search with folders v20261112s =====
    Each LoRA's model family and trigger words come from the file itself (or its folder / name), so this works for
    anyone's LoRAs. With "Auto-pick" on, LoRAs made for the loaded engine's model are added when the prompt uses
-   their trigger words or a distinctive word from their name (at most 3). A LoRA whose model can't be told is never
+   their trigger words or the words of their name (rules in static/lora_match.js). A LoRA whose model can't be told is never
    auto-picked; it can still be added by hand from the search. */
 (function () {
   let INDEX = null, FAMMAP = {};
@@ -7900,7 +7901,7 @@ function bindShell() {
     moss: "MOSS", sdxl: "SDXL", sd15: "SD 1.5", ltx: "LTX", wan: "Wan", hunyuan: "Hunyuan", z_image: "Z-Image" };
   async function ensureIndex() {
     if (INDEX) return INDEX;
-    try { const d = await api("/api/loras/index"); INDEX = d.items || []; FAMMAP = d.engine_family || {}; } catch (e) { INDEX = []; }
+    try { const d = await api("/api/loras/index"); INDEX = d.items || []; FAMMAP = d.engine_family || {}; GENERIC = new Set(d.generic || []); } catch (e) { INDEX = []; }
     return INDEX;
   }
   function engineFam() {
@@ -7910,39 +7911,16 @@ function bindShell() {
     return FAMMAP[c.family] || null;
   }
   const isOn = () => { try { return localStorage.getItem("cs.lora.auto") === "1"; } catch (e) { return false; } };
-  function escRe(t) { return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  let GENERIC = new Set();
+  // picks from the prompt (static/lora_match.js): whole phrases only, ordinary words never alone, "no X" respected,
+  // one copy per LoRA, at most one style and one person, strength from the maker or the kind, lower when stacked
   function matches() {
-    if (!isOn() || !INDEX) return [];
+    if (!isOn() || !INDEX || !window.LoraMatch) return [];
     const fam = engineFam();
     if (!fam) return [];
-    const p = ($("prompt") && $("prompt").value || "").toLowerCase();
+    const p = ($("prompt") && $("prompt").value || "");
     if (!p.trim()) return [];
-    const out = [];
-    INDEX.forEach((it) => {
-      if (it.family !== fam || dismissed.has(it.name)) return;
-      let score = 0, why = "";
-      (it.triggers || []).forEach((t) => {
-        const tl = t.toLowerCase().trim();
-        if (tl.length >= 3 && new RegExp("(^|[^a-z0-9])" + escRe(tl) + "($|[^a-z0-9])").test(p)) { score += 3; why = why || t; }
-      });
-      (it.tokens || []).forEach((t) => {
-        if (new RegExp("(^|[^a-z0-9])" + escRe(t) + "($|[^a-z0-9])").test(p)) { score += 1; why = why || t; }
-      });
-      if (score > 0) out.push({ name: it.name, strength: 1.0, auto: true, why, score, folder: it.folder });
-    });
-    // checkpoints of one training run (name_000250, name_000500 ...) count as one LoRA: keep the latest step
-    const series = (n) => {
-      const m = short(n).match(/^(.*?)[_\-.]?(?:e|ep|epoch|step|s)?(\d{2,})$/i);
-      return m ? { key: (String(n).split(/[\\/]/).slice(0, -1).join("/") + "/" + m[1]).toLowerCase(), step: Number(m[2]) }
-               : { key: String(n).toLowerCase(), step: 0 };
-    };
-    const best = {};
-    out.forEach((o) => {
-      const s = series(o.name);
-      const cur = best[s.key];
-      if (!cur || o.score > cur.score || (o.score === cur.score && s.step > cur._step)) best[s.key] = Object.assign(o, { _step: s.step });
-    });
-    return Object.values(best).sort((a, b) => b.score - a.score).slice(0, 3);
+    return window.LoraMatch.pick(p, INDEX, fam, { dismissed, generic: GENERIC });
   }
   window.__autoLoras = matches;
 
@@ -7962,9 +7940,12 @@ function bindShell() {
         + '<button type="button" class="chip-btn lora-keep">Keep</button><button type="button" class="icon-btn sm" aria-label="Don\u2019t use">\u2715</button>';
       row.querySelector(".lora-name").textContent = short(a.name);
       row.querySelector(".lora-name").title = a.name;
-      row.querySelector(".lora-why").textContent = "\u201c" + a.why + "\u201d";
-      row.querySelector(".lora-keep").addEventListener("click", () => { window.__addLora && window.__addLora(a.name); });
-      row.querySelector(".icon-btn").addEventListener("click", () => { dismissed.add(a.name); renderAuto(); window.__syncLoraPill && window.__syncLoraPill(); });
+      row.querySelector(".lora-why").textContent = "\u201c" + a.why + "\u201d \u00b7 " + a.strength.toFixed(2)
+        + (a.add_trigger ? " \u00b7 adds \u201c" + a.add_trigger + "\u201d" : "");
+      row.querySelector(".lora-why").title = "Picked because your prompt says \u201c" + a.why + "\u201d. Strength "
+        + a.strength.toFixed(2) + (a.add_trigger ? ". Its trigger word is added in front of the prompt sent to the model (your box isn\u2019t changed)." : ".");
+      row.querySelector(".lora-keep").addEventListener("click", () => { window.__addLora && window.__addLora(a.name, a.strength); });
+      row.querySelector(".icon-btn").addEventListener("click", () => { dismissed.add(a.group || a.name); renderAuto(); window.__syncLoraPill && window.__syncLoraPill(); });
       box.appendChild(row);
     });
   }
@@ -7999,6 +7980,7 @@ function bindShell() {
   $("lora-search").addEventListener("input", async () => { await ensureIndex(); clearTimeout(t); t = setTimeout(renderResults, 120); });
   $("lora-auto").addEventListener("change", async () => {
     try { localStorage.setItem("cs.lora.auto", $("lora-auto").checked ? "1" : "0"); } catch (e) {}
+    dismissed.clear();   // turning Auto-pick off and on again brings back the ones you crossed out
     await ensureIndex();
     renderAuto();
     window.__syncLoraPill && window.__syncLoraPill();

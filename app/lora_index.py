@@ -1,12 +1,19 @@
 """What each LoRA on this PC is for, so the app can pick LoRAs from the words in a prompt.
 
-Works for anyone's LoRAs, labelled or not:
-  * the .safetensors header (read without loading the file) usually says the base model it was trained on
-    (ss_base_model_version / modelspec.architecture) and its trigger words (modelspec.trigger_phrase, trigger words,
-    or the training tags in ss_tag_frequency)
-  * otherwise the folder and file name are used (e.g. 'Krea2\\something.safetensors')
-  * a LoRA whose model family can't be told is never auto-loaded (it can still be added by hand)
-Results are cached in data/lora_index.json by path + size + date.
+Works for anyone's LoRAs, labelled or not. For every LoRA it collects:
+  * the model family it was made for: the .safetensors header (ss_base_model_version / modelspec.architecture),
+    else the folder or file name. A LoRA whose family can't be told is never auto-picked.
+  * its trigger words: the header (modelspec.trigger_phrase, ss_tag_frequency ...), plus the info files other tools
+    keep next to LoRAs (LoRA Manager <name>.metadata.json, Civitai Helper <name>.civitai.info, A1111 <name>.json)
+    and a lora_cards.json in the LoRA folder ({"folder/file.safetensors": {"title", "triggers", "tags", ...}})
+  * the phrases it can be picked by (its trigger words, its name read as words, its title), what kind of LoRA it is,
+    and a starting strength (the maker's recommended weight when one is written down, else one by kind)
+  * which LoRAs are copies of each other (the _comfy copy, the training checkpoints of one run, v1/v2), so only one
+    of them is used
+Speed LoRAs (turbo / lightning / distilled), tool LoRAs (control, inpaint, relight, swaps, edits) and sliders (where
+the sign of the strength matters) are never auto-picked: they belong to a workflow, not to the words of a prompt.
+The matching itself runs in the page (static/lora_match.js) so the picks update while you type.
+Header reads are cached in data/lora_index.json by path + size + date.
 """
 from __future__ import annotations
 
@@ -32,15 +39,71 @@ ENGINE_FAMILY = {  # engine card family -> key
     "FLUX.2 Klein": "flux2", "FLUX.3 Klein": "flux2", "FLUX.1": "flux1", "Flux": "flux1", "MOSS": "moss",
     "SDXL": "sdxl", "LTX Video": "ltx", "Wan": "wan", "Hunyuan Video": "hunyuan", "Hunyuan": "hunyuan",
 }
-# words too common to pick a LoRA by
-STOP = set("""lora loras model models style styles v1 v2 v3 v4 v5 final best real realism realistic photo photoreal
-people person woman women man men girl boy edit general turbo lightning fast speed step steps rank fp16 bf16 fp8 int8
-comfyui comfy diffusers kohya ostris aitoolkit the and with for from high quality detail details detailer enhance
-enhancer base dev pro version new old test epoch lowres image images video videos t2v i2v r2v t2i flux krea qwen
-minimax wan ltx sdxl pony moss safetensors""".split())
-GENERIC_TAGS = set("""1girl 1boy solo female male woman man girl boy person people looking at viewer smile
-long hair short hair blonde hair black hair brown hair photo realistic photorealistic portrait upper body full body
-simple background white background indoors outdoors standing sitting""".split())
+
+# words in LoRA names that say nothing about what the LoRA does (model names, versions, trainer words)
+NAME_NOISE = set("""lora loras model models v1 v2 v3 v4 v5 v6 final rank step steps epoch fp16 bf16 fp8 int8 comfyui comfy
+diffusers kohya ostris aitoolkit safetensors base dev pro version new old test copy official standard mlx by the and for
+of with flux flux1 flux2 klein klein9b kleinbase kleinbase9b 9b 4b 22b 19b f2k f2k9b f2k9bv1 k9b k9 kl fk fluxklein
+fluxklein9b flux2klein flux2k9b krea krea2 kr2 kr qwen qwen2 ltx ltx2 ltx23 minimax mmh3 h3 mm minmaxh3 sdxl pony moss
+wan hunyuan zimage am tk ema pruned resized avg prodigy adamw patched extracted refined lora_ helper enhancer
+turbo lightning lightx2v distilled distill dmd dmd2 lcm hyper fast speed ckpt redmond""".split())
+
+# words too ordinary to pick a LoRA on their own (they can still pick one as part of a longer phrase)
+GENERIC = set("""a an the this that his her their its my your our of in on at to by for from with and or as into onto over under
+make made making change changed turn add put give keep set use show let be is are was it them him she he they image picture
+photo photos photograph photography pic shot shots camera phone selfie still frame scene view style styled look looks
+looking real realistic realism natural raw high quality detail details detailed sharp ultra hyper super best good nice
+person people woman women man men girl girls boy boys lady guy female male young old adult character subject someone
+face head hair eye eyes nose mouth lip lips ear ears neck shoulder shoulders arm arms hand hands finger fingers leg legs
+foot feet back front side body skin chest belly waist hip hips thigh thighs knee knees
+light lights lighting dark darker bright brighter shadow shadows color colour colors tone tones warm cool soft hard
+size big bigger large larger small smaller tiny huge long short tall wide thin thick fat slim full half
+standing sitting lying walking running holding wearing posing pose poses down up left right top bottom close closer
+inside outside indoor outdoor room house street city road beach field forest park garden sky water sea night day
+morning evening sunset sunrise rain snow background foreground white black red blue green yellow pink purple orange
+brown grey gray gold silver new fake only through see wet dry dirty clean direction motion move moving
+clothes clothing outfit dress shirt top pants jeans skirt shorts jacket coat hat shoe shoes boots bag
+bikini swimsuit lingerie underwear bra panties socks gloves glasses sunglasses
+breast breasts boob boobs ass butt buttock buttocks nipple nipples penis vagina pussy crotch cleavage bust abs
+muscle muscles muscular curvy thick thickness slim facial expression covered bounce bouncing crowded crowd zoom
+micro mini cinematic film movie vintage retro
+anatomy beautiful pretty cute hot sexy model art artistic painting drawing render illustration""".split())
+
+KIND_DEFAULT_STRENGTH = {"character": 1.0, "style": 0.8, "clothing": 0.85, "body": 0.75, "pose": 0.8, "concept": 0.85,
+                         "quality": 0.7}
+
+_RE_UTILITY = re.compile(r"turbo|lightning|lightx2v|distill|dmd2?|\blcm\b|hyper[-_ ]?sd|\d+[-_ ]?steps?\b|speed|"
+                         r"\bfast\b|accelerat", re.I)
+_RE_SLIDER = re.compile(r"slider|loraholic", re.I)
+_RE_TOOL = re.compile(r"control|depth|canny|refcontrol|pose[-_ ]?transfer|\bic[-_ ]lora|inpaint|outpaint|uncrop|"
+                      r"relight|delight|controllight|restore|upscal|consist|swap|bfs_|\bbfs\b|anything2real|anime2real|"
+                      r"real2anime|change[-_ ]scene|\bedit\b|_edit|edit_|remover?\b|remove[-_ ]|multiple[-_ ]angles|"
+                      r"cameraman|camera[-_ ]control|dolly|jib|motion[-_ ]?(booster|track)|ref2va|ref2v|fl2v|"
+                      r"transition|henshin|union|\bhdr\b|viggle|\bfix\b|\bsft\b|id[-_ ]lora|sun[-_ ]direction|"
+                      r"edit(?!orial)|reference|zoom|"
+                      r"matching[-_ ]?pose|maching[-_ ]?pose|mannequin|inflate|infl8|optimizer|\.pt$", re.I)
+_RE_QUALITY = re.compile(r"realism|realistic|real[-_ ]?skin|ultra[-_ ]?real|detailer|\bdetail|dpo\b|fidelity|enhance|"
+                         r"crisp|refusal|uncensored|aio\b|nsfw[-_ ]?aio|sharpen", re.I)
+_RE_STYLE = re.compile(r"style|anime|illustrat|painting|film|photograph|cinemat|redmond|analog|aesthetic|comic|cartoon|"
+                       r"claymation|ghibli|vintage|retro|\d0s|grainy|horror|thriller|sci[-_ ]?fi|neon|cyber|pencil|"
+                       r"simpsons|spider[-_ ]verse|3d ?render|snapshot|cctv|nokia|iphone|phone[-_ ]photo|instagram|"
+                       r"candid|selfie|playboy|melancholy|vanguard", re.I)
+_RE_CLOTHING = re.compile(r"bikini|lingerie|dress|saree|sari\b|kameez|salwar|sandal|shoe|outfit|cloth|towel|panties|"
+                          r"thong|sheer|see[-_ ]?through|transparent|cosplay|uniform|stocking|corset|swimsuit", re.I)
+_RE_POSE = re.compile(r"pose|posing|lying|kneel|squat|bent|from[-_ ]behind|rear[-_ ]view|face[-_ ]?down", re.I)
+_FOLDER_KIND = [  # folder words -> kind
+    (re.compile(r"turbo|lightning|speed", re.I), "utility"),
+    (re.compile(r"slider", re.I), "slider"),
+    (re.compile(r"body ?control|anatomy|body", re.I), "body"),
+    (re.compile(r"control|edit|relight|upscal|swap|anything2real|restore", re.I), "tool"),
+    (re.compile(r"face lora|people|character|person|celeb", re.I), "character"),
+    (re.compile(r"style|anime|art", re.I), "style"),
+    (re.compile(r"cloth|outfit|wear", re.I), "clothing"),
+    (re.compile(r"pose", re.I), "pose"),
+    (re.compile(r"anatomy|body", re.I), "body"),
+    (re.compile(r"realism|quality", re.I), "quality"),
+]
+NEVER_AUTO = {"utility", "tool", "slider"}
 
 MAX_HEADER = 32 * 1024 * 1024
 
@@ -69,16 +132,50 @@ def family_of(text):
     return None
 
 
-def _tokens(name):
-    stem = re.sub(r"\.(safetensors|ckpt|pt|bin)$", "", os.path.basename(name), flags=re.I)
-    stem = re.sub(r"([a-z])([A-Z])", r"\1 \2", stem)
+def _stem_name(name):
+    return re.sub(r"\.(safetensors|ckpt|pt|bin)$", "", os.path.basename(name.replace("\\", "/")), flags=re.I)
+
+
+def _split_words(text):
+    """'2000sCrimeThriller_Klein9b' -> ['2000s', 'crime', 'thriller', 'klein9b'] (lowercase)."""
+    t = re.sub(r"%20", " ", text or "")
+    t = re.sub(r"([a-z])([A-Z])", r"\1 \2", t)
+    t = re.sub(r"([A-Z])([A-Z][a-z])", r"\1 \2", t)
+    t = re.sub(r"(\d)([A-Z][a-z]{2,})", r"\1 \2", t)   # '9B20Sling' -> '9B20 Sling'
+    return [w.lower() for w in re.split(r"[^A-Za-z0-9]+", t) if w]
+
+
+def name_words(name):
+    """The words of a LoRA's file name that say what it does ('Greek_Sandals_V4__Klein__epoch_3' -> greek sandals)."""
     out = []
-    for w in re.split(r"[^A-Za-z0-9]+", stem):
-        w = w.lower()
-        if len(w) >= 4 and w not in STOP and not re.fullmatch(r"(v|e|s|r|step|rank)?\d+[a-z]?", w) \
-                and not re.fullmatch(r"(bf|fp|int)\d+", w):
+    # family words glued into a name ('micro-bikiniflux2v2') come apart
+    stem = re.sub(r"(?i)(flux\.?[12]?|klein|krea[ _]?2?|qwen|minimax|mmh3|ltx)", " ", _stem_name(name))
+    for w in _split_words(stem):
+        if w in NAME_NOISE or len(w) < 2:
+            continue
+        if re.fullmatch(r"\d{2,4}s", w) or re.fullmatch(r"(19|20)\d\d", w):   # 1980s, 90s, 2007: keep
             out.append(w)
+            continue
+        if re.fullmatch(r"3d|2d|2k|4k|8k", w):
+            out.append(w)
+            continue
+        if re.fullmatch(r"(v|e|s|r|ep|step|rank|epoch|c|ckpt)?\d+[a-z]?\d*", w) or re.fullmatch(r"\d+(steps?|p|k)", w) or re.fullmatch(r"(bf|fp|int)\d+", w):
+            continue
+        if len(w) >= 12 and re.search(r"\d", w) and re.search(r"[a-z]", w):   # hashes like CN19PKQ6VAVYXG...
+            continue
+        if len(w) == 2 and not re.fullmatch(r"3d|2d|tv|ai", w):
+            continue
+        out.append(w)
     return out[:6]
+
+
+def _tokens(name):  # kept for older clients: single distinctive words of the name
+    return [w for w in name_words(name) if len(w) >= 4 and w not in GENERIC][:6]
+
+
+def _clean_trigger(t):
+    t = re.sub(r"\s+", " ", str(t or "")).strip().strip(",.;")
+    return t if 2 <= len(t) <= 80 else ""
 
 
 def _triggers(meta):
@@ -87,7 +184,7 @@ def _triggers(meta):
         v = meta.get(k)
         if v:
             trig += [x.strip() for x in re.split(r"[,;\n]", v) if x.strip()]
-    # training tags: the most frequent tag is often the trigger word (only if it isn't a generic tag)
+    # training tags: the most frequent tag is often the trigger word (only if it isn't an ordinary word)
     tf = meta.get("ss_tag_frequency")
     if tf:
         try:
@@ -96,46 +193,226 @@ def _triggers(meta):
                 for tag, c in (ds or {}).items():
                     counts[tag.strip()] = counts.get(tag.strip(), 0) + int(c)
             for tag, _c in sorted(counts.items(), key=lambda x: -x[1])[:2]:
-                if tag.lower() not in GENERIC_TAGS and len(tag) >= 3:
+                if tag.lower() not in GENERIC and len(tag) >= 3 and len(tag.split()) <= 6:
                     trig.append(tag)
         except Exception:
             pass
+    return _uniq(trig, 6)
+
+
+def _uniq(items, n):
     seen, out = set(), []
-    for t in trig:
-        if t.lower() not in seen and len(t) <= 60:
+    for t in items:
+        t = _clean_trigger(t)
+        if t and t.lower() not in seen:
             seen.add(t.lower())
             out.append(t)
-    return out[:6]
+    return out[:n]
+
+
+def _num(v):
+    try:
+        f = float(v)
+        return f if 0.1 <= f <= 1.5 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def strength_hint(*texts):
+    """A recommended weight written in a name or description ('0.5-1.0str', 'strength: 0.8', 'weight 0.6~0.8')."""
+    for t in texts:
+        t = str(t or "")
+        m = re.search(r"(\d(?:\.\d+)?)\s*[-~]\s*(\d(?:\.\d+)?)\s*str", t, re.I)
+        if m and _num(m.group(1)) and _num(m.group(2)):
+            return round((float(m.group(1)) + float(m.group(2))) / 2, 2)
+        m = re.search(r"(?:strength|weight)s?\s*(?:of|:|=|at|around|between)?\s*(\d(?:\.\d+)?)(?:\s*(?:-|~|to)\s*(\d(?:\.\d+)?))?",
+                      t, re.I)
+        if m and _num(m.group(1)):
+            a = float(m.group(1))
+            b = _num(m.group(2)) if m.group(2) else None
+            return round((a + b) / 2, 2) if b else a
+    return None
+
+
+def sidecar_info(full):
+    """Trigger words, tags, recommended weight and description from the info files other tools keep next to a LoRA."""
+    base = re.sub(r"\.(safetensors|ckpt|pt|bin)$", "", full, flags=re.I)
+    info = {"triggers": [], "tags": [], "weight": None, "about": "", "title": ""}
+    for path, kind in ((base + ".metadata.json", "lm"), (base + ".civitai.info", "civ"), (base + ".json", "a1111")):
+        try:
+            if not os.path.isfile(path) or os.path.getsize(path) > 4 * 1024 * 1024:
+                continue
+            d = json.load(open(path, encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        if kind == "lm":   # ComfyUI LoRA Manager
+            civ = d.get("civitai") or {}
+            info["triggers"] += list(civ.get("trainedWords") or [])
+            info["tags"] += [t for t in (d.get("tags") or []) if isinstance(t, str)]
+            tips = d.get("usage_tips")
+            try:
+                tips = json.loads(tips) if isinstance(tips, str) else (tips or {})
+            except ValueError:
+                tips = {}
+            info["weight"] = info["weight"] or _num((tips or {}).get("strength"))
+            info["about"] = info["about"] or str(d.get("modelDescription") or civ.get("description") or "")
+            info["title"] = info["title"] or str((civ.get("model") or {}).get("name") or "")
+        elif kind == "civ":   # Civitai Helper (A1111 / Forge)
+            info["triggers"] += list(d.get("trainedWords") or [])
+            info["tags"] += [t for t in ((d.get("model") or {}).get("tags") or []) if isinstance(t, str)]
+            info["about"] = info["about"] or str(d.get("description") or "")
+            info["title"] = info["title"] or str((d.get("model") or {}).get("name") or "")
+        else:   # A1111 / Forge user metadata
+            at = d.get("activation text") or d.get("activation_text") or ""
+            info["triggers"] += [x for x in re.split(r"[,;\n]", str(at)) if x.strip()]
+            info["weight"] = info["weight"] or _num(d.get("preferred weight"))
+            info["about"] = info["about"] or str(d.get("description") or d.get("notes") or "")
+    return info
+
+
+def load_cards(lora_dirs):
+    """lora_cards.json files in the LoRA folders: {"sub/file.safetensors": {title, triggers, tags, about}}."""
+    cards = {}
+    for d in lora_dirs:
+        p = os.path.join(d, "lora_cards.json")
+        try:
+            if os.path.isfile(p):
+                for k, v in (json.load(open(p, encoding="utf-8")) or {}).items():
+                    if isinstance(v, dict):
+                        cards[k.replace("\\", "/").lower()] = v
+        except (OSError, ValueError):
+            pass
+    return cards
+
+
+def kind_of(name, folder, tags, about="", triggers=()):
+    """What sort of LoRA this is: utility / tool / slider (never auto) or character / style / clothing / pose / body /
+    quality / concept."""
+    stem = _stem_name(name)
+    low_tags = " ".join(t.lower() for t in tags or [])
+    words = name_words(name)
+    if _RE_UTILITY.search(stem) and not words:   # a speed LoRA; "facial-krea-turbo" is a concept
+        return "utility"
+    if _RE_SLIDER.search(stem) or "slider" in low_tags:
+        return "slider"
+    if _RE_TOOL.search(stem):
+        return "tool"
+    if _RE_CLOTHING.search(stem):          # a clear clothing name beats the folder it was filed in
+        return "clothing"
+    for rx, kind in _FOLDER_KIND:
+        if rx.search(folder or ""):
+            return kind
+    if re.search(r"\bcharacter|celebrit|\bperson\b", low_tags):
+        return "character"
+    if _RE_QUALITY.search(stem):
+        return "quality"
+    if _RE_STYLE.search(stem) or re.search(r"\bstyle\b|\banime\b|\bart ?style", low_tags):
+        return "style"
+    if _RE_CLOTHING.search(stem) or re.search(r"cloth|outfit|fashion", low_tags):
+        return "clothing"
+    if _RE_POSE.search(stem) or "pose" in low_tags:
+        return "pose"
+    # a LoRA named after its one made-up trigger word ('Elowen', 'xq7person') is a person
+    if len(words) == 1 and any(words[0].startswith(t.lower()) or t.lower().startswith(words[0])
+                               for t in triggers if len(t.split()) == 1 and len(t) >= 4):
+        return "character"
+    return "concept"
+
+
+def group_key(family, name, words):
+    """LoRAs that are copies of one another share a key (Back Pose_MLX / _MLX_comfy, the checkpoints of one training
+    run, Cinematic_V1 / Cinematic_krea2_c1-st5000)."""
+    return "%s|%s" % (family or "", " ".join(words) if words else _stem_name(name).lower())
+
+
+def describe(rec, card, side):
+    """Everything the page needs to auto-pick this LoRA (added to the cached header facts)."""
+    name, folder = rec["name"], rec.get("folder") or ""
+    card = card or {}
+    title = re.sub(r"\((?:krea ?2|flux[^)]*|klein[^)]*|qwen[^)]*)\)|\[[^\]]*\]|\bfor (?:krea ?2|flux[\w. ]*|klein[\w ]*)",
+                   "", str(card.get("title") or side.get("title") or ""), flags=re.I).strip(" -_|")
+    triggers = _uniq(list(rec.get("triggers") or []) + list(card.get("triggers") or []) + side["triggers"], 8)
+    tags = [t for t in (list(card.get("tags") or []) + side["tags"]) if isinstance(t, str)][:16]
+    about = str(card.get("about") or side.get("about") or "")
+    words = name_words(name)
+    kind = kind_of(name, folder, tags, about, triggers)
+    # "3D Render Style. 3DRenderAF." is two triggers
+    phrases = [[p.strip(), "trigger"] for t in triggers for p in re.split(r"\.\s+|\.$", t) if len(p.strip()) >= 2]
+    if words:
+        phrases.append([" ".join(words), "name"])
+    # names made of parts ('Krea 2 - Microbikini - Sling Bikini'): each part is a phrase of its own
+    parts = [p for p in re.split(r"\s+-\s+|__+", _stem_name(name)) if p.strip()]
+    if len(parts) > 1:
+        for part in parts:
+            pw = name_words(part)
+            if pw and pw != words:
+                phrases.append([" ".join(pw), "name"])
+    if title:
+        tw = [w for w in _split_words(title) if w not in NAME_NOISE and not re.fullmatch(r"v?\d+(\.\d+)*", w)]
+        if tw and tw != words:
+            phrases.append([" ".join(tw[:6]), "title"])
+    for t in tags:
+        tl = t.strip().lower()
+        if tl and tl not in GENERIC and tl not in ("style", "lora", "concept", "character", "clothing", "base model"):
+            phrases.append([tl, "tag"])
+    hint = side.get("weight") or strength_hint(_stem_name(name), about)
+    strength = hint if hint else KIND_DEFAULT_STRENGTH.get(kind, 0.85)
+    auto = bool(rec.get("family")) and kind not in NEVER_AUTO and name.lower().endswith(".safetensors")
+    # one training run saved at several steps -> one group (the page keeps the latest step)
+    series = re.sub(r"[_\-.]?(?:e|ep|epoch|step|s)?\d{2,}$", "", _stem_name(name), flags=re.I).lower()
+    return {
+        "kind": kind, "auto": auto, "strength": round(float(strength), 2), "phrases": phrases[:16], "triggers": triggers,
+        "title": title[:80], "group": group_key(rec.get("family"), name, words) if words else
+        "%s|%s/%s" % (rec.get("family") or "", folder.lower(), series),
+        "weight_from": "maker" if hint else "kind",
+    }
 
 
 def build(names, lora_dirs, data_dir):
-    """[{name, folder, family, base, triggers, tokens}] for the LoRA names ComfyUI lists."""
+    """[{name, folder, family, base, triggers, tokens, kind, auto, strength, phrases, group, ...}] for the LoRA names
+    ComfyUI lists."""
     cache_p = os.path.join(data_dir, "lora_index.json")
     try:
         cache = json.load(open(cache_p, encoding="utf-8"))
     except (OSError, ValueError):
         cache = {}
+    cards = load_cards(lora_dirs)
     out, fresh = [], {}
     for name in names:
         full = next((os.path.join(d, name) for d in lora_dirs if os.path.isfile(os.path.join(d, name))), None)
         key = name
         sig = None
+        mtime = 0
         if full:
             st = os.stat(full)
             sig = "%d|%d" % (st.st_size, int(st.st_mtime))
+            mtime = int(st.st_mtime)
         hit = cache.get(key)
-        if hit and hit.get("sig") == sig:
+        if hit and hit.get("sig") == sig and hit.get("v") == 3:
             rec = hit
         else:
             meta = read_meta(full) if full else {}
             base = meta.get("ss_base_model_version") or meta.get("modelspec.architecture") or meta.get("ss_sd_model_name") or ""
             fam = family_of(base) or family_of(os.path.dirname(name)) or family_of(os.path.basename(name))
             rec = {"name": name, "folder": os.path.dirname(name).replace("\\", "/"), "family": fam, "base": base[:80],
-                   "triggers": _triggers(meta), "tokens": _tokens(name), "sig": sig}
+                   "triggers": _triggers(meta), "sig": sig, "v": 3}
         fresh[key] = rec
-        out.append({k: rec.get(k) for k in ("name", "folder", "family", "base", "triggers", "tokens")})
+        side = sidecar_info(full) if full else {"triggers": [], "tags": [], "weight": None, "about": "", "title": ""}
+        card = cards.get(name.replace("\\", "/").lower())
+        item = {k: rec.get(k) for k in ("name", "folder", "family", "base")}
+        item.update(describe(rec, card, side))
+        item["tokens"] = _tokens(name)
+        item["mtime"] = mtime
+        out.append(item)
     try:
         json.dump(fresh, open(cache_p, "w", encoding="utf-8"))
     except OSError:
         pass
     return out
+
+
+def client_lists():
+    """Word lists the page's matcher uses (one source of truth)."""
+    return {"generic": sorted(GENERIC)}

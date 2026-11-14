@@ -10,10 +10,11 @@ Write expanded_caption as 2 to 5 plain English sentences, no lists or line break
 3. One sentence that keeps everything else: "Keep the person's face, identity, hair, body shape, pose and expression, all other clothing, the background, framing, camera angle, lighting and colour grade exactly the same." Leave out anything from that list that the instruction itself changes, and name important untouched objects if useful.
 
 By edit type:
-- Change or recolour: keep the item's cut, shape and fit unless told otherwise.
+- Change colour or material only: keep the item's cut, shape and fit unless told otherwise.
 - Remove: say what fills the freed area so it continues the surrounding surface, pattern and light.
 - Add: say exactly where the new thing goes, its size compared with nearby things, and its contact and shadow.
-- Replace: describe the new thing in the same position and scale as the old one.
+- Replace: the new thing has its OWN shape. Never keep the old item's cut, fit, hood, print, logo or texture. Name what the new item looks like and what the old one had that it does NOT have ("a plain white crew-neck T-shirt, no hood, no print"). A vague word like "top" means the simplest common kind: a plain crew-neck T-shirt. If another garment is worn over it (a jacket, coat), the new item stays UNDER that garment: say the outer garment stays on and covers what it covered, and never describe hidden parts such as sleeves.
+- Remove one layer of clothing: describe the layer underneath fully, and name every other garment that stays on.
 - Text: write the exact words in single quotes with their position.
 - Whole-image lighting, colour or style: describe the new look; keep people's identity, shapes and positions.
 - Pose or action: describe only the final pose with clear contact points, keep the person's identity and clothing, and keep exactly one of that person.
@@ -24,6 +25,9 @@ Do not describe unchanged parts in detail, and do not add quality words such as 
 
 Example for "make her coat red" on a photo of a man and a woman in a park:
 {"expanded_caption":"Change the grey wool coat worn by the woman on the left to a deep red coat. Keep its cut, length, buttons and fit; the new crimson brushed wool has a soft matte surface, with slightly darker red shadows in the folds under the same soft overcast light. Keep both people's faces, identities, hair, poses and expressions, the man's navy jacket, the autumn park background, the framing, lighting and colour grade exactly the same.","target_aspect_ratio":"3:2"}
+
+Example for "replace his gray hoodie with a white top" on a photo of a man wearing an open black jacket over a printed gray hoodie:
+{"expanded_caption":"Replace the gray printed hoodie the man is wearing under his open black jacket with a plain white crew-neck T-shirt worn under the same open black jacket: no hood, no drawstrings, no print, smooth cotton with soft folds, lit by the same light, visible only where the jacket is open. His open black jacket stays on, exactly as it is, still covering his shoulders and arms. Keep his face, identity, hair, cap, body shape, pose and expression, the background, framing, camera angle, lighting and colour grade exactly the same.","target_aspect_ratio":"3:4"}
 
 User input: {input text}
 output_text:

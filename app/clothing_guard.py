@@ -232,7 +232,8 @@ def named_item(user_prompt):
     m = _ITEM.search(user_prompt or "")
     if not m:
         return ""
-    words = [w for w in m.group(1).split() if w.lower() not in _NOT_ITEM_WORDS]
+    # "the man's gray hoodie" must not become "s gray hoodie": drop the possessive leftover
+    words = [w for w in m.group(1).split() if w.lower() not in _NOT_ITEM_WORDS and w.lower() not in ("s", "'s", "’s")]
     return " ".join(words).strip().lower()
 
 

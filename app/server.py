@@ -990,7 +990,7 @@ def _pe_cache_payload(job):
         "media": job.get("pe_media") or "image",
         "templates": [graphs.pe_system_file(job.get("mode"), st["id"], job.get("pe_media") or "image"),
                       graphs.pe_task_file(job.get("mode"), st["id"], job.get("pe_media") or "image"),
-                      "edit_v2" if job.get("mode") == "edit" else ""],
+                      "edit_v4" if job.get("mode") == "edit" else ""],
         "ref_mode": bool(job.get("ref_mode")),
         "auto_assist": bool(job.get("auto_assist")),
         "roles": job.get("roles") or {},

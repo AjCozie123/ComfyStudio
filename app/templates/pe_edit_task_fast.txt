@@ -17,10 +17,10 @@ A Subject that changes in any way is not fully preserved. Identity, face, hairst
 Part 3, changed details only. Describe only new or changed content, concretely: shape, colour, material, texture, fit, folds, how it sits on the body or in the scene, contact points, overlap, cast shadows, and how the existing light and colour grade fall on it so it blends in. Never describe a fully preserved Subject again; you may use its bare token as a position anchor, for example "beside <Subject 2>". No quality words such as 8K, masterpiece or high quality.
 
 By edit type:
-- Change or recolour: keep the item's cut, shape and fit unless told otherwise.
+- Change colour or material only: keep the item's cut, shape and fit unless told otherwise.
 - Remove: describe what fills the freed area so it continues the surrounding surface, pattern and light.
 - Add: say exactly where the new thing is, its size relative to nearby Subjects, and its contact and shadow.
-- Replace: the old item gets no Subject; describe the new one in the same position and scale.
+- Replace: the old item gets no Subject; the new one has its OWN shape. Never keep the old item's cut, fit, hood, print or texture; say what the new one does not have ("no hood, no print"). A vague "top" means a plain crew-neck T-shirt. If a jacket or coat is worn over it, the new item stays under it and the outer garment stays on, covering what it covered; never describe hidden parts such as sleeves.
 - Text: write the exact words in single quotes with their position, for example the sign reads 'OPEN'.
 - Whole-image lighting, colour or style: make the framing and lighting Subject partially preserved and describe the new look; people and objects keep their identity, shape and position.
 - Pose or action: make the person partially preserved (identity, face, hair and clothing remain), describe only the final pose with clear contact points, and keep exactly one of that person.

@@ -1159,7 +1159,7 @@ async function generate() {
     clip_name: $("clip_name").value,
     vae_name: $("vae_name").value,
     pe_clip_name: $("pe_clip_name").value,
-    auto_assist: !!(state.mode === "edit" && (!($("auto-assist")) || $("auto-assist").checked)),
+    auto_assist: !$("auto-assist") || $("auto-assist").checked,   // new pictures too (sheets, camera, layout)
     ref_mode: !!(state.mode === "edit" && state.refMode),
     image_roles: (state.roles || []).slice(),
     camera: Object.assign({}, state.camera || {}),
@@ -4798,7 +4798,7 @@ function bindShell() {
       pe: (card.media === "video" || card.media === "image") && $("pe").checked,
       pe_mode: state.peMode || "fast",
       pe_tokens: state.peTokens || null,
-      auto_assist: !!(card.media === "image" && state.images.length && (!$("auto-assist") || $("auto-assist").checked)),
+      auto_assist: !$("auto-assist") || $("auto-assist").checked,   // every engine (new pictures, edits, videos)
       image_roles: (state.roles || []).slice(),
       ref_mode: !!(state.mode === "edit" && state.refMode),
       edit_intent: (card.edit_kind === "krea_edit" && tuneMode() === "auto") ? kreaKind(prompt, Math.min(state.images.length, most)) : null,
@@ -8166,9 +8166,10 @@ function bindShell() {
     const a = window.__wfActive && window.__wfActive();
     if (!a) return state.media === "video" ? null : "minimax_h3";
     const c = a.card || {};
-    return FAMMAP[c.family] || null;
+    return c.lora_family || FAMMAP[c.family] || null;   // the server works it out from the models the engine loads
   }
-  const isOn = () => { try { return localStorage.getItem("cs.lora.auto") === "1"; } catch (e) { return false; } };
+  // on unless you switched it off (it used to start off, so nothing was ever picked until you found the switch)
+  const isOn = () => { try { return localStorage.getItem("cs.lora.auto") !== "0"; } catch (e) { return true; } };
   let GENERIC = new Set();
 let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress words, sfw phrases) for LoraMatch
   // picks from the prompt (static/lora_match.js): whole phrases only, ordinary words never alone, "no X" respected,

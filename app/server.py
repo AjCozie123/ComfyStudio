@@ -1727,6 +1727,19 @@ def pe_clip_available(name):
     return pref[0] if pref else None
 
 
+
+def lora_family_for(card):
+    """Which LoRAs fit this engine (the key Auto-pick uses). Uploaded workflows: from the model files they load
+    (krea2_turbo_... -> Krea 2), because their family label is a guess; built-ins: their label first."""
+    label = LI.ENGINE_FAMILY.get(card.get("family") or "")
+    files = [m.get("value") for m in ((card.get("slots") or {}).get("models") or [])
+             if isinstance(m, dict) and isinstance(m.get("value"), str) and (m.get("kind") in (None, "model", "checkpoint", "unet"))]
+    from_files = next((k for k in (LI.family_of(f) for f in files) if k), None)
+    if card.get("source") == "user":
+        return from_files or label or LI.family_of(card.get("family")) or LI.family_of(card.get("name"))
+    return label or from_files or LI.family_of(card.get("family")) or LI.family_of(card.get("name"))
+
+
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
@@ -1845,11 +1858,15 @@ def submit_workflow_job(data):
     is_image = card.get("media") == "image"
     assist_info = None
     # Auto understanding: the same <Picture N> notes the built-in engine gets (roles, outfits, sheets, ...).
-    if is_image and prompt and images and data.get("auto_assist") and not data.get("inpaint_mask") and card.get("assist", True) is not False:
+    # every engine: new pictures get the text-to-image understanding (sheets, camera ...), edits the edit one, and a
+    # video made from pictures uses them as references (keeps who is who)
+    if prompt and data.get("auto_assist") and not data.get("inpaint_mask") and card.get("assist", True) is not False:
+        video_refs = (not is_image) and bool(images)
+        a_mode = ("ref" if (data.get("ref_mode") or video_refs) else "edit") if images else "t2i"
         try:
             assist_info = ASSIST.build_assist_prompt(
-                prompt, data.get("image_roles"), n_images=len(images), ref_mode=bool(data.get("ref_mode")),
-                enabled=True, camera=camera, mode="ref" if data.get("ref_mode") else "edit",
+                prompt, data.get("image_roles"), n_images=len(images), ref_mode=bool(data.get("ref_mode")) or video_refs,
+                enabled=True, camera=camera, mode=a_mode,
                 width=data.get("width"), height=data.get("height"))
             prompt_sent = assist_info["prompt"]
         except Exception as e:
@@ -3727,6 +3744,7 @@ class H(BaseHTTPRequestHandler):
                              "size": bool(sl.get("width") or sl.get("res_label") or c.get("size_rule"))}
                 if it.get("picture_min") is None:
                     it["picture_min"] = it["picture_max"] = len(sl.get("images") or [])
+                it["lora_family"] = lora_family_for(c)
                 it.update(fit_verdict(c, hw))
                 eff = SP.effective(c, hw)
                 if eff:
@@ -3758,6 +3776,7 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 log.info("workflow knobs: %s", e)
                 knobs = []
+            card["lora_family"] = lora_family_for(card)
             return self.j({"card": card, "options": _wf_model_options(card), "summary": WF.summary(card), "knobs": knobs})
         if path == "/api/install/plan":
             try:

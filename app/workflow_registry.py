@@ -2405,3 +2405,95 @@ def use_installed_models(graph, oi):
 
 def _base(name):
     return re.split(r"[\/]", str(name))[-1]
+
+
+# ------------------------------------------------------------------ "Do not change / remove / replace ..." -> NAG
+_DO_NOT = re.compile(r"(?i)(?:^|[.;!\n]\s*|\s)(?:please\s+)?(?:do\s*not|don'?t|never|without)\s+"
+                     r"((?:change|edit|remove|replace|touch|alter|modify|move|delete)(?:\s*(?:/|,|or|and)\s*"
+                     r"(?:change|edit|remove|replace|touch|alter|modify|move|delete))*)\b\s*:?\s*")
+
+
+def split_do_not(prompt):
+    """'Replace his gray hoodie with a white top. Do not remove/change: his black jacket, his watch'
+    -> ('Replace his gray hoodie with a white top.', ['his black jacket', 'his watch'], ['remove', 'change']).
+    Nothing to protect -> (prompt, [], [])."""
+    text = str(prompt or "")
+    m = _DO_NOT.search(text)
+    if not m:
+        return text, [], []
+    edit = text[:m.start()].strip().rstrip(",;: ")
+    verbs = [v for v in re.split(r"\s*(?:/|,|or|and)\s*", m.group(1).lower()) if v]
+    rest = text[m.end():]
+    # the protected list ends at the next sentence that isn't part of it
+    rest = re.split(r"(?<=[.!?])\s+(?=[A-Z])", rest.strip(), maxsplit=1)[0].rstrip(" .")
+    items = [re.sub(r"^(?:and|or)\s+", "", x.strip(), flags=re.I) for x in re.split(r",|;|\band\b|\bor\b", rest)]
+    items = [x for x in items if x and len(x) <= 80][:8]
+    if not edit or not items:
+        return text, [], []
+    return edit, items, verbs
+
+
+def keep_sentence(items):
+    if not items:
+        return ""
+    joined = items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+    return "Keep %s exactly as before: same shape, colour and position." % joined
+
+
+def nag_negative_text(items, verbs):
+    """NAG pushes the picture AWAY from these words, so they describe the unwanted RESULT (not the item itself:
+    'his black jacket' alone would push the jacket out of the picture)."""
+    parts = []
+    for it in items:
+        parts.append("%s removed" % it)
+        parts.append("%s missing" % it)
+        parts.append("%s changed" % it)
+        if "replace" in verbs:
+            parts.append("%s replaced with something else" % it)
+    return ", ".join(parts)
+
+
+_KREA_PATCH = ("Krea2EditModelPatchV2", "Krea2EditModelPatch")
+_NAG_NODE = "Krea2EditNormalizedAttentionGuidance"
+_NAG_KEEP = ("source_latent_b", "ref_boost", "ref_boost_a", "fit_mode", "ref_boost_mask", "vae",
+             "source_image", "source_image_b", "target_latent")
+
+
+def is_krea_edit(graph):
+    return any(n.get("class_type") in _KREA_PATCH for n in graph.values())
+
+
+def apply_nag(graph, oi, items, verbs, phi=4.0, tau=2.5, alpha=0.25):
+    """Krea 2 Edit + 'Do not ...': swap the edit's source-patch node for Krea2Edit NAG (ComfyUI-Krea2-NAG), with the
+    unwanted results as its negative (encoded like the edit instruction, with the same pictures). Returns
+    'on' / 'missing' (the add-on isn't installed) / '' (not a Krea 2 Edit graph)."""
+    pk = next((k for k, n in graph.items() if n.get("class_type") in _KREA_PATCH), None)
+    if not pk or not items:
+        return ""
+    if _NAG_NODE not in (oi or {}):
+        return "missing"
+    patch = graph[pk]
+    ins = patch.get("inputs") or {}
+    # the encoder that feeds the sampler's positive: copy it for the NAG negative (same pictures, same grounding)
+    enc_id = None
+    for n in graph.values():
+        if "positive" in (n.get("inputs") or {}) and _is_link(n["inputs"]["positive"]):
+            src = graph.get(str(n["inputs"]["positive"][0])) or {}
+            if "Krea2EditGroundedEncode" in str(src.get("class_type")):
+                enc_id = str(n["inputs"]["positive"][0])
+                break
+    if not enc_id:
+        enc_id = next((k for k, n in graph.items() if "Krea2EditGroundedEncode" in str(n.get("class_type"))), None)
+    if not enc_id:
+        return ""
+    neg = copy.deepcopy(graph[enc_id])
+    neg["inputs"]["prompt"] = nag_negative_text(items, verbs)
+    neg.setdefault("_meta", {})["title"] = "NAG negative (what must not happen)"
+    graph["cs_nag_neg"] = neg
+    new = {"model": ins.get("model"), "nag_negative": ["cs_nag_neg", 0], "source_latent": ins.get("source_latent"),
+           "phi": float(phi), "tau": float(tau), "alpha": float(alpha), "sigma_start": 1000.0, "sigma_end": 0.0}
+    for k in _NAG_KEEP:
+        if k in ins:
+            new[k] = ins[k]
+    graph[pk] = {"class_type": _NAG_NODE, "inputs": new, "_meta": {"title": "Krea2Edit NAG (protects what you listed)"}}
+    return "on"

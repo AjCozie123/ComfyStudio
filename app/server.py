@@ -1740,6 +1740,17 @@ def lora_family_for(card):
     return label or from_files or LI.family_of(card.get("family")) or LI.family_of(card.get("name"))
 
 
+
+def page_build():
+    """The version of the page's script the server is handing out now (app.js?v=...). An open window compares it
+    with the one it loaded, and refreshes itself after an update."""
+    try:
+        m = re.search(r"app\.js\?v=([0-9A-Za-z]+)", open(os.path.join(STATIC, "index.html"), encoding="utf-8").read())
+        return m.group(1) if m else ""
+    except OSError:
+        return ""
+
+
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
@@ -1749,6 +1760,13 @@ def submit_workflow_job(data):
         prompt = UND.apply_words(prompt, DATA, data.get("workflow_id") or "")   # the user's own words
     if slots.get("prompt") and not prompt:
         raise ValueError("Enter a prompt.")
+    # Krea 2 Edit: "... Do not change/remove/replace: X, Y" -> the edit part + "Keep X and Y exactly as they are",
+    # and (when the Krea2 NAG add-on is installed) NAG pushes the picture away from X / Y being changed or removed
+    nag_items, nag_verbs = [], []
+    if prompt and (card.get("edit_kind") == "krea_edit" or WF.is_krea_edit(graph)):
+        edit_part, nag_items, nag_verbs = WF.split_do_not(prompt)
+        if nag_items:
+            prompt = (edit_part.rstrip(" .") + ". " + WF.keep_sentence(nag_items)).strip()
     images = [str(x).replace("\\", "/") for x in (data.get("images") or []) if str(x).strip()]
     need = int(card.get("picture_min", len(slots.get("images") or [])) or 0)
     most = int(card.get("picture_max", need) or 0) or len(slots.get("images") or [])
@@ -1996,6 +2014,16 @@ def submit_workflow_job(data):
         notes += WF.use_installed_models(g, object_info())
     except Exception as e:
         log.info("use_installed_models skipped: %s", e)
+    try:
+        if nag_items:
+            nag = WF.apply_nag(g, object_info(), nag_items, nag_verbs)
+            if nag == "on":
+                notes.append("Protecting: %s (NAG on)." % ", ".join(nag_items))
+            elif nag == "missing":
+                notes.append("Kept %s with a “keep” instruction. For stronger protection, install the Krea2 NAG "
+                             "add-on (https://github.com/iljung1106/ComfyUI-Krea2-NAG) on the Workflows page." % ", ".join(nag_items))
+    except Exception as e:
+        log.info("NAG skipped: %s", e)
     try:
         problems = validate_graph(g, object_info(), input_root=INPUT)
     except Exception as e:
@@ -3897,6 +3925,7 @@ class H(BaseHTTPRequestHandler):
                 "running": len(running),
                 "pending": len(pending),
                 "port": PORT,
+                "build": page_build(),
             })
         if path == "/api/config":
             try:

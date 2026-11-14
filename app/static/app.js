@@ -8763,3 +8763,25 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   const base = setMode;
   setMode = function (mode) { const r = base.apply(this, arguments); if (mode !== "edit") note.classList.add("hidden"); return r; };
 })();
+
+/* ===== refresh after an update v20261114b =====
+   An open window keeps running the page it loaded. After the app is updated the server hands out a newer page;
+   this notices it and reloads by itself, but only when nothing of yours is generating, and never while you type. */
+(function () {
+  const mine = ((document.querySelector('script[src*="app.js"]') || {}).src || "").match(/v=([0-9A-Za-z]+)/);
+  const MY_BUILD = mine ? mine[1] : "";
+  if (!MY_BUILD) return;
+  async function check() {
+    let s;
+    try { s = await api("/api/status"); } catch (e) { return; }
+    if (!s || !s.build || s.build === MY_BUILD) return;
+    let busy = false;
+    try { busy = (await api("/api/jobs")).some((j) => ["queued", "running", "waiting_comfy"].includes(j.status)); } catch (e) { busy = true; }
+    const typing = document.activeElement && /^(TEXTAREA|INPUT|SELECT)$/.test(document.activeElement.tagName);
+    if (busy || typing) return;
+    location.reload();
+  }
+  setInterval(check, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+})();
+

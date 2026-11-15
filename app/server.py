@@ -891,6 +891,25 @@ def _lora_info(name):
     return LI.LAST.get(name) or LI.LAST.get(str(name).replace("/", "\\")) or LI.LAST.get(str(name).replace("\\", "/")) or {}
 
 
+def head_cover_final(text, user_prompt):
+    """Last step for a prompt that puts on a mask / helmet / costume enclosing the head (pe.head_polish): the hair (and
+    a covered face) leave every keep sentence, and one plain line says the hair is hidden inside. Runs after the guards
+    and after Enhance, so nothing added later can ask to keep the hair again."""
+    try:
+        if text and PE.full_costume(user_prompt):
+            text = PE.costume_polish(user_prompt, text)   # a full suit replaces the shoes and every garment too
+        if not text or not PE.head_cover(user_prompt):
+            return text
+        for old in ("It covers the whole head: no hair shows outside it.",):
+            text = text.replace(old, "").strip()
+        text = re.sub(r"The mask / headwear covers the whole head of [^:]+: all of the hair is hidden inside it, with no "
+                      r"hair, ears or skin showing around its edges\.", "", text).strip()
+        return PE.head_polish(user_prompt, re.sub(r"\s{2,}", " ", text))
+    except Exception as e:
+        log.info("head cover: %s", e)
+        return text
+
+
 def _has_words(text, phrase):
     """Whole words, any case: 'mcrmst' is in 'a mcrmst woman', 'art' isn't in 'party'."""
     ws = [w for w in re.split(r"[^0-9a-z]+", phrase.lower()) if w]
@@ -1153,6 +1172,8 @@ def run_prompt_enhancer(job):
             cached = PE.route_polish(job.get("pe_route") or "", cached)
         except Exception:
             pass
+        if str(job.get("pe_media") or "image").startswith("image"):
+            cached = head_cover_final(cached, job.get("prompt_user") or raw)
         job["enhanced_prompt"] = cached
         job["pe_cached"] = True
         job["prompt"] = cached
@@ -1219,6 +1240,8 @@ def run_prompt_enhancer(job):
         caption = PE.route_polish(job.get("pe_route") or "", caption)
     except Exception as e:
         log.info("route polish: %s", e)
+    if job.get("mode") != "t2v" and str(job.get("pe_media") or "image").startswith("image"):
+        caption = head_cover_final(caption, job.get("prompt_user") or raw)
     job["enhanced_prompt"] = caption
     job["prompt"] = caption
     try:
@@ -1953,6 +1976,8 @@ def submit_workflow_job(data):
         except Exception:
             prompt_sent = prompt
     prompt_sent = PD.translate(prompt_sent, dialect)
+    if card.get("media") == "image" and card.get("edit_kind") != "anypaint":
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "")
     prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
     # Enhance: new pictures, videos and picture EDITS (inpaint keeps your own words: its area wording is exact)
     pe_on = bool(card.get("media") in ("image", "video") and prompt and data.get("pe") and card.get("enhance", True) is not False
@@ -2937,6 +2962,7 @@ def submit_job(data):
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "")
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=False)
     else:
@@ -3013,6 +3039,7 @@ def submit_job(data):
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "")
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
         if inpaint and inpaint.get("box"):

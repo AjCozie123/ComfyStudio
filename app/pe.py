@@ -282,6 +282,178 @@ def route_polish(route, caption):
     return out
 
 
+# ---------------------------------------------------------------- masks, helmets and costumes that enclose the head
+# The model keeps a bun / ponytail / afro sticking out of an Iron Man helmet unless told plainly that the hair is gone,
+# and a "keep her hair / face" sentence (enhancer or guard) tells it the opposite. So when the instruction puts a head-
+# enclosing mask or helmet on someone, the hair (and, for full-face ones, the face) leaves every keep sentence and one
+# plain sentence says where the hair went. Eye masks, masquerade, surgical and sheet masks leave the hair alone.
+_FULL_FACE_CHARS = (r"iron[- ]?man|war[- ]?machine|spider[- ]?(?:man|woman|gwen)|spiderman|deadpool|venom|carnage|"
+                    r"black[- ]?panther|storm[- ]?trooper|darth[- ]?vader|boba[- ]?fett|mandalorian|daft[- ]?punk|"
+                    r"power[- ]?rangers?|master[- ]?chief|ultron|ghost[- ]?rider|ant[- ]?man|moon[- ]?knight|"
+                    r"crimson[- ]?dynamo|daredevil|scorpion|sub[- ]?zero|ninja|gimp|slipknot|kamen[- ]?rider|ultraman|"
+                    r"tokusatsu|sentai|halo spartan|robocop")
+_HEAD_CHARS = r"batman|batgirl|bat[- ]?woman|captain[- ]?america|astronaut|spacesuit|space[- ]?suit|knight|gladiator"
+_OPEN_MASK = re.compile(r"(?i)\b(eye|domino|masquerade|venetian|mardi[- ]gras|lace|half|surgical|medical|face[- ]?(?:mask|covering)"
+                        r"|sheet|sleep(?:ing)?|gas|hockey|clay|mud|facial|beauty|skincare|zorro|robin|catwoman|lone ranger)"
+                        r"[- ]+(?:\w+[- ]+)?masks?\b|\bmasks? over (?:her|his|their|the) (?:eyes|mouth|nose)\b")
+_COVER_WORD = re.compile(r"(?i)\b(full[- ]?face (?:mask|helmet)|helmets?|masks?|cowls?|balaclavas?|ski[- ]?masks?|"
+                         r"visors?|swim(?:ming)? caps?|bathing caps?|bald caps?)\b")
+_COVER_NEG = re.compile(r"(?i)\b(remove|removes|removing|take off|takes off|taking off|without|no|lift(?:s|ing)? (?:up )?|"
+                        r"pull(?:s|ing)? (?:off|up)|unmask\w*|less)\s+(?:(?:her|his|their|the|a|an|its|that)\s+)?"
+                        r"(?:\w+[- ]+){0,3}(?:helmet|mask|cowl|balaclava|visor|cap)s?\b")
+
+
+def head_cover(prompt):
+    """('full' | 'head', what to call it, her/his/their) when the instruction puts on a mask, helmet or costume that
+    encloses the head (full = the face is covered too), else None."""
+    t = re.split(r"(?i)\b(?:do\s*not|don'?t|never)\s*:?\s*(?:change|edit|remove|replace|touch|alter|modify|move|delete)\b",
+                 str(prompt or ""))[0]
+    if not t or _COVER_NEG.search(t):
+        return None
+    low = t.lower()
+    pron = "her" if re.search(r"\b(she|her|woman|women|girl|lady|female)\b", low) else \
+        "his" if re.search(r"\b(he|his|him|man|men|boy|guy|male)\b", low) else "their"
+    word = None
+    for m in _COVER_WORD.finditer(t):
+        w = m.group(1).lower()
+        if "mask" in w and _OPEN_MASK.search(t[max(0, m.start() - 40):m.end() + 30]):
+            continue
+        word = re.sub(r"s$", "", w.replace("full-face", "full-face").split()[-1]) if "full" not in w else w
+        break
+    full_char = re.search(r"(?i)\b(?:%s)\b" % _FULL_FACE_CHARS, t)
+    head_char = re.search(r"(?i)\b(?:%s)\b" % _HEAD_CHARS, t)
+    if not word and not full_char and not head_char:
+        return None
+    if word in ("swim cap", "cap", "bathing cap", "bald cap", "visor"):
+        kind = "head"
+    elif full_char or word in ("mask", "balaclava", "ski-mask", "ski mask") or (word and "full" in word):
+        kind = "full"
+    elif head_char or word in ("helmet", "cowl"):
+        kind = "head"
+    else:
+        kind = "full"
+    if word in ("balaclava",):
+        kind = "head"   # the eyes and part of the face show
+    item = word or ("helmet" if re.search(r"(?i)iron|war[- ]?machine|storm|vader|fett|mandalorian|daft|ranger|chief|"
+                                          r"ultron|kamen|robocop|astronaut|space|knight|gladiator|captain", t) else "mask")
+    if word == "helmet" and full_char:
+        kind = "full"
+    return kind, item, pron
+
+
+_HAIR_WORDS = ("hairstyle", "hair colour", "hair color", "hairline", "hair", "bun", "ponytail", "braids")
+_FACE_WORDS = ("facial features", "facial identity", "face", "identity", "expression", "makeup", "eyes", "smile")
+
+
+def head_polish(prompt, caption):
+    """See head_cover: take the hair (and a covered face) out of every keep sentence, and say plainly that the hair is
+    hidden inside the mask / helmet. Safe to run twice."""
+    hc = head_cover(prompt)
+    if not hc or not caption:
+        return caption
+    kind, item, pron = hc
+    words = _HAIR_WORDS + (_FACE_WORDS if kind == "full" else ())
+    parts = re.split(r"(?<=[.!?])\s+", caption)
+    out = " ".join(_drop_keep_items(p, words) if re.match(r"(?i)\s*(keep|preserve)\b", p) else p for p in parts)
+    out = re.sub(r"(?i)\bkeep (?:the person's|her|his|their)\s*,\s*", "Keep %s " % pron, out)   # "Keep her , body" -> tidy
+    out = re.sub(r"\s+,", ",", out)
+    if "none of %s hair" % pron in out.lower():
+        return out
+    P = pron.capitalize()
+    face = (" and face" if kind == "full" else "")
+    line = ("The %s covers %s whole head%s, so none of %s hair shows anywhere: all of it is hidden inside, with no "
+            "bun, ponytail, braids, curls, locs, fringe or loose strands sticking out at the back, top, sides or "
+            "below it. The back of the %s is a smooth, closed shell sized for a head with the hair tucked away."
+            % (item, pron, face, pron, item))
+    if kind == "full":
+        line += " No skin, hair or beard shows around the %s's edges." % item
+    else:
+        line += " %s face shows in the opening, unchanged." % P
+    # said early as well (edit models weigh the start most): long hair must not hang below it either
+    early = ("None of %s hair hangs below the %s: %s neck, shoulders, back and chest are clear of hair."
+             % (pron, item, pron))
+    return _second_sentence(out, early).rstrip() + " " + line
+
+
+def _second_sentence(text, sentence):
+    """Put a short sentence right after the first one."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip(), maxsplit=1)
+    return parts[0] + " " + sentence + (" " + parts[1] if len(parts) > 1 else "")
+
+
+# ---------------------------------------------------------------- full costumes replace the whole outfit
+# "Change her outfit to an Iron Man suit": the enhancer tends to keep "all other clothing" or "the brown boots' lacing",
+# so the old shoes / jeans survive under a full suit. A full-body costume replaces everything worn, feet and hands too.
+_FULL_COSTUME = re.compile(
+    r"(?i)\b(?:(?:%s|%s|superhero|super[- ]hero|villain|mascot|power armou?r|mech)\b[\w' -]{0,25}?\b(?:suit|costume|armou?r|outfit|"
+    r"uniform|gear|cosplay)|(?:full[- ]?body|head[- ]?to[- ]?toe|full)\s+(?:suit|costume|armou?r|outfit|bodysuit|catsuit)|"
+    r"(?:space|hazmat|diving|wet|ski|bee[- ]?keeper|racing|flight|mascot|animal|bear|bunny|dinosaur|inflatable)[- ]?suit|"
+    r"spacesuit|wetsuit|catsuit|bodysuit|onesie|jumpsuit|mascot|suit of armou?r|plate armou?r|knight'?s armou?r|"
+    r"(?:%s|%s)\b)" % (_FULL_FACE_CHARS, _HEAD_CHARS, _FULL_FACE_CHARS, _HEAD_CHARS))
+_OUTFIT_WORDS = re.compile(
+    r"(?i)\b(cloth\w*|outfit|garments?|wardrobe|attire|sweaters?|jumpers?|jeans|trousers|pants|leggings|shorts|skirts?|"
+    r"dress(?:es)?|shirts?|t-shirts?|tops?|hoodies?|jackets?|coats?|blazers?|vests?|bikini|bra|underwear|lingerie|socks?|"
+    r"stockings|tights|shoes?|boots?|sneakers?|trainers?|heels|sandals?|slippers?|footwear|laces?|lacing|soles?|gloves?|"
+    r"mittens?|belts?|scarf|scarves|hats?|caps?|beanies?|uniform)\b")
+
+
+def full_costume(prompt):
+    """True when the instruction dresses someone in a full-body costume / suit / armour (not for 'take off ...')."""
+    t = re.split(r"(?i)\b(?:do\s*not|don'?t|never)\s*:?\s*(?:change|edit|remove|replace|touch|alter|modify|move|delete)\b",
+                 str(prompt or ""))[0]
+    if not t or re.search(r"(?i)\b(remove|take off|takes off|taking off|without)\b[\w' -]{0,30}\b(suit|costume|armou?r)\b", t):
+        return False
+    return bool(_FULL_COSTUME.search(t))
+
+
+def _keep_items_without(sentence, rx):
+    """'Keep her body shape, pose, the yellow sweater's cut and the brown boots exactly the same.' minus the items that
+    match rx (the sentence goes when nothing is left)."""
+    m = re.match(r"(?is)(\s*(?:keep|preserve)\s+)(.*?)(\s+(?:exactly\s+)?(?:the\s+same|unchanged|as\s+(?:it|they)\s+(?:is|are|was|were))\b.*)$",
+                 sentence)
+    if not m:
+        return sentence
+    head, body, tail = m.groups()
+    kept, changed = [], False
+    for item in (x.strip() for x in re.split(r",\s*(?:and\s+)?", body) if x.strip()):
+        subs = [s.strip() for s in re.split(r"\s+and\s+", item) if s.strip()]
+        if not rx.search(item):
+            kept.append(item)
+        elif rx.search(subs[0]):
+            changed = True        # "the yellow sweater's cut and fit": all of it is about the old clothes
+        else:
+            changed = True        # "pose and the brown boots": keep "pose"
+            kept += [s for s in subs if not rx.search(s)]
+    if not changed:
+        return sentence
+    if not kept:
+        return ""
+    lst = kept[0] if len(kept) == 1 else ", ".join(kept[:-1]) + (", " if " and " in kept[-1] else " and ") + kept[-1]
+    return head + lst + tail
+
+
+def costume_polish(prompt, caption):
+    """See full_costume: drop every garment / shoe from the keep sentences, and say the costume covers head to toe with
+    its own boots and gloves. Safe to run twice."""
+    if not caption or not full_costume(prompt):
+        return caption
+    hc = head_cover(prompt)
+    pron = hc[2] if hc else ("her" if re.search(r"(?i)\b(she|her|woman|girl|lady)\b", prompt or "") else
+                             "his" if re.search(r"(?i)\b(he|his|him|man|boy|guy)\b", prompt or "") else "their")
+    parts = re.split(r"(?<=[.!?])\s+", caption)
+    out = " ".join(x for x in (_keep_items_without(p, _OUTFIT_WORDS) if re.match(r"(?i)\s*(keep|preserve)\b", p) else p
+                               for p in parts) if x)
+    if "from head to toe" in out.lower():
+        return out
+    subj = {"her": "she", "his": "he"}.get(pron, "they")
+    out = _second_sentence(out, "%s shoes are replaced too: %s feet are in the costume's own boots, not %s old shoes."
+                           % (pron.capitalize(), pron, pron))
+    return (out.rstrip() + " The costume replaces everything %s %s wearing, from head to toe: none of %s old clothes, "
+            "shoes or socks show anywhere. %s feet are in the costume's own matching boots and %s hands in its own "
+            "matching gloves, in the same style, colours and material as the suit."
+            % (subj, "were" if subj == "they" else "was", pron, pron.capitalize(), pron))
+
+
 def route_edit(prompt):
     """The focused edit instructions for this prompt (a key of ROUTE_LABEL). Only the edit part counts (a
     'Do not change ...' part is protection, not the edit)."""

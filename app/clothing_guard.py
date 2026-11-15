@@ -206,7 +206,9 @@ _REMOVE_EDIT = re.compile(
 _FACE_EDIT = re.compile(
     r"\b(smil\w*|expression|frown\w*|laugh\w*|wink\w*|pout\w*|makeup|make-up|lipstick|eyeliner|mascara|"
     r"eyes? (?:open|closed|shut)|close (?:her|his|their) eyes|open (?:her|his|their) mouth|blush\w*|eyebrows?|"
-    r"face|facial|head[- ]?swap\w*|face[- ]?swap\w*|older|younger|age\w*)\b", re.I)
+    r"face|facial|head[- ]?swap\w*|face[- ]?swap\w*|older|younger|age\w*|"
+    r"masks?|helmets?|cowls?|balaclavas?|visors?|iron[- ]?man|spider[- ]?man|spiderman|deadpool|venom|"
+    r"storm[- ]?trooper|mandalorian|astronaut)\b", re.I)
 
 
 def auto_guards(user_prompt, n_images=0):

@@ -650,6 +650,7 @@ def job_view(job):
         "pe_mode": job.get("pe_mode"),
         "prompt_user": job.get("prompt_user"),
         "enhanced_prompt": job.get("enhanced_prompt") or "",
+        "pe_route": PE.ROUTE_LABEL.get(job.get("pe_route") or "", ""),
         "pe_fallback": bool(job.get("pe_fallback")),
         "pe_cached": bool(job.get("pe_cached")),
         "pe_clip_name": job.get("pe_clip_used") or job.get("pe_clip_name"),
@@ -963,14 +964,30 @@ def pe_tokens_in(v):
 
 
 def make_pe_graph(prompt, mode, images, pe_mode, models, pe_system_extra="", pe_task_extra="", pe_system_override="",
-                  pe_tokens=None, media="image"):
+                  pe_tokens=None, media="image", route=""):
     free = _has_node("AUSBOSS_NODES_FreeMemory")
     return graphs.build_pe_only(
         prompt, mode=mode, images=images, pe_mode=pe_mode, models=models, free_memory=free,
         pe_system_extra=pe_system_extra, pe_task_extra=pe_task_extra, pe_system_override=pe_system_override,
-        pe_tokens=pe_tokens, media=media,
+        pe_tokens=pe_tokens, media=media, route=route,
     )
 
+
+def pe_route_for(job):
+    """Which focused edit instructions the enhancer uses (only for picture edits on non-MiniMax engines)."""
+    if job.get("mode") != "edit" or job.get("pe_media") != graphs.GENERIC_MEDIA or job.get("pe_system_override"):
+        return ""
+    return PE.route_edit(job.get("prompt_user") or job.get("pe_input") or job.get("prompt") or "")
+
+
+
+def _template_hash(name):
+    """A short fingerprint of an enhancer instruction file's text: editing the instructions starts fresh rewrites
+    (the cached ones were made with the old text)."""
+    try:
+        return hashlib.sha1(graphs._read_template(name).encode("utf-8")).hexdigest()[:12]
+    except Exception:
+        return ""
 
 def _pe_cache_payload(job):
     images = list(job.get("pe_images") if job.get("pe_images") is not None else (job.get("source_images") or []))
@@ -989,8 +1006,10 @@ def _pe_cache_payload(job):
         "ref_mp": st["ref_megapixels"],
         "media": job.get("pe_media") or "image",
         "templates": [graphs.pe_system_file(job.get("mode"), st["id"], job.get("pe_media") or "image"),
-                      graphs.pe_task_file(job.get("mode"), st["id"], job.get("pe_media") or "image"),
-                      "edit_v4" if job.get("mode") == "edit" else ""],
+                      graphs.pe_task_file(job.get("mode"), st["id"], job.get("pe_media") or "image", pe_route_for(job)),
+                      "edit_v4" if job.get("mode") == "edit" else "",
+                      _template_hash(graphs.pe_task_file(job.get("mode"), st["id"], job.get("pe_media") or "image",
+                                                         pe_route_for(job)))],
         "ref_mode": bool(job.get("ref_mode")),
         "auto_assist": bool(job.get("auto_assist")),
         "roles": job.get("roles") or {},
@@ -1094,12 +1113,17 @@ def _wait_for_pe(job):
 def run_prompt_enhancer(job):
     """Fill job['enhanced_prompt'] from cache or a PE-only ComfyUI run. Never fails the image job: falls back to the user prompt."""
     raw = (job.get("pe_input") or job.get("prompt_user") or job.get("prompt") or "").strip()
+    job["pe_route"] = pe_route_for(job)
     job["enhanced_prompt"] = ""
     job["pe_fallback"] = False
     job["pe_cached"] = False
     key = PE.cache_key(_pe_cache_payload(job))
     cached = PE.cache_get(DATA, key)
     if cached:
+        try:
+            cached = PE.route_polish(job.get("pe_route") or "", cached)
+        except Exception:
+            pass
         job["enhanced_prompt"] = cached
         job["pe_cached"] = True
         job["prompt"] = cached
@@ -1113,7 +1137,7 @@ def run_prompt_enhancer(job):
             job.get("pe_mode") or "fast", models,
             pe_system_extra=job.get("pe_system_extra") or "", pe_task_extra=job.get("pe_task_extra") or "",
             pe_system_override=job.get("pe_system_override") or "", pe_tokens=job.get("pe_tokens"),
-            media=job.get("pe_media") or "image",
+            media=job.get("pe_media") or "image", route=job.get("pe_route") or "",
         )
         oi = object_info()
         problems = validate_graph(graph, oi, input_root=INPUT)
@@ -1124,7 +1148,7 @@ def run_prompt_enhancer(job):
                 models=models, free_memory=False,
                 pe_system_extra=job.get("pe_system_extra") or "", pe_task_extra=job.get("pe_task_extra") or "",
                 pe_system_override=job.get("pe_system_override") or "", pe_tokens=job.get("pe_tokens"),
-                media=job.get("pe_media") or "image",
+                media=job.get("pe_media") or "image", route=job.get("pe_route") or "",
             )
             problems = validate_graph(graph, oi, input_root=INPUT)
         if problems:
@@ -1162,6 +1186,10 @@ def run_prompt_enhancer(job):
         job["message"] = ("Prompt Enhancer did not return usable JSON, so your original prompt was used."
                           + (" It may have run out of room: raise the Tokens dial under Enhance." if job.get("pe_tokens") else ""))
         return False
+    try:
+        caption = PE.route_polish(job.get("pe_route") or "", caption)
+    except Exception as e:
+        log.info("route polish: %s", e)
     job["enhanced_prompt"] = caption
     job["prompt"] = caption
     try:

@@ -1045,7 +1045,7 @@ function showResult(job) {
     box.classList.toggle("hidden", !text);
     if (text) {
       $("enhanced-text").textContent = text;
-      $("enhanced-note").textContent = job.pe_cached ? "Used a cached enhancement for this prompt and images." : (job.pe_fallback ? "The enhancer did not return usable JSON, so your original prompt was used." : (job.pe_mode === "quality" ? "Quality" : "Fast"));
+      $("enhanced-note").textContent = job.pe_cached ? "Used a cached enhancement for this prompt and images." : (job.pe_fallback ? "The enhancer did not return usable JSON, so your original prompt was used." : (job.pe_mode === "quality" ? "Quality" : "Fast") + (job.pe_route ? " · " + job.pe_route + " instructions" : ""));
     }
   }
   state.reuseItem = jobToReuseItem(job);

@@ -228,3 +228,77 @@ def resolve_tokens(pe_mode, mode, choice=None, prompt="", n_images=0, generic=Fa
                   else auto_tokens(st["id"], mode, prompt, n_images, generic=generic))
     thinking = bool(st.get("thinking")) and not (generic and mode == "edit") and max_length >= THINK_MIN[mode]
     return max_length, thinking
+
+
+# ------------------------------------------------------------------ which focused edit instructions fit the prompt
+# Order matters: the first family whose words appear (and no other family's) wins; mixed or unclear -> "general".
+_ROUTE_RULES = [
+    ("text", r"'[^']+'|\"[^\"]+\"|\b(text|sign|writing|words?|caption|label|letters?|logo says|say|says|reads?|write\w*|wrote|written|spell\w*|print\w* .{1,30}\bon)\b"),
+    ("pose", r"\b(sit|sits|sitting|sat|stand|stands|standing|lie|lies|lying|lay|kneel\w*|squat\w*|lean\w*|pose|posing|"
+             r"turn\w*|facing|face (?:left|right|the camera)|profile|look\w* (?:at|up|down|away|over)|raise\w*|wave\w*|"
+             r"walk(?:s|ing|ed)?|run(?:s|ning)?|jump(?:s|ing|ed)?|cross\w* (?:his|her|their) (?:arms|legs)|hands? on)\b"),
+    ("body", r"\b(fat\w*|heav(?:y|ier)|thin(?:ner)?|skinn\w*|slim\w*|muscular|muscles?|bulk\w*|chubb\w*|plump\w*|curv\w*|"
+             r"taller|shorter|weight|body shape|build|belly|bigger body|smaller body|older|younger)\b"),
+    ("background", r"\b(background|backdrop|scene|setting|location|sky|sunset|sunrise|night\w*|daytime|weather|rain\w*|snow\w*|"
+                   r"lighting|light(?:s|ing)? up|golden hour|season|beach|city|forest|indoors|outdoors|studio)\b"),
+    ("remove", r"\b(remove\w*|take off|takes off|taking off|delete|erase|get rid of|no longer)\b"),
+    ("replace", r"\b(replace\w*|swap\w* .{1,40}\b(?:for|with)\b|instead of|change\w* .{1,40}\b(?:to|into) (?:a|an)\b|"
+                r"turn\w* .{1,40}\binto (?:a|an)\b|(?:is|now) wearing (?:a|an))\b"),
+    ("recolour", r"\b(recolou?r\w*|colou?r\w*|dye\w*|(?:make|change|turn)\w* .{0,40}\b(?:red|blue|green|yellow|black|white|"
+                 r"pink|purple|orange|brown|gr[ae]y|gold\w*|silver|beige|navy|maroon|teal)\b|leather|denim|silk|velvet|wool)\b"),
+    ("add", r"\b(add\w*|put\w* (?:a|an|some)|place\w* (?:a|an)|give\w* (?:him|her|them) (?:a|an)|holding (?:a|an))\b"),
+]
+ROUTE_LABEL = {"replace": "Replace", "remove": "Remove", "recolour": "Colour or material", "body": "Body shape", "pose": "Pose",
+               "background": "Background or lighting", "add": "Add something", "text": "Text", "general": "General"}
+
+
+_FRAMING = ("Same framing and camera distance: the person stays the same size and in the same place in the picture; "
+            "do not zoom in, crop or move closer.")
+_DROP_FROM_KEEP = {"pose": ("standing pose", "body pose", "pose", "arms", "hands", "hand"), "body": ("body shape", "build")}
+
+
+def _drop_keep_items(sentence, words):
+    for w in words:
+        w = re.escape(w)
+        sentence = re.sub(r"(?i)\b%s\s+and\s+" % w, "", sentence)        # "pose and expression" -> "expression"
+        sentence = re.sub(r"(?i),\s*%s\b(?=\s*(?:,|and\b))" % w, "", sentence)  # ", pose," -> ","
+        sentence = re.sub(r"(?i)\b%s,\s*" % w, "", sentence)             # "pose, hair" -> "hair"
+        sentence = re.sub(r"(?i)\s+and\s+%s\b" % w, "", sentence)         # "hair and pose" -> "hair"
+    return sentence
+
+
+def route_polish(route, caption):
+    """Rules the small enhancer model does not reliably follow, made certain in code: a pose or body edit must not
+    also ask to keep the pose / body shape, and edits that tend to recompose the shot get an explicit framing line."""
+    if not caption or route not in ("pose", "body", "background"):
+        return caption
+    out = caption
+    words = _DROP_FROM_KEEP.get(route)
+    if words:
+        parts = re.split(r"(?<=[.!?])\s+", out)
+        out = " ".join(_drop_keep_items(p, words) if re.match(r"(?i)\s*(keep|preserve)\b", p) else p for p in parts)
+    if not re.search(r"(?i)camera distance|same size", out):
+        out = out.rstrip() + " " + _FRAMING
+    return out
+
+
+def route_edit(prompt):
+    """The focused edit instructions for this prompt (a key of ROUTE_LABEL). Only the edit part counts (a
+    'Do not change ...' part is protection, not the edit)."""
+    t = re.split(r"(?i)\b(?:do\s*not|don'?t|never)\s+(?:change|edit|remove|replace|touch|alter|modify|move|delete)\b", str(prompt or ""))[0]
+    t = t.lower()
+    hits = [k for k, rx in _ROUTE_RULES if re.search(rx, t)]
+    if not hits:
+        return "general"
+    # "remove X ... he is wearing Y" / "replace X with a Y-coloured Z": a replace that names a colour is still a replace
+    if "background" in hits and "replace" in hits:
+        hits.remove("replace")          # "change the background to a beach": a background edit
+    if "replace" in hits and "recolour" in hits:
+        hits.remove("recolour")
+    if "remove" in hits and "replace" in hits:
+        hits.remove("replace")          # taking a layer off: the remove rules cover what is underneath
+    if "recolour" in hits and "remove" in hits:
+        hits.remove("recolour")
+    if "text" in hits and "add" in hits:
+        hits.remove("add")             # "add the word SALE": a text edit
+    return hits[0] if len(hits) == 1 else "general"

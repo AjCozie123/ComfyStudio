@@ -391,12 +391,17 @@ _INPUT_TAIL = re.compile(r"\n\s*(?:input_text|User input)\s*:\s*\{input text\}.*
 GENERIC_MEDIA = "image_generic"     # an image EDIT for a model other than MiniMax H3 (no <Subject N> captions)
 
 
-def pe_task_file(mode="t2i", pe_mode="fast", media="image"):
+def pe_task_file(mode="t2i", pe_mode="fast", media="image", route=""):
     import pe as PE
     st = PE.settings(pe_mode)
     if media == "video":
         return VIDEO_TASK
     if mode == "edit":
+        if media == GENERIC_MEDIA and route and route != "general":
+            # focused instructions for this kind of edit (replace, remove, body shape, pose ...), when they exist
+            name = "pe_edit_task_generic_%s.txt" % re.sub(r"[^a-z]", "", route)
+            if os.path.isfile(os.path.join(TEMPLATES, name)):
+                return name
         return st["task_edit_generic"] if media == GENERIC_MEDIA else st["task_edit"]
     return st["task_t2i"]
 
@@ -624,7 +629,7 @@ def merge_cfg(overrides=None):
 
 
 def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, free_memory=True,
-                   pe_system_extra="", pe_task_extra="", pe_system_override="", pe_tokens=None, media="image"):
+                   pe_system_extra="", pe_task_extra="", pe_system_override="", pe_tokens=None, media="image", route=""):
     """A Prompt-Enhancer-only graph: no UNET or VAE, so ComfyUI can free the PE model before the image run."""
     import pe as PE
     if not (prompt or "").strip():
@@ -644,7 +649,7 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
     else:
         if not images:
             raise ValueError("Image Edit needs at least one reference image.")
-        system, task = pe_system_file(mode, st["id"], media), pe_task_file(mode, st["id"], media)
+        system, task = pe_system_file(mode, st["id"], media), pe_task_file(mode, st["id"], media, route)
         temperature = st.get("temperature_edit", temperature)
         max_length = st.get("max_length") or st.get("max_length_edit")
         used = list(images)[: int(st.get("max_images") or 16)]
@@ -673,6 +678,7 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
         "pe_max_length": int(max_length),
         "pe_images": len(links),
         "pe_ref_megapixels": st["ref_megapixels"],
+        "pe_task_file": task,
     }
 
 

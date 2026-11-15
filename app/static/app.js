@@ -4303,7 +4303,8 @@ function bindShell() {
      grounding for whichever LoRA is loaded. The prompt itself is never rewritten. */
   const KREA_KINDS = {
     action: { label: "Action in the same picture", lora: "identity", steps: 8, knobs: "ref_boost 1.5, aligned (scene kept), grounding 768" },
-    restage: { label: "Pose / angle change", lora: "identity", steps: 8, knobs: "ref_boost 1, aligned (background kept), grounding 768" },
+    restage: { label: "Pose change", lora: "identity", steps: 8, knobs: "ref_boost 1, aligned (background kept), grounding 768" },
+    turn: { label: "Turn / view (side profile, from behind)", lora: "identity", steps: 8, knobs: "ref_boost 0.5, aligned (room kept), grounding 768" },
     insert: { label: "Person into scene", lora: "identity", steps: 8, knobs: "person 2.5 beside, scene 1 aligned, grounding 768" },
     background: { label: "Background swap", lora: "general", steps: 8, knobs: "ref_boost 4, aligned, grounding 768" },
     remove: { label: "Removal", lora: "general", steps: 8, knobs: "ref_boost 4, aligned, grounding 768" },
@@ -4324,8 +4325,10 @@ function bindShell() {
   }
   window.__swapLora = swapLora;
   const RX = {
+    // the person rotates / we see another side of them (same rules as the server's 'turn' route in pe.py)
+    turn: /\b(turn\w* (her|him|them|the (woman|man|girl|guy|person))(self|selves)?\b(?=,? (to|so|around|left|right|side|sideways|away|toward|towards|back|slightly|fully|completely|halfway|\d+|her|his|their)\b(?! (dress|top|shirt|hair|hoodie|jacket|coat|skirt|pants|jeans|outfit|clothes|shoes|hat|cap|eyes|lips|skin|nails|bag)))|turn\w* around|turn\w* (her|his|their) (head|face|body|shoulders|torso|hips|whole body)\b(?! (red|blue|green|pale|white|black))|side[- ]?profile|in profile|profile view|(left|right)[- ]facing|from (behind|the back|the side)|back view|rear view|side view|three[- ]quarters?( view| angle| profile)?|(facing|face|faces) (left|right|away|the wall|sideways|backwards?)|look\w* over (her|his|their) shoulder|(back|side) (to|towards) the camera|rotat\w*|spin\w* (her|him|them|around))\b/i,
     // the person moves: pose, body, camera angle, framing
-    pose: /\b(turn(s|ed|ing)?(?!\s+(on|off|up|down|into)\b)|rotat\w*|profile|facing|face (left|right|away|the camera|forward)|from (behind|the back|the side|above|below)|back view|side view|over (her|his|their|the) shoulder|look(s|ing)? (at|over|away|up|down|back|left|right)|camera angle|(low|high|eye[- ]level|overhead|dutch|birds?[- ]eye) angle|zoom (in|out)|close[- ]?up|full[- ]body|wide shot|medium shot|pose|posing|sit(s|ting)?|seated|stand(s|ing)?|kneel\w*|lie|lying|lay(ing)?|crouch\w*|squat\w*|lean\w*|bend\w*|walk\w*|run(s|ning)?|jump\w*|danc\w*|character sheet|turnaround)\b/i,
+    pose: /\b((further|farther|more) (back|away)( from (the )?camera)?|step\w* (back|forward|towards?|closer)|move\w* (her|him|them) (back|closer|forward|away)|closer to (the )?camera|walk\w* (away|towards? (the )?camera)|into the (background|foreground|distance)|turn(s|ed|ing)?(?!\s+(on|off|up|down|into)\b)|rotat\w*|profile|facing|face (left|right|away|the camera|forward)|from (behind|the back|the side|above|below)|back view|side view|over (her|his|their|the) shoulder|look(s|ing)? (at|over|away|up|down|back|left|right)|camera angle|(low|high|eye[- ]level|overhead|dutch|birds?[- ]eye) angle|zoom (in|out)|close[- ]?up|full[- ]body|wide shot|medium shot|pose|posing|sit(s|ting)?|seated|stand(s|ing)?|kneel\w*|lie|lying|lay(ing)?|crouch\w*|squat\w*|lean\w*|bend\w*|walk\w*|run(s|ning)?|jump\w*|danc\w*|character sheet|turnaround)\b/i,
     // hands / arms / legs act in the SAME picture. On 'aligned' + ref_boost 4 the old limbs stay pinned to the
     // layout while new ones are drawn = duplicated limbs; these keep 'aligned' (same scene) at ref_boost 1.5
     body: /\b(rais\w* (her|his|their|both)|arms? (up|crossed|raised)|cross(ed)? (her|his|their) (arms|legs)|hands? on|hold(s|ing)?|held|grab\w*|grip\w*|grasp\w*|cup(s|ped|ping)?|squeez\w*|touch\w*|caress\w*|fondl\w*|rub(s|bed|bing)?|strok\w*|hug\w*|embrac\w*|cuddl\w*|clasp\w*|pinch\w*|pull\w* (up|down|aside|apart|back|her|his|their|on|at)|lift\w*|spread\w*|point\w*|wav\w*|reach\w*|stretch\w*|drink\w*|eat\w*|sip\w*|lick\w*|suck\w*|bit(e|es|ing)|kiss\w*|blow\w* (a )?kiss|cover\w* (her|his|their)|fold\w* (her|his|their)|put\w* (her|his|their) (hand|hands|arm|arms|leg|legs|finger|fingers)|(in|with|between|on) (her|his|their|both) (left |right |own )?(hands?|arms?|fingers?|legs?|thighs?|lap)|(her|his|their|both) (left |right )?(hands?|arms?|fingers?|legs?|knees?|feet|foot|elbows?|wrists?|thumbs?) (on|in|over|around|behind|between|up|down|together|apart|out|at)|on (her|his|their) (knees|back|side|stomach|belly|tiptoes)|arch\w* (her|his|their) back|tilt\w* (her|his|their) head)\b/i,
@@ -4345,6 +4348,7 @@ function bindShell() {
       return "insert";                                                        // the card: person into a scene = Identity
     }
     if (RX.remove.test(p)) return "remove";                                   // removals are General's job
+    if (RX.turn.test(p) && !RX.place.test(p)) return "turn";                  // the person rotates: its own setting
     if (RX.pose.test(p) || RX.place.test(p)) return "restage";               // the whole body / view / place changes
     if (RX.body.test(p)) return "action";                                     // hands / arms act, same picture
     if (RX.background.test(p)) return "background";
@@ -8895,3 +8899,58 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
 })();
 
+
+/* ===== "Generating" pill v20261115 =====
+   Shows whenever anything is generating or waiting, whichever device started it (PC or phone). A page only follows
+   the jobs it started itself, so a job sent from the phone was invisible on the PC: tap the pill to watch it here
+   (the usual card with progress and live preview, then the result). */
+(function () {
+  const chip = $("status");
+  if (!chip || $("gen-pill")) return;
+  const pill = document.createElement("button");
+  pill.type = "button";
+  pill.id = "gen-pill";
+  pill.className = "gen-pill hidden";
+  pill.innerHTML = '<span class="gen-dot" aria-hidden="true"></span><span class="gen-text"></span>';
+  chip.parentNode.insertBefore(pill, chip);
+  let active = [];
+  const LIVE = ["queued", "waiting_comfy", "running"];
+  async function check() {
+    let list;
+    try { list = await api("/api/jobs"); } catch (e) { return; }
+    active = (list || []).filter((j) => j && LIVE.includes(j.status));
+    if (!active.length) { pill.classList.add("hidden"); return; }
+    const run = active.find((j) => j.status === "running") || active[0];
+    const max = run.progress_max || 0, v = run.progress || 0;
+    const mine = new Set((state.activeJobs || []).map((j) => j.id));
+    const elsewhere = active.filter((j) => !mine.has(j.id)).length;
+    // phone: the top bar is narrow, so just the step count (or "Live" / "Queued")
+    const narrow = window.innerWidth < 560;
+    pill.querySelector(".gen-text").textContent = narrow
+      ? (max ? v + "/" + max : run.status === "running" ? "Live" : "Queued") + (active.length > 1 ? " +" + (active.length - 1) : "")
+      : (run.status === "running" ? "Generating" : run.status === "waiting_comfy" ? "Waiting for ComfyUI" : "Queued")
+        + (max ? " · " + v + "/" + max : "") + (active.length > 1 ? " · " + active.length + " jobs" : "");
+    pill.title = elsewhere ? "Started on another device: tap to watch it here" : "Tap to see the live preview";
+    pill.classList.toggle("is-elsewhere", elsewhere > 0);
+    pill.classList.remove("hidden");
+  }
+  pill.addEventListener("click", () => {
+    if (!state.activeJobs) state.activeJobs = [];
+    if (!state.jobSnaps) state.jobSnaps = {};
+    active.forEach((j) => {
+      if (!state.activeJobs.some((x) => x.id === j.id)) {
+        state.activeJobs.push(j);
+        state.jobSnaps[j.id] = { prompt: j.prompt_user || j.prompt || "", thumbs: [] };
+      }
+    });
+    try { if (state.view !== "create") setView("create"); } catch (e) {}
+    renderJobQueue();
+    if (state.poll) clearInterval(state.poll);
+    state.poll = setInterval(pollJobs, 500);
+    pollJobs();
+    const box = $("job-queue");
+    if (box) box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+  check();
+  setInterval(check, 3000);
+})();

@@ -234,8 +234,18 @@ def resolve_tokens(pe_mode, mode, choice=None, prompt="", n_images=0, generic=Fa
 # Order matters: the first family whose words appear (and no other family's) wins; mixed or unclear -> "general".
 _ROUTE_RULES = [
     ("text", r"'[^']+'|\"[^\"]+\"|\b(text|sign|writing|words?|caption|label|letters?|logo says|say|says|reads?|write\w*|wrote|written|spell\w*|print\w* .{1,30}\bon)\b"),
+    # turning the person / which side we see: its own instructions and its own Krea 2 Edit setting, so a turn is never
+    # written as "facing the camera" like an ordinary pose
+    ("turn", r"\b(turn\w* (?:her|him|them|the (?:woman|man|girl|guy|person))(?:self|selves)?\b(?=,? (?:to|so|around|left|right|"
+             r"side|sideways|away|toward|towards|back|slightly|fully|completely|halfway|\d+|her|his|their)\b(?! (?:dress|top|shirt|"
+             r"hair|hoodie|jacket|coat|skirt|pants|jeans|outfit|clothes|shoes|hat|cap|eyes|lips|skin|nails|bag)))|turn\w* around|"
+             r"turn\w* (?:her|his|their) (?:head|face|body|shoulders|torso|hips|whole body)\b(?! (?:red|blue|green|pale|white|black))|"
+             r"side[- ]?profile|in profile|profile view|(?:left|right)[- ]facing|from (?:behind|the back|the side)|back view|"
+             r"rear view|side view|three[- ]quarters?(?: view| angle| profile)?|(?:facing|face|faces) (?:left|right|away|"
+             r"the wall|sideways|backwards?)|look\w* over (?:her|his|their) shoulder|(?:back|side) (?:to|towards) the camera|"
+             r"rotat\w*|spin\w* (?:her|him|them|around))\b"),
     ("pose", r"\b(sit|sits|sitting|sat|stand|stands|standing|lie|lies|lying|lay|kneel\w*|squat\w*|lean\w*|pose|posing|"
-             r"turn\w*|facing|face (?:left|right|the camera)|profile|look\w* (?:at|up|down|away|over)|raise\w*|wave\w*|"
+             r"facing|face (?:left|right|the camera)|look\w* (?:at|up|down|away|over)|raise\w*|wave\w*|"
              r"walk(?:s|ing|ed)?|run(?:s|ning)?|jump(?:s|ing|ed)?|cross\w* (?:his|her|their) (?:arms|legs)|hands? on)\b"),
     ("body", r"\b(fat\w*|heav(?:y|ier)|thin(?:ner)?|skinn\w*|slim\w*|muscular|muscles?|bulk\w*|chubb\w*|plump\w*|curv\w*|"
              r"taller|shorter|weight|body shape|build|belly|bigger body|smaller body|older|younger)\b"),
@@ -249,12 +259,16 @@ _ROUTE_RULES = [
     ("add", r"\b(add\w*|put\w* (?:a|an|some)|place\w* (?:a|an)|give\w* (?:him|her|them) (?:a|an)|holding (?:a|an))\b"),
 ]
 ROUTE_LABEL = {"replace": "Replace", "remove": "Remove", "recolour": "Colour or material", "body": "Body shape", "pose": "Pose",
-               "background": "Background or lighting", "add": "Add something", "text": "Text", "general": "General"}
+               "turn": "Turn / view", "background": "Background or lighting", "add": "Add something", "text": "Text",
+               "general": "General"}
 
 
 _FRAMING = ("Same framing and camera distance: the person stays the same size and in the same place in the picture; "
             "do not zoom in, crop or move closer.")
-_DROP_FROM_KEEP = {"pose": ("standing pose", "body pose", "pose", "arms", "hands", "hand"), "body": ("body shape", "build")}
+_OTHERS = ("Every other person and object in the picture stays exactly as it is, in the same place and size; no one is "
+           "removed or added.")
+_DROP_FROM_KEEP = {"pose": ("standing pose", "body pose", "pose", "arms", "hands", "hand"), "body": ("body shape", "build"),
+                  "turn": ("standing pose", "body pose", "pose", "orientation", "direction")}
 
 
 def _drop_keep_items(sentence, words):
@@ -270,7 +284,7 @@ def _drop_keep_items(sentence, words):
 def route_polish(route, caption):
     """Rules the small enhancer model does not reliably follow, made certain in code: a pose or body edit must not
     also ask to keep the pose / body shape, and edits that tend to recompose the shot get an explicit framing line."""
-    if not caption or route not in ("pose", "body", "background"):
+    if not caption or route not in ("pose", "turn", "body", "background"):
         return caption
     out = caption
     words = _DROP_FROM_KEEP.get(route)
@@ -279,6 +293,9 @@ def route_polish(route, caption):
         out = " ".join(_drop_keep_items(p, words) if re.match(r"(?i)\s*(keep|preserve)\b", p) else p for p in parts)
     if not re.search(r"(?i)camera distance|same size", out):
         out = out.rstrip() + " " + _FRAMING
+    # shared by every edit that moves or reshapes a person: the people around them don't drift or vanish
+    if route in ("pose", "turn", "body") and not re.search(r"(?i)every other person", out):
+        out = out.rstrip() + " " + _OTHERS
     return out
 
 
@@ -454,6 +471,84 @@ def costume_polish(prompt, caption):
             % (subj, "were" if subj == "they" else "was", pron, pron.capitalize(), pron))
 
 
+_MOVE_ASK = re.compile(r"(?i)\b(step\w*|mov(?:e|es|ed|ing)|walk\w*|closer|further away|farther|forwards?|"
+                       r"back(?:wards)? (?:a bit|a step|up)|to the (?:left|right) (?:side )?of the (?:picture|frame|room))\b")
+
+
+_CROP_ASK = re.compile(r"(?i)\b(full[- ]?body|head to toe|whole body|zoom\w*|wider shot|wide shot|show (?:her|his|their) "
+                       r"(?:legs|feet|full)|from (?:far|further)|pull(?:ed)? back)\b")
+
+
+_AWAY_ASK = re.compile(r"(?i)\b(?:(?:further|farther|more) (?:back|away)(?: from (?:the )?camera)?|step\w* back|"
+                       r"move\w* (?:her|him|them) back|walk\w* away|away from (?:the )?camera|into the (?:background|distance))\b")
+_CLOSER_ASK = re.compile(r"(?i)\b(?:closer(?: to (?:the )?camera)?|step\w* (?:forward|towards?)|move\w* (?:her|him|them) "
+                         r"(?:forward|closer)|walk\w* (?:towards?|up to) (?:the )?camera|into the foreground)\b")
+
+
+def move_polish(prompt, caption):
+    """'Move her further back from the camera' / 'step closer': the person moves to a realistic new distance (smaller /
+    larger in the picture, same floor, natural perspective, same proportions). Safe to run twice."""
+    if not caption or "realistic distance" in caption.lower():
+        return caption
+    t = str(prompt or "")
+    pron = _pron_of(t)
+    subj = {"her": "She", "his": "He"}.get(pron, "They")
+    if _AWAY_ASK.search(t):
+        line = ("%s stands further back from the camera at a realistic distance: smaller in the picture, standing on the "
+                "same floor with natural perspective and the same body proportions, more of the room visible around %s."
+                % (subj, {"her": "her", "his": "him"}.get(pron, "them")))
+    elif _CLOSER_ASK.search(t):
+        line = ("%s stands closer to the camera at a realistic distance: larger in the picture, on the same floor with "
+                "natural perspective and the same body proportions." % subj)
+    else:
+        return caption
+    return caption.rstrip() + " " + line
+
+
+def _pron_of(prompt):
+    low = str(prompt or "").lower()
+    return "her" if re.search(r"\b(she|her|woman|women|girl|lady|female)\b", low) else \
+        "his" if re.search(r"\b(he|his|him|man|men|boy|guy|male)\b", low) else "their"
+
+
+def wants_new_framing(prompt):
+    """The instruction moves the person or changes the crop ('step back', 'full body', 'zoom out')."""
+    t = str(prompt or "")
+    return bool(_MOVE_ASK.search(t) or _CROP_ASK.search(t) or _AWAY_ASK.search(t) or _CLOSER_ASK.search(t))
+
+
+def turn_polish(prompt, caption):
+    """A turn of someone in an existing picture: they turn in place (same spot, same size) unless the instruction asks
+    to move them, and keep the very same clothes seen from the new side. Said plainly whatever the enhancer wrote, and
+    with Enhance off. Safe to run twice."""
+    if not caption or route_edit(prompt) != "turn" or "turns in place" in caption.lower():
+        return caption
+    pron = _pron_of(prompt)
+    subj = {"her": "She", "his": "He"}.get(pron, "They")
+    lines = []
+    if not _MOVE_ASK.search(str(prompt or "")) and not _CROP_ASK.search(str(prompt or "")):
+        # said as the CROP, never as feet / legs: naming a body part the photo cuts off makes the model zoom out to show it
+        lines.append("%s turns in place and the picture keeps exactly the same crop: the same parts of %s body are in view "
+                     "and cut off at the same place, %s head at the same height, the same size and position in the picture. "
+                     "Nothing that was outside the picture comes into view." % (subj, pron, pron))
+    lines.append("%s clothes are the very same garments seen from the new side, with the same colours, fabric, pattern, "
+                 "fit and coverage, continuing naturally around the body; nothing is added or removed." % pron.capitalize())
+    # the looser turn setting lets bystanders drift or vanish: only the named person turns
+    if not re.search(r"(?i)every other person", caption):
+        lines.append("Only %s turns: every other person and object in the picture stays exactly as it is, in the same place "
+                     "and size, and no one is removed or added." % {"her": "she", "his": "he"}.get(pron, "they"))
+    return caption.rstrip() + " " + " ".join(lines)
+
+
+# words that mean the body takes a new pose / does something (not just 'standing' or 'facing'), so a turn that comes
+# with them is a pose edit, not a turn in place
+_POSE_ACTION = re.compile(r"\b(bent|bend\w*|kneel\w*|sit|sits|sitting|sat|seated|squat\w*|crouch\w*|lie|lies|lying|"
+                          r"lay(?:s|ing)?|lean\w*|legs?|arms?|hands?|fingers?|reach\w*|grip\w*|grab\w*|grasp\w*|hold\w*|"
+                          r"spread\w*|rais\w*|lift\w*|jump\w*|walk\w*|run(?:s|ning)?|danc\w*|pos(?:e|es|ing)|arch\w*|"
+                          r"stretch\w*|twerk\w*|bounc\w*|on (?:all fours|her knees|his knees|their knees)|touch\w*|"
+                          r"pull\w*|push\w*|cross\w*|fold\w*|wav\w*|point\w*|hug\w*|kiss\w*)\b", re.I)
+
+
 def route_edit(prompt):
     """The focused edit instructions for this prompt (a key of ROUTE_LABEL). Only the edit part counts (a
     'Do not change ...' part is protection, not the edit)."""
@@ -467,6 +562,16 @@ def route_edit(prompt):
         hits.remove("replace")          # "change the background to a beach": a background edit
     if "replace" in hits and "recolour" in hits:
         hits.remove("recolour")
+    if "turn" in hits:
+        if _POSE_ACTION.search(t):
+            # a turn PLUS a pose ("turn her back to the camera, bent over, reaching back"): the whole body moves, so it is
+            # a pose edit (every detail kept, no 'turn in place / same crop' lines that would forbid the pose)
+            hits = [h for h in hits if h != "turn"]
+            if "pose" not in hits:
+                hits.append("pose")
+        elif "pose" in hits:
+            # "turn her standing side profile left": the turn is the edit; 'standing', 'facing', 'look' are part of it
+            hits.remove("pose")
     if "remove" in hits and "replace" in hits:
         hits.remove("replace")          # taking a layer off: the remove rules cover what is underneath
     if "recolour" in hits and "remove" in hits:

@@ -891,11 +891,70 @@ def _lora_info(name):
     return LI.LAST.get(name) or LI.LAST.get(str(name).replace("/", "\\")) or LI.LAST.get(str(name).replace("\\", "/")) or {}
 
 
-def head_cover_final(text, user_prompt):
+def person_lock_on():
+    """Settings: lock everything but the person for a plain turn (on unless switched off)."""
+    return app_paths.load(DATA).get("person_lock") is not False
+
+
+def _comfy_python():
+    """ComfyUI's own Python (it has ultralytics): portable python_embeded, else a venv inside ComfyUI."""
+    for p in (os.path.join(os.path.dirname(COMFY_ROOT), "python_embeded", "python.exe"),
+              os.path.join(COMFY_ROOT, "venv", "Scripts", "python.exe"), os.path.join(COMFY_ROOT, ".venv", "Scripts", "python.exe"),
+              os.path.join(COMFY_ROOT, "venv", "bin", "python"), os.path.join(COMFY_ROOT, ".venv", "bin", "python")):
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def _person_seg_model():
+    d = os.path.join(COMFY_ROOT, "models", "ultralytics", "segm")
+    try:
+        names = sorted(n for n in os.listdir(d) if n.lower().endswith(".pt") and "person" in n.lower())
+    except OSError:
+        return ""
+    best = next((n for n in names if n.lower().startswith("person_yolov8m-seg")), names[0] if names else "")
+    return os.path.join(d, best) if best else ""
+
+
+def person_lock_mask(image_rel, user_prompt):
+    """(data-URL mask, note) when the edit is a plain turn of the person and a person-segmentation model is installed;
+    ("", "") otherwise. The mask = that person (grown for the turn), every other pixel locked."""
+    if PE.route_edit(user_prompt) != "turn" or PE.wants_new_framing(user_prompt):
+        return "", ""
+    py, model = _comfy_python(), _person_seg_model()
+    if not py or not model:
+        return "", ""
+    import base64, subprocess
+    src = os.path.join(INPUT, image_rel.replace("/", os.sep))
+    folder = os.path.join(INPUT, INPUT_SUB, "_inpaint")
+    os.makedirs(folder, exist_ok=True)
+    out = os.path.join(folder, "lock_%s.png" % uuid.uuid4().hex[:12])
+    r = subprocess.run([py, "-I", os.path.join(HERE, "person_mask.py"), src, out, model], capture_output=True, text=True,
+                       timeout=90, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    res = {}
+    for line in (r.stdout or "").splitlines()[::-1]:
+        try:
+            res = json.loads(line)
+            break
+        except ValueError:
+            continue
+    if not res.get("ok") or not os.path.isfile(out):
+        log.info("person lock: %s %s", res.get("why"), (r.stderr or "")[-200:])
+        return "", ""
+    with open(out, "rb") as f:
+        url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+    return url, "Only the person was edited: everything around them is kept exactly as it was (automatic outline)."
+
+
+def head_cover_final(text, user_prompt, edit=False):
     """Last step for a prompt that puts on a mask / helmet / costume enclosing the head (pe.head_polish): the hair (and
     a covered face) leave every keep sentence, and one plain line says the hair is hidden inside. Runs after the guards
-    and after Enhance, so nothing added later can ask to keep the hair again."""
+    and after Enhance, so nothing added later can ask to keep the hair again. edit: a picture is being edited (then a
+    turn of the person also gets 'turns in place, same clothes seen from the new side', pe.turn_polish)."""
     try:
+        if text and edit:
+            text = PE.turn_polish(user_prompt, text)   # a turn: in place, same crop, same clothes from the new side
+            text = PE.move_polish(user_prompt, text)   # "move her further back": a realistic new distance
         if text and PE.full_costume(user_prompt):
             text = PE.costume_polish(user_prompt, text)   # a full suit replaces the shoes and every garment too
         if not text or not PE.head_cover(user_prompt):
@@ -1184,7 +1243,7 @@ def run_prompt_enhancer(job):
         except Exception:
             pass
         if str(job.get("pe_media") or "image").startswith("image"):
-            cached = head_cover_final(cached, job.get("prompt_user") or raw)
+            cached = head_cover_final(cached, job.get("prompt_user") or raw, edit=bool(job.get("source_images")))
         job["enhanced_prompt"] = cached
         job["pe_cached"] = True
         job["prompt"] = cached
@@ -1252,7 +1311,7 @@ def run_prompt_enhancer(job):
     except Exception as e:
         log.info("route polish: %s", e)
     if job.get("mode") != "t2v" and str(job.get("pe_media") or "image").startswith("image"):
-        caption = head_cover_final(caption, job.get("prompt_user") or raw)
+        caption = head_cover_final(caption, job.get("prompt_user") or raw, edit=bool(job.get("source_images")))
     job["enhanced_prompt"] = caption
     job["prompt"] = caption
     try:
@@ -1896,6 +1955,18 @@ def submit_workflow_job(data):
         bake_orientation_file(full)
     inpaint = None
     orig_images = list(images)
+    # a plain turn of the person ("turn her side profile left", "show him from behind"): outline that person and lock
+    # every other pixel (the inpaint path below), so their size, place, the framing and everyone around them can't change
+    lock_note = ""
+    if (not data.get("inpaint_mask") and images and card.get("edit_kind") == "krea_edit" and card.get("media") == "image"
+            and data.get("person_lock") is not False and person_lock_on()):
+        try:
+            mask_url, lock_note = person_lock_mask(images[0], data.get("prompt") or "")
+            if mask_url:
+                data["inpaint_mask"] = mask_url
+        except Exception as e:
+            log.info("person lock skipped: %s", e)
+            lock_note = ""
     native = card.get("native_mask")
     native_set = None
     if data.get("inpaint_mask") and native and images:
@@ -1928,6 +1999,10 @@ def submit_workflow_job(data):
             prompt = (prompt.rstrip(" .") + ". Keep the framing, lighting, colours and edges of the picture the same "
                       "so the change blends in seamlessly.")
     pe_keep_tail = []      # sentences that must survive the Prompt Enhancer's rewrite (added back after it)
+    if lock_note and inpaint and inpaint.get("marked") and card.get("edit_kind") == "krea_edit":
+        # the automatic person lock lets Enhance spell the turn out; its area sentence is put back after the rewrite
+        pe_keep_tail.append("Only change the person inside the magenta-outlined area; keep everything else exactly the "
+                            "same, and leave no magenta lines.")
     if prompt and card.get("edit_kind") == "krea_edit" and guard_on(data, "keep_face", len(images or [])) \
             and "facial identity" not in prompt.lower():
         # the Krea 2 Edit notes' own fix for faces drifting generic
@@ -1988,7 +2063,7 @@ def submit_workflow_job(data):
             prompt_sent = prompt
     prompt_sent = PD.translate(prompt_sent, dialect)
     if card.get("media") == "image" and card.get("edit_kind") != "anypaint":
-        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "")
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=bool(images))
     prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
     # Enhance: new pictures, videos and picture EDITS (inpaint keeps your own words: its area wording is exact)
     pe_on = bool(card.get("media") in ("image", "video") and prompt and data.get("pe") and card.get("enhance", True) is not False
@@ -2006,7 +2081,7 @@ def submit_workflow_job(data):
     if card.get("aspects") and aspect not in card["aspects"]:
         aspect = card["aspects"][0]
     seconds = data.get("seconds") or card.get("default_length")
-    notes = []
+    notes = [lock_note] if lock_note and data.get("inpaint_mask") else []
     cap = (card.get("limits") or {}).get(res)
     if seconds and cap and float(seconds) > cap:
         notes.append("%s makes at most %s s at %s on this PC, so the clip is %s s." % (card.get("name"), cap, res, cap))
@@ -2984,7 +3059,7 @@ def submit_job(data):
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
-        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "")
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=(mode == "edit"))
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=False)
     else:
@@ -3061,7 +3136,7 @@ def submit_job(data):
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
-        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "")
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=(mode == "edit"))
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
         if inpaint and inpaint.get("box"):

@@ -1601,6 +1601,10 @@ KREA_INTENT_KNOBS = {
     # change stays 'aligned' (background and framing kept) at 1.0, the strength the LoRAs were trained at, which lets
     # the body move without the old pose staying pinned. 'beside' is only for person-into-scene (two pictures).
     "restage": {"lora": "identity", "ref_boost": 1.0, "position": "aligned (trained)", "grounding_px": 768},
+    # turning the person / changing which side we see. 2026-11-15 test (side profile, one photo): 1.0 only turned her
+    # three-quarters; 0.5 gave the full profile with the same room and light ('beside' / 'bag of features' turned her
+    # too but redrew the whole room)
+    "turn": {"lora": "identity", "ref_boost": 0.5, "position": "aligned (trained)", "grounding_px": 768},
     "insert": {"lora": "identity", "ref_boost": 2.5, "ref_boost_a": 1.0, "position": "beside (right of target)", "grounding_px": 768},
     "background": {"lora": "general", "ref_boost": 4.0, "position": "aligned (trained)", "grounding_px": 768},
     "remove": {"lora": "general", "ref_boost": 4.0, "position": "aligned (trained)", "grounding_px": 768},

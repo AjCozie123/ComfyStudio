@@ -347,9 +347,17 @@
     const all = streams.length > 1 ? P.s1.concat(P.s2) : P.s1;
     const present = (w) => all.find((x) => eq(x, w) && !negated(P.raw, x.i, L)) || null;
     const isNegI = (i) => negated(P.raw, i, L);
+    const hintHits = [];   // parts of a trigger instruction found in the prompt
     const bias = itemBias(it, L);
     const isConcept = (w) => L && L.canon.has(w) && !isGeneric(w);
     const named = (src) => src === "name" || src === "title" || src === "readable";
+    // the body parts / adult things this LoRA is named for ("ass" in 'Hyper Ass - side profile'): its framing words
+    // or tags alone ("side profile") don't pick it unless the prompt mentions one of those too
+    const itemBody = new Set();
+    if (L) (it.phrases || []).forEach((ph) => {
+      if (ph[1] === "name" || ph[1] === "title") phraseForm(ph[0], L).pw.forEach((w) => { if (L.body.has(w) || (L.canon.has(w) && !isGeneric(w))) itemBody.add(w); });
+    });
+    const bodyMentioned = !itemBody.size || [...itemBody].some((w) => present(w));
     const tagWords = new Set();
     (it.phrases || []).forEach((ph) => { if (ph[1] === "tag" || ph[1] === "trigger") phraseForm(ph[0], L).pw.forEach((w) => tagWords.add(w)); });
     (it.phrases || []).forEach((ph) => {
@@ -363,20 +371,23 @@
         if (at < 0 || negated(P.raw, list[at].i, L)) continue;
         const allGeneric = pw.every(isGeneric);
         let v;
-        if (src === "user") v = 9;   // words you set for this LoRA in the app
+        if (src === "hint") v = 3;   // one part of a trigger instruction: only counts with another part (below)
+        else if (src === "user") v = 9;   // words you set for this LoRA in the app
         else if (src === "trigger") v = (F.n === 1 && allGeneric) || gtrig.has(key) ? 2 : 10;
         else if (named(src)) v = F.n >= 2 ? 7 : (allGeneric ? 0 : 6);
         else if (src === "concept") v = 4;   // a general adult LoRA, by what it's for ("nude", "nsfw")
         // tags: supporting evidence, unless a several-word tag only a few LoRAs have ("thick thighs")
-        else v = F.n >= 2 ? ((S.tag.get(key) || 0) <= RARE && !pw.every((w) => L && L.ignore.has(w)) ? 5 : 3) : (allGeneric ? 0 : 2);
+        // (a style LoRA restyles the whole picture: a tag alone, "spider-man" on a Spider-Verse style, isn't enough)
+        else v = F.n >= 2 ? ((S.tag.get(key) || 0) <= RARE && bodyMentioned && it.kind !== "style"
+          && !pw.every((w) => L && L.ignore.has(w)) ? 5 : 3) : (allGeneric ? 0 : 2);
         if (v > s) { s = v; toks = list.slice(at, at + pw.length); exact = true; }
       }
       if (!s && pw.length >= 2 && src !== "concept") {
         // the same words close together in another order ("thick, full thighs", "hips super wide")
         const near = findNear(P.s1, pw, isNegI);
         if (near) {
-          const v = src === "user" ? 8 : src === "trigger" ? (gtrig.has(key) ? 0 : 8) : named(src) ? 6
-            : ((S.tag.get(key) || 0) <= RARE ? 4 : 0);
+          const v = src === "hint" ? 3 : src === "user" ? 8 : src === "trigger" ? (gtrig.has(key) ? 0 : 8) : named(src) ? 6
+            : ((S.tag.get(key) || 0) <= RARE && bodyMentioned && it.kind !== "style" ? 4 : 0);
           if (v > s) { s = v; toks = near; }
         }
       }
@@ -389,15 +400,17 @@
       }
       if (!s && named(src) && pw.length >= 3) {
         // a 2-word part of a longer name that only a few LoRAs have ("thick thighs" of "thick thighs save lives")
-        for (let k = 0; k + 1 < pw.length && !s; k++) {
+        // a body / adult LoRA ("ass side profile ass edition") isn't picked by its framing words alone: the prompt has
+        // to mention the body part it is about too
+        for (let k = 0; k + 1 < pw.length && !s && bodyMentioned; k++) {
           if ((S.pair.get(pw[k] + " " + pw[k + 1]) || 0) > RARE) continue;
           const near = findNear(P.s1, [pw[k], pw[k + 1]], isNegI);
           if (near) { s = 5; toks = near; }
         }
       }
-      if (!s && named(src) && pw.length >= 2) {
+      if (!s && src === "name" && pw.length >= 2 && bodyMentioned) {   // the file's own name, not a long title
         // one rare, distinctive word of the name: "macromastia" for krea2_macromastia_clothed. Long words only, so
-        // "greek temple" doesn't pick Greek_Sandals
+        // "greek temple" doesn't pick Greek_Sandals (and not "profile" for a body LoRA's 'side profile' title)
         for (const w of pw) {
           if (isGeneric(w) || (L && L.ignore.has(w)) || (S.word.get(w) || 0) > RARE) continue;
           if (w.length < 7) continue;
@@ -405,7 +418,7 @@
           if (t) { s = 4; toks = [t]; single = true; break; }
         }
       }
-      if (W.size && s < 6 && src !== "tag" && src !== "concept") {
+      if (W.size && s < 6 && src !== "tag" && src !== "concept" && src !== "hint") {
         // "macromastia=0.4": you named this LoRA's word, so it is used
         const t = pw.map(present).find((x) => x && W.has(x.w));
         if (t) { s = 6; toks = [t]; single = true; }
@@ -432,6 +445,7 @@
           if (t.size ? t.size !== bias : bare) s = 0;
         });
       }
+      if (s && src === "hint") hintHits.push({ text, toks });
       if (s) hits++;
       if (s > best) {
         best = s; why = text; via = src;
@@ -446,6 +460,11 @@
         if (t) wt = W.get(t.w);
       }
     });
+    // two or more parts of its trigger instruction ("side profile" + "huge butt"): that is what it is for
+    if (hintHits.length >= 2 && best < 6) {
+      best = 6; why = hintHits.map((h) => h.text).join(" + "); via = "trigger";
+      used = [].concat(...hintHits.map((h) => (h.toks || []).map((t) => t.i))); claim = [];
+    }
     return { score: best, why, via, cpos, hits, claim, used, wt };
   }
 

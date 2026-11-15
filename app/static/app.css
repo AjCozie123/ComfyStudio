@@ -1483,3 +1483,12 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 .lora-dir { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.35; }
 .lora-dir.hidden { display: none; }
 .lora-slider-note { font-size: 13px; }
+
+/* "Generating" pill (top bar): any job running, from any device */
+.gen-pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(143,224,176,.35);
+  background: rgba(143,224,176,.10); color: #bff0d2; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; margin-right: 6px; }
+.gen-pill.hidden { display: none; }
+.gen-pill.is-elsewhere { border-color: rgba(255,200,90,.5); background: rgba(255,200,90,.12); color: #ffe3a8; }
+.gen-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: genPulse 1.2s ease-in-out infinite; }
+@keyframes genPulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+@media (max-width: 560px) { .gen-pill { padding: 5px 9px; font-size: 12px; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; } }

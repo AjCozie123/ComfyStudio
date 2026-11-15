@@ -417,6 +417,10 @@ def split_trigger(t):
     parts = [p.strip() for p in re.split(r"[,;\n]|\s+\|\s+", str(t or "")) if p.strip()]
     if not parts:
         return "", []
+    if len(parts) >= 3 and re.fullmatch(r"[A-Za-z]+(?: [A-Za-z]+){0,3}", parts[0]) and not re.search(r"[a-z][A-Z]", parts[0]):
+        # 'Side profile, legs together, huge butt': an instruction in ordinary words, not a made-up trigger. Its first
+        # part alone ("side profile") must not pick the LoRA; the parts only count together
+        return "", [_clean_trigger(p) for p in parts if 2 <= len(p) <= 60][:5]
     main = _clean_trigger(parts[0])
     if main and (len(main.split()) > 6 or len(main) > 60):   # a sentence, not a trigger
         return "", [_clean_trigger(p) for p in parts if 2 <= len(p) <= 60][:4]
@@ -803,8 +807,8 @@ def describe(rec, card, side, online=None, user=None, vocab=frozenset()):
         r = readable(t, vocab)
         if r:
             phrases.append([r, "readable"])
-    for h in hints:   # 'amen_pose, from behind, bent over': the parts after the trigger
-        phrases.append([h, "tag"])
+    for h in hints:   # 'amen_pose, from behind, bent over': the parts after the trigger (count only two together)
+        phrases.append([h, "hint"])
     if words:
         phrases.append([" ".join(words), "name"])
     # names made of parts ('Krea 2 - Microbikini - Sling Bikini'): each part is a phrase of its own

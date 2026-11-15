@@ -1462,3 +1462,16 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 .wf-test-result.bad strong { color: var(--warn); }
 .wf-test-result p { margin: 0; color: var(--muted); }
 .wf-test-result img, .wf-test-result video { width: 100%; max-height: 340px; object-fit: contain; border-radius: 10px; background: #000; }
+
+/* LoRA details sheet (tap a LoRA's name) */
+.lora-tip { margin: 4px 0 6px; }
+.lora-row .lora-name { cursor: pointer; text-decoration: underline dotted rgba(255,255,255,.35); text-underline-offset: 3px; }
+.lora-info { margin: 8px 0; padding: 12px; border-radius: 14px; background: var(--surface-2); display: grid; gap: 8px; }
+.lora-info.hidden { display: none; }
+.lora-info-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lora-info p { margin: 0; }
+.lora-trig { margin: 0; padding-left: 18px; }
+.lora-trig li { margin: 2px 0; }
+.lora-about { font-size: 12px; max-height: 5.5em; overflow: auto; }
+.lora-field { display: grid; gap: 4px; font-size: 13px; }
+.lora-field input { width: 100%; box-sizing: border-box; }

@@ -894,10 +894,37 @@ LORA_LOADERS = ("UNETLoader", "UnetLoaderGGUF", "CheckpointLoaderSimple", "LTXIn
                 "CheckpointLoader", "ImageOnlyCheckpointLoader")
 
 
-def inject_loras(graph, loras, card=None):
-    """Add the user's LoRAs. MiniMax H3 AIO: its spare LoRA slots. Anything else: a LoraLoaderModelOnly chain
-    right after the model loader, with every model consumer re-pointed to the end of the chain."""
-    loras = [l for l in (loras or []) if l and l.get("name") and l.get("name") != "None"][:6]
+def _short(name):
+    return re.sub(r"\.(safetensors|ckpt|pt|bin)$", "", str(name).replace("\\", "/").split("/")[-1], flags=re.I)
+
+
+def _model_source(graph):
+    """The node that loads the diffusion model: a known loader, else any node feeding a 'model' input that has no
+    'model' input of its own (a wrapper's loader the app doesn't know by name)."""
+    loader = next((k for k, v in graph.items() if v.get("class_type") in LORA_LOADERS), None)
+    if loader:
+        return loader
+    fed = {}
+    for k, v in graph.items():
+        val = (v.get("inputs") or {}).get("model")
+        if isinstance(val, list) and len(val) == 2 and val[1] == 0:
+            fed[str(val[0])] = fed.get(str(val[0]), 0) + 1
+    for k in sorted(fed, key=lambda x: -fed[x]):
+        n = graph.get(k) or {}
+        if "model" not in (n.get("inputs") or {}) and "loader" in str(n.get("class_type") or "").lower():
+            return k
+    return None
+
+
+def inject_loras(graph, loras, card=None, notes=None):
+    """Add the user's LoRAs. MiniMax H3 AIO: its spare LoRA slots. rgthree Power Lora Loader: its next free rows.
+    Anything else: a LoraLoaderModelOnly chain right after the model loader, with every model consumer re-pointed to
+    the end of the chain. LoRAs that can't be added are named in notes (never dropped without a word)."""
+    notes = notes if notes is not None else []
+    loras = [l for l in (loras or []) if l and l.get("name") and l.get("name") != "None"]
+    if len(loras) > 6:
+        notes.append("Only 6 LoRAs fit, so these weren't loaded: %s." % ", ".join(_short(l["name"]) for l in loras[6:]))
+        loras = loras[:6]
     if not loras:
         return []
     aio_l = _find(graph, "MiniMaxH3AIOLoras")
@@ -909,9 +936,32 @@ def inject_loras(graph, loras, card=None):
             ins["lora_%d" % i] = l["name"]
             ins["strength_%d" % i] = float(l.get("strength", 1.0))
             used.append(l["name"])
+        if len(used) < len(loras):
+            notes.append("The MiniMax all-in-one node had no free LoRA slot for: %s."
+                         % ", ".join(_short(l["name"]) for l in loras[len(used):]))
         return used
-    loader = next((k for k, v in graph.items() if v.get("class_type") in LORA_LOADERS), None)
+    power = next((k for k, v in graph.items() if v.get("class_type") == "Power Lora Loader (rgthree)"), None)
+    if power:
+        ins = graph[power].setdefault("inputs", {})
+        taken = {(v or {}).get("lora") for k, v in ins.items() if k.lower().startswith("lora_") and isinstance(v, dict)
+                 and (v or {}).get("on")}
+        n = max([int(m.group(1)) for m in (re.match(r"lora_(\d+)$", k, re.I) for k in ins) if m] + [0])
+        used = []
+        for l in loras:
+            if l["name"] in taken:   # already on in the workflow: just its strength
+                for k, v in ins.items():
+                    if isinstance(v, dict) and v.get("lora") == l["name"]:
+                        v["strength"] = float(l.get("strength", 1.0))
+                used.append(l["name"])
+                continue
+            n += 1
+            ins["lora_%d" % n] = {"on": True, "lora": l["name"], "strength": float(l.get("strength", 1.0))}
+            used.append(l["name"])
+        return used
+    loader = _model_source(graph)
     if not loader:
+        notes.append("This workflow has no model loader Comfy Studio can add LoRAs to, so these weren't loaded: %s."
+                     % ", ".join(_short(l["name"]) for l in loras))
         return []
     src = [loader, 0]
     for i, l in enumerate(loras):
@@ -1527,7 +1577,9 @@ def fill(card, graph, values, out_prefix):
             n.setdefault("inputs", {})["filename_prefix"] = out_prefix
     krea_edit_tune(g, values.get("edit_intent"))
     if values.get("loras") and card.get("supports_loras", True):
-        inject_loras(g, values["loras"], card)
+        inject_loras(g, values["loras"], card, values.setdefault("_lora_notes", []))
+    elif values.get("loras"):
+        values.setdefault("_lora_notes", []).append("This workflow is set not to take LoRAs, so none were loaded.")
     for n in g.values():
         n.pop("_meta", None)
     return g, int(seed)

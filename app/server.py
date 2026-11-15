@@ -22,6 +22,7 @@ import installer as INST
 import custom_nodes as CN
 import clothing_guard as CG
 import lora_index as LI
+import lora_lookup as LL
 import understanding as UND
 import library as LIB
 import assist as ASSIST
@@ -877,18 +878,46 @@ def krea_swap_pick(data, sw):
     return []
 
 
+def _lora_info(name):
+    """The index entry of one LoRA (lora_index.LAST, built by /api/loras/index; built here if the page hasn't yet)."""
+    if not LI.LAST:
+        try:
+            oi = object_info()
+            names = [n for n in (combo_list(oi, "LoraLoaderModelOnly", "lora_name") or []) if n and n != "None"]
+            fp, _idx = install_index()
+            LI.build(names, [d for d in (fp.get("loras") or []) if isinstance(d, str)], DATA)
+        except Exception as e:
+            log.info("lora index for triggers: %s", e)
+    return LI.LAST.get(name) or LI.LAST.get(str(name).replace("/", "\\")) or LI.LAST.get(str(name).replace("\\", "/")) or {}
+
+
+def _has_words(text, phrase):
+    """Whole words, any case: 'mcrmst' is in 'a mcrmst woman', 'art' isn't in 'party'."""
+    ws = [w for w in re.split(r"[^0-9a-z]+", phrase.lower()) if w]
+    return bool(ws) and re.search(r"(?<![0-9a-z])" + r"[^0-9a-z]+".join(map(re.escape, ws)) + r"(?![0-9a-z])",
+                                  (text or "").lower()) is not None
+
+
 def lora_trigger_prompt(prompt, loras):
-    """Auto-picked LoRAs picked by their name can need their trigger word: put it in front of the prompt sent to the
-    model (the person's prompt box isn't changed). Only short triggers the prompt doesn't already have."""
+    """Every LoRA sent (picked by you or by Auto-pick) gets its trigger word in front of the prompt sent to the model,
+    unless the prompt already has one of its triggers (your prompt box isn't changed). Short triggers only: long ones
+    are instructions for edit LoRAs. Tool / speed / slider LoRAs get none (they belong to the workflow)."""
     adds = []
-    low = (prompt or "").lower()
     for l in loras or []:
-        t = l.get("add_trigger") if isinstance(l, dict) and l.get("auto") else None
-        if isinstance(t, str):
-            t = " ".join(t.split())[:40]
-            if t and t.lower() not in low and t.lower() not in [a.lower() for a in adds]:
-                adds.append(t)
-    return (", ".join(adds[:3]) + ", " + (prompt or "")) if adds else prompt
+        if not isinstance(l, dict) or not l.get("name") or l.get("add_trigger") is False:
+            continue
+        info = _lora_info(l["name"])
+        if info and (info.get("add_trigger") is False or info.get("kind") in LI.NEVER_AUTO):
+            continue
+        t = l.get("add_trigger") if isinstance(l.get("add_trigger"), str) and l.get("add_trigger") else info.get("insert")
+        if not isinstance(t, str) or not t.strip():
+            continue
+        t = " ".join(t.split())[:40]
+        if any(_has_words(prompt, x) for x in [t] + list(info.get("triggers") or [])):
+            continue
+        if t.lower() not in [a.lower() for a in adds]:
+            adds.append(t)
+    return (", ".join(adds[:6]) + ", " + (prompt or "")) if adds else prompt
 
 
 def server_error_text(e):
@@ -2006,6 +2035,7 @@ def submit_workflow_job(data):
                                                    and data.get("edit_intent") in WF.KREA_INTENT_KNOBS) else None,
     }
     g, used_seed = WF.fill(card, graph, values, APP_OUT + "/wf/" + card["id"])
+    notes += values.pop("_lora_notes", None) or []
     # sorted save folder: ComfyStudio/<engine>/<model>/<t2i|edit|video>/<workflow id>_00001_.png
     wf_model = graph_model(g)
     wf_prefix = out_dir(engine_label(card), wf_model, kind_label(card)) + "/" + _seg(card["id"], "workflow")
@@ -2828,8 +2858,20 @@ def _clean_request(data):
     return data
 
 
+_WEIGHT_RX = re.compile(r"([A-Za-z][\w'-]*)\s*=\s*(\d*\.\d+|\d+(?:\.\d+)?)")
+
+
+def strip_lora_weights(prompt):
+    """'macromastia=0.4' sets that LoRA's strength in the page (static/lora_match.js); the model only reads the word."""
+    if not prompt or "=" not in prompt:
+        return prompt
+    return re.sub(r"[ \t]{2,}", " ", _WEIGHT_RX.sub(r"\1", prompt))
+
+
 def submit_job(data):
     _clean_request(data)
+    if data.get("prompt"):
+        data["prompt"] = strip_lora_weights(data["prompt"])
     if str(data.get("mode") or "").strip().lower() in ("workflow", "wf"):
         return submit_workflow_job(data)
     mode = (data.get("mode") or "t2i").strip().lower()
@@ -2980,15 +3022,15 @@ def submit_job(data):
             except Exception as e:
                 log.warning("inpaint: couldn't lock the rest of the picture: %s", e)
     user_loras = [l for l in (data.get("loras") or []) if isinstance(l, dict) and l.get("name")]
+    model_notes = []
     if user_loras:
-        WF.inject_loras(graph, user_loras)
+        WF.inject_loras(graph, user_loras, notes=model_notes)
     if isinstance(assist_info, dict):
         pe_system_extra = ASSIST.pe_system_addon(assist_info)
         pe_task_extra = ASSIST.pe_task_prefix(assist_info)
     else:
         pe_system_extra = ""
         pe_task_extra = ""
-    model_notes = []
     if pe:
         clip_ok = pe_clip_available(pe_models.get("pe_clip_name"))
         if not clip_ok:
@@ -3512,6 +3554,34 @@ def _active_job_count():
     return len([j for j in jobs.values() if j.get("status") in ("queued", "running", "waiting_comfy")])
 
 
+LORA_DIRS = []   # the LoRA folders (set when the page asks for the LoRA index)
+
+
+def lora_online_on():
+    """Looking LoRAs up online by their fingerprint (lora_lookup.py): on unless switched off in Settings."""
+    return app_paths.load(DATA).get("lora_online") is not False
+
+
+def _lora_targets():
+    if not LORA_DIRS:
+        try:
+            fp, _idx = install_index()
+            LORA_DIRS[:] = [d for d in (fp.get("loras") or []) if isinstance(d, str)]
+        except Exception:
+            return []
+    if not LI.LAST:
+        _lora_info("")
+    out = []
+    for name in list(LI.LAST):
+        full = next((os.path.join(d, name) for d in LORA_DIRS if os.path.isfile(os.path.join(d, name))), None)
+        if full and name.lower().endswith(".safetensors"):
+            out.append((name, full))
+    return out
+
+
+LORA_WORKER = LL.Worker(DATA, _lora_targets, lora_online_on, lambda: _active_job_count() == 0, log)
+
+
 def _update_loop():
     time.sleep(60)
     while True:
@@ -3854,7 +3924,11 @@ class H(BaseHTTPRequestHandler):
                 dirs = [d for d in (fp.get("loras") or []) if isinstance(d, str)]
             except Exception:
                 dirs = []
-            return self.j(dict({"items": LI.build(names, dirs, DATA), "engine_family": LI.ENGINE_FAMILY}, **LI.client_lists()))
+            LORA_DIRS[:] = dirs
+            return self.j(dict({"items": LI.build(names, dirs, DATA), "engine_family": LI.ENGINE_FAMILY,
+                                "online": dict(LL.status(), on=lora_online_on())}, **LI.client_lists()))
+        if path == "/api/loras/lookup":
+            return self.j(dict(LL.status(), on=lora_online_on()))
         if path == "/api/loras":
             try:
                 oi = object_info()
@@ -4535,6 +4609,25 @@ class H(BaseHTTPRequestHandler):
             if res.get("updated"):
                 UPD.restart_soon(port=PORT)
             return self.j(res)
+        if path == "/api/loras/user":
+            # your own trigger words / "use when the prompt mentions" words / settings for one LoRA
+            name = str(data.get("name") or "")
+            if not name or not LI.is_lora_file(name):
+                return self.j({"error": "Which LoRA? (no name sent)"}, 400)
+            try:
+                saved = LI.save_user(DATA, name, data)
+            except OSError as e:
+                return self.j({"error": "Couldn't save that (%s)." % e}, 500)
+            LI.LAST.clear()   # rebuilt with your words on the next request
+            return self.j({"ok": True, "saved": saved})
+        if path == "/api/loras/lookup":
+            st = app_paths.load(DATA)
+            if "on" in data:
+                st["lora_online"] = bool(data.get("on"))
+                app_paths.save(DATA, st)
+            if lora_online_on():
+                LORA_WORKER.kick.set()
+            return self.j(dict(LL.status(), on=lora_online_on()))
         if path == "/api/update/auto":
             st = app_paths.load(DATA)
             st["auto_critical"] = bool(data.get("on"))
@@ -4830,6 +4923,7 @@ def main():
     threading.Thread(target=_ws_thread, daemon=True).start()
     threading.Thread(target=_update_loop, daemon=True).start()
     threading.Thread(target=_worker, daemon=True).start()
+    LORA_WORKER.start()   # LoRA trigger words from CivitAI / CivArchive, only while idle
     # Bind the Tailscale IP in a side thread; skip gracefully if it is absent.
     extra = []
     for h in HOSTS[1:]:

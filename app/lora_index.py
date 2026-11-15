@@ -391,6 +391,8 @@ def name_words(name):
             continue
         if len(w) == 2 and not re.fullmatch(r"3d|2d|tv|ai", w):
             continue
+        if len(ws) > 1 and re.fullmatch(r"[a-z]{2,5}\d", w):   # 'kea2', 'minmax3': a model / version tag
+            continue
         out.append(w)
     return out[:6]
 
@@ -400,15 +402,44 @@ def _tokens(name):  # kept for older clients: single distinctive words of the na
 
 
 def _clean_trigger(t):
-    t = re.sub(r"\s+", " ", str(t or "")).strip().strip(",.;")
+    t = re.sub(r"\s+", " ", str(t or "")).strip().strip(",.;:")
     return t if 2 <= len(t) <= 80 else ""
+
+
+# made-up trigger tokens shared by many unrelated LoRAs (DreamBooth defaults) or tags that fit every picture: never a
+# reason to pick a LoRA on their own
+GENERIC_TRIGGERS = set("""sks ohwx tok zwx xyz trigger 1girl 1boy 2girls solo person woman man girl boy photo style""".split())
+
+
+def split_trigger(t):
+    """'amen_pose, from behind, bent over' -> ('amen_pose', ['from behind', 'bent over']): the first part is the trigger
+    word, the rest describe what it shows (they help to find the LoRA but never pick it on their own)."""
+    parts = [p.strip() for p in re.split(r"[,;\n]|\s+\|\s+", str(t or "")) if p.strip()]
+    if not parts:
+        return "", []
+    main = _clean_trigger(parts[0])
+    if main and (len(main.split()) > 6 or len(main) > 60):   # a sentence, not a trigger
+        return "", [_clean_trigger(p) for p in parts if 2 <= len(p) <= 60][:4]
+    return main, [x for x in (_clean_trigger(p) for p in parts[1:]) if x and len(x.split()) <= 6][:4]
+
+
+def _caption_trigger(tag):
+    """ai-toolkit stores the first training caption as a 'tag' ('amen_pose, from behind, bent over'): its first part is
+    the trigger when it is a made-up word, not an ordinary one."""
+    first = tag.split(",")[0].strip()
+    if not first or len(first) < 3 or len(first.split()) > 4 or first.lower() in _STOP_TAGS:
+        return ""
+    if "," in tag or "_" in first or re.search(r"\d", first) or re.search(r"[a-z][A-Z]", first):
+        return first if len(first.split()) <= 2 else ""
+    return first if len(tag.split()) <= 6 else ""
 
 
 def _triggers(meta):
     trig = []
-    for k in ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words", "ss_trigger_words", "activation_text"):
+    for k in ("modelspec.trigger_phrase", "trigger_phrase", "trigger_words", "ss_trigger_words", "activation_text",
+              "modelspec.usage_hint"):
         v = meta.get(k)
-        if v:
+        if v and not (k == "modelspec.usage_hint" and len(v) > 120):
             trig += [x.strip() for x in re.split(r"[,;\n]", v) if x.strip()]
     # training tags: the most frequent tag is often the trigger word (only if it isn't an ordinary word)
     tf = meta.get("ss_tag_frequency")
@@ -419,11 +450,76 @@ def _triggers(meta):
                 for tag, c in (ds or {}).items():
                     counts[tag.strip()] = counts.get(tag.strip(), 0) + int(c)
             for tag, _c in sorted(counts.items(), key=lambda x: -x[1])[:2]:
-                if tag.lower() not in _STOP_TAGS and len(tag) >= 3 and len(tag.split()) <= 6:
-                    trig.append(tag)
+                ct = _caption_trigger(tag)
+                if ct:
+                    trig.append(ct)
         except Exception:
             pass
     return _uniq(trig, 6)
+
+
+def file_title(meta):
+    """modelspec.title / ss_output_name when it says something ('Flux 2.0 LoRA', 'epoch_10', 'aitk_lora' don't)."""
+    for k in ("modelspec.title", "ss_output_name"):
+        t = str(meta.get(k) or "").strip()
+        if not t or len(t) > 80:
+            continue
+        if "," in t:   # a caption used as the title: its first part (the trigger) is enough
+            t = t.split(",")[0].strip()
+        ws = [w for w in _split_words(t) if w not in NAME_NOISE and not re.fullmatch(r"(v|e|epoch|step)?\d+[a-z]?", w)
+              and w not in ("aitk", "training", "lora", "output", "untitled", "my", "first", "test")]
+        if ws:
+            return t
+    return ""
+
+
+_LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
+
+
+def readable(trigger, vocab=frozenset()):
+    """How a made-up trigger reads as words: 'Th1ckTh1ghs' -> 'thick thighs', 'superhipwaist' -> 'super hip waist',
+    'amen_pose' -> 'amen pose'. '' when it reads the same or can't be read."""
+    t = str(trigger or "").strip()
+    if not t or " " in t.strip() and not re.search(r"[_\d]", t):
+        return ""
+    t2 = t
+    if re.search(r"[a-zA-Z]\d|\d[a-zA-Z]", t2) and not re.search(r"\d{2,}", t2):
+        t2 = t2.translate(_LEET)
+    ws = _split_words(t2)
+    out = []
+    for w in ws:
+        if len(w) >= 8 and w not in vocab and vocab:
+            seg = segment(w, vocab)
+            out += seg if seg else [w]
+        else:
+            out.append(w)
+    r = " ".join(out)
+    return r if r and r != " ".join(_split_words(t)).lower() and r != t.lower() and all(w.isalpha() for w in out) else ""
+
+
+def segment(w, vocab):
+    """'superhipwaist' -> ['super', 'hip', 'waist'] when every part is a known word of 3+ letters (fewest parts)."""
+    best = {0: []}
+    for e in range(1, len(w) + 1):
+        for s in range(max(0, e - 14), e - 2):
+            if s in best and w[s:e] in vocab and (e not in best or len(best[s]) + 1 < len(best[e])):
+                best[e] = best[s] + [w[s:e]]
+    parts = best.get(len(w))
+    return parts if parts and len(parts) >= 2 else None
+
+
+def trigger_from_filenames(files):
+    """Shared copies are often named 'Title - Base - trigger,0.2-1.safetensors': the last part is the trigger word."""
+    for f in files or []:
+        stem = _stem_name(str(f))
+        parts = [p.strip() for p in re.split(r"\s+-\s+", stem) if p.strip()]
+        if len(parts) < 3:
+            continue
+        cand = parts[-1].split(",")[0].strip()
+        if (4 <= len(cand) <= 30 and " " not in cand and not family_of(cand) and cand.lower() not in NAME_NOISE
+                and not re.fullmatch(r"v?\d+(\.\d+)*", cand, re.I)):
+            return cand
+    return ""
 
 
 def _uniq(items, n):
@@ -562,15 +658,42 @@ def group_key(family, name, words):
     return "%s|%s" % (family or "", " ".join(words) if words else _stem_name(name).lower())
 
 
-def describe(rec, card, side):
-    """Everything the page needs to auto-pick this LoRA (added to the cached header facts)."""
+def _gather_triggers(sources):
+    """[(source, [raw trigger strings])] in priority order -> (triggers, [[trigger, source]], extra hint phrases)."""
+    trig, info, hints, seen = [], [], [], set()
+    for src, raw in sources:
+        for t in raw or []:
+            main, extra = split_trigger(t)
+            if main and main.lower() not in seen:
+                seen.add(main.lower())
+                trig.append(main)
+                info.append([main, src])
+            hints += [e for e in extra if e.lower() not in seen]
+    return trig[:8], info[:8], _uniq(hints, 6)
+
+
+def describe(rec, card, side, online=None, user=None, vocab=frozenset()):
+    """Everything the page needs to auto-pick this LoRA (added to the cached header facts).
+    online: what CivitAI / CivArchive know (lora_lookup); user: the words the person set for it in the app."""
     name, folder = rec["name"], rec.get("folder") or ""
-    card = card or {}
+    card, online, user = card or {}, online or {}, user or {}
     title = re.sub(r"\((?:krea ?2|flux[^)]*|klein[^)]*|qwen[^)]*)\)|\[[^\]]*\]|\bfor (?:krea ?2|flux[\w. ]*|klein[\w ]*)",
-                   "", str(card.get("title") or side.get("title") or ""), flags=re.I).strip(" -_|")
-    triggers = _uniq(list(rec.get("triggers") or []) + list(card.get("triggers") or []) + side["triggers"], 8)
-    tags = [t for t in (list(card.get("tags") or []) + side["tags"]) if isinstance(t, str)][:16]
-    about = str(card.get("about") or side.get("about") or "")
+                   "", str(card.get("title") or side.get("title") or online.get("name") or rec.get("ftitle") or ""),
+                   flags=re.I).strip(" -_|")
+    online_trig = list(online.get("trainedWords") or [])
+    if online and not online_trig:
+        ft = trigger_from_filenames(online.get("files"))
+        online_trig = [ft] if ft else []
+    if user.get("triggers"):   # the person's own trigger words replace every other source
+        sources = [("you", user.get("triggers"))]
+    else:
+        sources = [("info file", list(card.get("triggers") or []) + side["triggers"]), ("file", rec.get("triggers")),
+                   ("online", online_trig)]
+    triggers, trig_info, hints = _gather_triggers(sources)
+    tags = [t for t in (list(card.get("tags") or []) + side["tags"] + list(online.get("tags") or []))
+            if isinstance(t, str)]
+    tags = list(dict.fromkeys(t.strip() for t in tags if t.strip()))[:20]
+    about = str(card.get("about") or side.get("about") or online.get("about") or "")
     words = name_words(name)
     # adult content? from the name, folder, trigger words, title and tags (not the free description). A LoRA tagged
     # both "sfw" and "nsfw" is a general one: its tags alone don't make it adult.
@@ -580,7 +703,17 @@ def describe(rec, card, side):
     adult = adult_level([folder, title] + raw_name) or adult_level(list(triggers) + list(tags), weak=not dual)
     kind = kind_of(name, folder, tags, about, triggers, adult, adult_name)
     # "3D Render Style. 3DRenderAF." is two triggers
-    phrases = [[p.strip(), "trigger"] for t in triggers for p in re.split(r"\.\s+|\.$", t) if len(p.strip()) >= 2]
+    phrases = [[p.strip(), "user" if user.get("triggers") else "trigger"] for t in triggers
+               for p in re.split(r"\.\s+|\.$", t) if len(p.strip()) >= 2]
+    for w in user.get("words") or []:   # "use this LoRA when the prompt mentions ..."
+        if isinstance(w, str) and w.strip():
+            phrases.append([w.strip(), "user"])
+    for t in triggers:   # 'Th1ckTh1ghs' is also found by "thick thighs"
+        r = readable(t, vocab)
+        if r:
+            phrases.append([r, "readable"])
+    for h in hints:   # 'amen_pose, from behind, bent over': the parts after the trigger
+        phrases.append([h, "tag"])
     if words:
         phrases.append([" ".join(words), "name"])
     # names made of parts ('Krea 2 - Microbikini - Sling Bikini'): each part is a phrase of its own
@@ -605,16 +738,22 @@ def describe(rec, card, side):
     if adult == "explicit" and _adult_concepts(raw_name) == {"nsfw"} and not rest and \
             not (_adult_concepts(_split_words(" ".join(triggers + [title]))) - {"nude", "nsfw", "sex", "topless"}):
         phrases = phrases[:16 - len(GENERAL_ADULT)] + [[w, "concept"] for w in GENERAL_ADULT]
-    hint = side.get("weight") or strength_hint(_stem_name(name), about)
+    hint = _num(user.get("strength")) or side.get("weight") or strength_hint(_stem_name(name), about)
     strength = hint if hint else KIND_DEFAULT_STRENGTH.get(kind, 0.85)
     auto = bool(rec.get("family")) and kind not in NEVER_AUTO and name.lower().endswith(".safetensors")
+    if user.get("auto") is False:
+        auto = False
     # one training run saved at several steps -> one group (the page keeps the latest step)
     series = re.sub(r"[_\-.]?(?:e|ep|epoch|step|s)?\d{2,}$", "", _stem_name(name), flags=re.I).lower()
+    # the trigger to put in front of the prompt when this LoRA is used: a short one (long ones are edit instructions)
+    insert = next((t for t in triggers if len(t.split()) <= 4 and len(t) <= 40 and t.lower() not in GENERIC_TRIGGERS), "")
     return {
-        "kind": kind, "auto": auto, "strength": round(float(strength), 2), "phrases": phrases[:16], "triggers": triggers,
-        "title": title[:80], "group": group_key(rec.get("family"), name, words) if words else
+        "kind": kind, "auto": auto, "strength": round(float(strength), 2), "phrases": phrases[:24], "triggers": triggers,
+        "trigger_info": trig_info, "insert": insert, "add_trigger": user.get("add_trigger") is not False,
+        "title": title[:80], "about": about[:300], "online": online.get("src") or "",
+        "group": group_key(rec.get("family"), name, words) if words else
         "%s|%s/%s" % (rec.get("family") or "", folder.lower(), series),
-        "weight_from": "maker" if hint else "kind", "nsfw": adult == "explicit",
+        "weight_from": "you" if _num(user.get("strength")) else ("maker" if hint else "kind"), "nsfw": adult == "explicit",
     }
 
 
@@ -627,7 +766,15 @@ def build(names, lora_dirs, data_dir):
     except (OSError, ValueError):
         cache = {}
     cards = load_cards(lora_dirs)
-    out, fresh = [], {}
+    users = load_user(data_dir)
+    try:
+        import lora_lookup
+        online_of = lambda n: lora_lookup.info_for(n, data_dir)
+    except Exception:
+        online_of = lambda n: {}
+    names = [n for n in names if is_lora_file(n)]
+    recs = []
+    fresh = {}
     for name in names:
         full = next((os.path.join(d, name) for d in lora_dirs if os.path.isfile(os.path.join(d, name))), None)
         key = name
@@ -638,19 +785,36 @@ def build(names, lora_dirs, data_dir):
             sig = "%d|%d" % (st.st_size, int(st.st_mtime))
             mtime = int(st.st_mtime)
         hit = cache.get(key)
-        if hit and hit.get("sig") == sig and hit.get("v") == 4:
+        if hit and hit.get("sig") == sig and hit.get("v") == 5:
             rec = hit
         else:
             meta = read_meta(full) if full else {}
             base = meta.get("ss_base_model_version") or meta.get("modelspec.architecture") or meta.get("ss_sd_model_name") or ""
             fam = family_of(base) or family_of(os.path.dirname(name)) or family_of(os.path.basename(name))
             rec = {"name": name, "folder": os.path.dirname(name).replace("\\", "/"), "family": fam, "base": base[:80],
-                   "triggers": _triggers(meta), "sig": sig, "v": 4}
+                   "triggers": _triggers(meta), "ftitle": file_title(meta), "sig": sig, "v": 5}
         fresh[key] = rec
         side = sidecar_info(full) if full else {"triggers": [], "tags": [], "weight": None, "about": "", "title": ""}
+        recs.append((name, rec, side, online_of(name), mtime))
+    # every word the library uses (names, titles, tags) + ordinary words: glued triggers are split with it
+    vocab = set(w for w in GENERIC if len(w) >= 3)
+    for name, rec, side, onl, _m in recs:
+        for t in [_stem_name(name), rec.get("ftitle"), side.get("title"), onl.get("name")] + list(onl.get("tags") or []) \
+                + list(side.get("tags") or []):
+            vocab.update(w for w in _split_words(str(t or "")) if len(w) >= 3 and w.isalpha())
+    out = []
+    for name, rec, side, onl, mtime in recs:
         card = cards.get(name.replace("\\", "/").lower())
         item = {k: rec.get(k) for k in ("name", "folder", "family", "base")}
-        item.update(describe(rec, card, side))
+        # the base model CivitAI lists fills in a family the file and folder couldn't tell
+        if onl.get("base") and not rec.get("base"):
+            fam = family_of(onl["base"])
+            if fam:
+                item["family"], item["base"] = fam, onl["base"]
+        user = users.get(name.replace("\\", "/").lower()) or {}
+        if user.get("family"):
+            item["family"] = user["family"]
+        item.update(describe(dict(rec, family=item["family"]), card, side, onl, user, vocab))
         item["tokens"] = _tokens(name)
         item["mtime"] = mtime
         out.append(item)
@@ -658,11 +822,67 @@ def build(names, lora_dirs, data_dir):
         json.dump(fresh, open(cache_p, "w", encoding="utf-8"))
     except OSError:
         pass
+    LAST.clear()
+    LAST.update({it["name"]: it for it in out})
     return out
+
+
+LAST = {}   # name -> item of the latest build (the server uses it to add trigger words to a prompt)
+
+
+def is_lora_file(name):
+    """ComfyUI lists everything in the LoRA folders with a model extension: training leftovers aren't LoRAs."""
+    b = os.path.basename(str(name or "").replace("\\", "/")).lower()
+    return bool(b) and not re.fullmatch(r"(optimizer|scheduler|ema|training_state|rng_state)[\w.-]*\.(pt|pth|bin|safetensors)", b)
+
+
+def user_path(data_dir):
+    return os.path.join(data_dir, "lora_user.json")
+
+
+def load_user(data_dir):
+    """What the person set for their LoRAs in the app: {name(lower, /): {triggers, words, add_trigger, auto, strength}}."""
+    try:
+        d = json.load(open(user_path(data_dir), encoding="utf-8"))
+        return {k.replace("\\", "/").lower(): v for k, v in (d or {}).items() if isinstance(v, dict)}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_user(data_dir, name, entry):
+    """Store (or clear, entry={}) the person's words for one LoRA."""
+    p = user_path(data_dir)
+    try:
+        d = json.load(open(p, encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    key = name.replace("\\", "/").lower()
+    clean = {}
+    trig = [_clean_trigger(t) for t in (entry.get("triggers") or []) if isinstance(t, str)]
+    if any(trig):
+        clean["triggers"] = [t for t in trig if t][:8]
+    ws = [_clean_trigger(t) for t in (entry.get("words") or []) if isinstance(t, str)]
+    if any(ws):
+        clean["words"] = [t for t in ws if t][:12]
+    if entry.get("add_trigger") is False:
+        clean["add_trigger"] = False
+    if entry.get("auto") is False:
+        clean["auto"] = False
+    if _num(entry.get("strength")):
+        clean["strength"] = _num(entry.get("strength"))
+    if clean:
+        d[key] = clean
+    else:
+        d.pop(key, None)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, p)
+    return clean
 
 
 def client_lists():
     """Word lists the page's matcher uses (one source of truth)."""
     return {"generic": sorted(GENERIC), "concepts": ADULT_CONCEPTS, "sizes": ADULT_SIZES, "body": ADULT_BODY,
             "implies": ADULT_IMPLIES, "nudeish": ADULT_NUDEISH, "skip": ADULT_SKIP, "undress": ADULT_UNDRESS,
-            "sfw": ADULT_SFW, "ignorable": ADULT_IGNORABLE}
+            "sfw": ADULT_SFW, "ignorable": ADULT_IGNORABLE, "generic_triggers": sorted(GENERIC_TRIGGERS)}

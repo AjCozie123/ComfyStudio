@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261113j">
+  <link rel="stylesheet" href="/static/app.css?v=20261115a">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -476,6 +476,10 @@
     <label class="check-row lora-auto-row"><input type="checkbox" id="lora-auto"> Auto-pick LoRAs from my prompt
       <span class="muted">(only LoRAs made for this engine's model)</span></label>
     <label class="check-row lora-max-row">Auto-pick at most <select id="lora-max" aria-label="Most LoRAs Auto-pick may load"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select> LoRAs <span class="muted">(cross one out to skip it for this picture only)</span></label>
+    <p class="pop-note lora-tip">Tip: type a word with <b>=</b> and a number to set that LoRA&rsquo;s strength, e.g. <i>macromastia=0.5</i>. Tap a LoRA&rsquo;s name to see or set its trigger words.</p>
+    <label class="check-row lora-online-row"><input type="checkbox" id="lora-online"> Find trigger words online
+      <span class="muted" id="lora-online-note">(sends only each LoRA file&rsquo;s fingerprint to CivitAI / CivArchive, never your prompts or files)</span></label>
+    <div id="lora-info" class="lora-info hidden" role="region" aria-label="LoRA details"></div>
     <div id="lora-auto-list" class="lora-auto-list hidden"></div>
     <div id="lora-list" class="lora-list"></div>
     <div class="lora-add">
@@ -952,7 +956,7 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
-  <script src="/static/lora_match.js?v=20261113l"></script>
-  <script src="/static/app.js?v=20261114c"></script>
+  <script src="/static/lora_match.js?v=20261115a"></script>
+  <script src="/static/app.js?v=20261115a"></script>
 </body>
 </html>

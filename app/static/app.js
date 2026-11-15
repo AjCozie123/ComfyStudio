@@ -6302,7 +6302,8 @@ function bindShell() {
       row.innerHTML = '<span class="lora-name"></span><button type="button" class="icon-btn sm" aria-label="Remove">✕</button>' +
         '<label class="lora-strength">Strength <input type="range" min="-1" max="2" step="0.05"><span class="lora-val"></span></label>';
       row.querySelector(".lora-name").textContent = short(l.name);
-      row.querySelector(".lora-name").title = l.name;
+      row.querySelector(".lora-name").title = l.name + " (tap for its trigger words)";
+      row.querySelector(".lora-name").addEventListener("click", () => window.__loraInfo && window.__loraInfo(l.name));
       const r = row.querySelector("input"), v = row.querySelector(".lora-val");
       r.value = l.strength; v.textContent = Number(l.strength).toFixed(2);
       r.addEventListener("input", () => { v.textContent = Number(r.value).toFixed(2); });
@@ -8157,11 +8158,87 @@ function bindShell() {
   const short = (n) => String(n || "").split(/[\\/]/).pop().replace(/\.(safetensors|ckpt|pt|bin)$/i, "");
   const FAM_LABEL = { minimax_h3: "MiniMax H3", krea2: "Krea 2", qwen_image: "Qwen Image", flux2: "FLUX.2", flux1: "FLUX.1",
     moss: "MOSS", sdxl: "SDXL", sd15: "SD 1.5", ltx: "LTX", wan: "Wan", hunyuan: "Hunyuan", z_image: "Z-Image" };
-  async function ensureIndex() {
-    if (INDEX) return INDEX;
-    try { const d = await api("/api/loras/index"); INDEX = d.items || []; FAMMAP = d.engine_family || {}; GENERIC = new Set(d.generic || []); LISTS = Object.assign({}, d); delete LISTS.items; delete LISTS.engine_family; delete LISTS.generic; } catch (e) { INDEX = []; }
+  let LOADED = 0, ONLINE = null;
+  // fetched again when it came back empty (ComfyUI was still starting) and every 10 minutes (trigger words found
+  // online arrive in the background)
+  async function ensureIndex(force) {
+    if (INDEX && INDEX.length && !force && Date.now() - LOADED < 10 * 60 * 1000) return INDEX;
+    try {
+      const d = await api("/api/loras/index");
+      INDEX = d.items || []; FAMMAP = d.engine_family || {}; GENERIC = new Set(d.generic || []); ONLINE = d.online || null;
+      LISTS = Object.assign({}, d); delete LISTS.items; delete LISTS.engine_family; delete LISTS.generic; delete LISTS.online;
+      LOADED = INDEX.length ? Date.now() : 0;
+    } catch (e) { INDEX = INDEX || []; }
+    showOnline();
     return INDEX;
   }
+  function showOnline() {
+    const cb = $("lora-online"), note = $("lora-online-note");
+    if (!cb || !ONLINE) return;
+    cb.checked = ONLINE.on !== false;
+    const parts = [];
+    if (ONLINE.found) parts.push(ONLINE.found + " found");
+    if (ONLINE.pending) parts.push(ONLINE.pending + " still to look up");
+    if (ONLINE.total && ONLINE.hashed < ONLINE.total) parts.push("reading files " + ONLINE.hashed + "/" + ONLINE.total);
+    note.textContent = "(sends only each LoRA file’s fingerprint to CivitAI / CivArchive, never your prompts or files"
+      + (parts.length ? "; " + parts.join(", ") : "") + ")";
+  }
+  if ($("lora-online")) $("lora-online").addEventListener("change", async () => {
+    try {
+      ONLINE = await api("/api/loras/lookup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: $("lora-online").checked }) });
+      showOnline();
+      toast($("lora-online").checked ? "Looking up trigger words online while nothing is generating" : "Online lookup off");
+    } catch (e) { showError(e.message || "Couldn't save that."); }
+  });
+
+  /* A LoRA's details: its trigger words (and where each came from), what it's for, and your own words for it */
+  const SRC_LABEL = { you: "set by you", "info file": "from its info file", file: "from the file", online: "found online" };
+  async function loraInfo(name) {
+    await ensureIndex();
+    const it = (INDEX || []).find((x) => x.name === name);
+    const box = $("lora-info");
+    if (!box) return;
+    if (!it) { box.innerHTML = '<p class="pop-note">No details for ' + esc(short(name)) + " yet.</p>"; box.classList.remove("hidden"); return; }
+    const trig = (it.trigger_info || []).map((t) => "<li><b>" + esc(t[0]) + "</b> <span class=\"muted\">" + esc(SRC_LABEL[t[1]] || t[1]) + "</span></li>").join("");
+    const mine = (it.phrases || []).filter((p) => p[1] === "user" && !(it.triggers || []).includes(p[0])).map((p) => p[0]);
+    box.innerHTML = '<div class="lora-info-head"><b></b><button type="button" class="icon-btn sm" aria-label="Close">✕</button></div>'
+      + '<p class="muted lora-info-meta"></p>'
+      + (trig ? "<p>Trigger words:</p><ul class=\"lora-trig\">" + trig + "</ul>" : '<p class="muted">No trigger words known for this LoRA. If you know them, add them below.</p>')
+      + (it.about ? '<p class="muted lora-about"></p>' : "")
+      + '<label class="lora-field">Its trigger words (comma between them)<input type="text" class="search-box" data-f="triggers"></label>'
+      + '<label class="lora-field">Also pick it when my prompt says (comma between them)<input type="text" class="search-box" data-f="words" placeholder="e.g. huge hips, wide hips"></label>'
+      + '<label class="check-row"><input type="checkbox" data-f="add"> Add its trigger word to the prompt sent to the model</label>'
+      + '<label class="check-row"><input type="checkbox" data-f="auto"> Auto-pick may use it</label>'
+      + '<div class="wf-actions"><button type="button" class="chip-btn primary" data-f="save">Save</button></div>';
+    box.querySelector("b").textContent = it.title || short(it.name);
+    box.querySelector(".lora-info-meta").textContent = [it.folder || "", FAM_LABEL[it.family] || it.family || "model unknown", it.kind,
+      "strength " + it.strength + (it.weight_from === "maker" ? " (maker’s)" : it.weight_from === "you" ? " (yours)" : "")].filter(Boolean).join(" · ");
+    if (it.about) box.querySelector(".lora-about").textContent = it.about;
+    const f = (k) => box.querySelector('[data-f="' + k + '"]');
+    const yours = (it.trigger_info || []).every((t) => t[1] === "you") && (it.trigger_info || []).length;
+    f("triggers").value = yours ? (it.triggers || []).join(", ") : "";
+    f("triggers").placeholder = (it.triggers || []).length ? "Leave empty to keep: " + it.triggers.join(", ") : "e.g. mcrmst";
+    f("words").value = mine.join(", ");
+    f("add").checked = it.add_trigger !== false;
+    f("auto").checked = it.auto !== false;
+    f("auto").disabled = ["utility", "tool", "slider"].includes(it.kind);
+    box.querySelector(".icon-btn").addEventListener("click", () => box.classList.add("hidden"));
+    f("save").addEventListener("click", async () => {
+      const list = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
+      try {
+        await api("/api/loras/user", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: it.name, triggers: list(f("triggers").value), words: list(f("words").value),
+            add_trigger: f("add").checked, auto: f("auto").disabled ? undefined : f("auto").checked }) });
+        await ensureIndex(true);
+        toast("Saved for " + short(it.name));
+        box.classList.add("hidden");
+        renderAuto(); window.__syncLoraPill && window.__syncLoraPill();
+      } catch (e) { showError(e.message || "Couldn't save that."); }
+    });
+    box.classList.remove("hidden");
+    box.scrollIntoView({ block: "nearest" });
+  }
+  window.__loraInfo = loraInfo;
   function engineFam() {
     const a = window.__wfActive && window.__wfActive();
     if (!a) return state.media === "video" ? null : "minimax_h3";
@@ -8199,9 +8276,10 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
       row.innerHTML = '<span class="lora-name"></span><span class="lora-why"></span>'
         + '<button type="button" class="chip-btn lora-keep">Keep</button><button type="button" class="icon-btn sm" aria-label="Don\u2019t use">\u2715</button>';
       row.querySelector(".lora-name").textContent = short(a.name);
-      row.querySelector(".lora-name").title = a.name;
+      row.querySelector(".lora-name").title = a.name + " (tap for its trigger words)";
+      row.querySelector(".lora-name").addEventListener("click", () => loraInfo(a.name));
       row.querySelector(".lora-why").textContent = "\u201c" + a.why + "\u201d \u00b7 " + a.strength.toFixed(2)
-        + (a.add_trigger ? " \u00b7 adds \u201c" + a.add_trigger + "\u201d" : "");
+        + (a.typed ? " (yours)" : "") + (a.add_trigger ? " \u00b7 adds \u201c" + a.add_trigger + "\u201d" : "");
       row.querySelector(".lora-why").title = "Picked because your prompt says \u201c" + a.why + "\u201d. Strength "
         + a.strength.toFixed(2) + (a.add_trigger ? ". Its trigger word is added in front of the prompt sent to the model (your box isn\u2019t changed)." : ".");
       row.querySelector(".lora-keep").addEventListener("click", () => { window.__addLora && window.__addLora(a.name, a.strength); });

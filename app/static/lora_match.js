@@ -265,6 +265,70 @@
     }
     return -1;
   }
+  /* every word of the phrase close together, in any order ("thick, full thighs" has "thick thighs"): the tokens, or
+     null. Close = the words fit in a stretch of the prompt at most 2 words longer than the phrase. */
+  function findNear(list, pw, isNeg) {
+    if (pw.length < 2) return null;
+    const pos = pw.map((w) => { const a = []; list.forEach((t, k) => { if (eq(t, w) && !isNeg(t.i)) a.push(k); }); return a; });
+    if (pos.some((a) => !a.length)) return null;
+    for (const p0 of pos[0]) {
+      const used = [p0];
+      let ok = true;
+      for (let j = 1; j < pos.length && ok; j++) {
+        let best = -1;
+        pos[j].forEach((p) => { if (used.indexOf(p) < 0 && (best < 0 || Math.abs(p - p0) < Math.abs(best - p0))) best = p; });
+        if (best < 0) ok = false; else used.push(best);
+      }
+      if (!ok) continue;
+      const span = Math.max(...used) - Math.min(...used) + 1;
+      if (span <= pw.length + 2) return used.map((k) => list[k]);
+    }
+    return null;
+  }
+
+  /* how many LoRAs use a word, a tag or a 2-word part of a name: one only a few LoRAs have says much more than one in
+     dozens ("macromastia", "thick thighs" vs "woman"). Computed once per LoRA list. */
+  const STATS = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+  function stats(items, L, fam) {
+    // counted among the LoRAs for this engine's model only (those are the ones that compete)
+    let byFam = STATS ? STATS.get(items) : null;
+    if (!byFam) { byFam = new Map(); if (STATS) STATS.set(items, byFam); }
+    if (byFam.has(fam)) return byFam.get(fam);
+    const tag = new Map(), pair = new Map(), word = new Map();
+    const bump = (m, k, seen) => { if (!seen.has(k)) { seen.add(k); m.set(k, (m.get(k) || 0) + 1); } };
+    (items || []).filter((it) => it.family === fam).forEach((it) => {
+      const seenT = new Set(), seenP = new Set(), seenW = new Set();
+      (it.phrases || []).forEach((ph) => {
+        const pw = phraseForm(ph[0], L).pw;
+        if (ph[1] === "tag") bump(tag, pw.join(" "), seenT);
+        if (ph[1] === "name" || ph[1] === "title" || ph[1] === "readable") {
+          for (let k = 0; k + 1 < pw.length; k++) bump(pair, pw[k] + " " + pw[k + 1], seenP);
+          pw.forEach((w) => bump(word, w, seenW));
+        }
+      });
+    });
+    const S = { tag, pair, word };
+    byFam.set(fam, S);
+    return S;
+  }
+  const RARE = 3;   // used by at most this many of the engine's LoRAs
+
+  /* "macromastia=0.4": the strength you want for the LoRA that word picks. {stem: number}; the words also count as
+     asked-for, so the LoRA they name is used even on a weaker match. */
+  const WEIGHT_RX = /([A-Za-z][\w'-]*)\s*=\s*(\d*\.\d+|\d+(?:\.\d+)?)/g;
+  function weights(prompt) {
+    const out = new Map();
+    String(prompt || "").replace(WEIGHT_RX, (m, w, n) => {
+      const v = parseFloat(n);
+      if (isFinite(v) && v >= 0 && v <= 2) words(w).forEach((x) => out.set(stem(x), v));
+      return m;
+    });
+    return out;
+  }
+  // the prompt without the "=0.4" parts (what the model should read)
+  function stripWeights(prompt) {
+    return String(prompt || "").replace(WEIGHT_RX, "$1").replace(/[ \t]{2,}/g, " ");
+  }
 
   function itemBias(it, L) {
     if (!L) return "";
@@ -276,36 +340,75 @@
     return b;
   }
 
-  function scoreItem(it, P, generic, L) {
-    let best = 0, why = "", via = "", cpos = [], hits = 0;   // cpos: the adult meanings this match used
+  function scoreItem(it, P, generic, L, S, gtrig, W) {
+    let best = 0, why = "", via = "", cpos = [], hits = 0, claim = [], used = [], wt = null;   // cpos: adult meanings
     const isGeneric = (w) => generic.has(w) || generic.has(w + "s") || w.length < 3;
     const streams = P.s2 === P.s1 ? [P.s1] : [P.s1, P.s2];
     const all = streams.length > 1 ? P.s1.concat(P.s2) : P.s1;
     const present = (w) => all.find((x) => eq(x, w) && !negated(P.raw, x.i, L)) || null;
+    const isNegI = (i) => negated(P.raw, i, L);
     const bias = itemBias(it, L);
     const isConcept = (w) => L && L.canon.has(w) && !isGeneric(w);
+    const named = (src) => src === "name" || src === "title" || src === "readable";
+    const tagWords = new Set();
+    (it.phrases || []).forEach((ph) => { if (ph[1] === "tag" || ph[1] === "trigger") phraseForm(ph[0], L).pw.forEach((w) => tagWords.add(w)); });
     (it.phrases || []).forEach((ph) => {
       const text = ph[0], src = ph[1];
       const F = phraseForm(text, L), pw = F.pw;
       if (!pw.length) return;
-      let s = 0, toks = null, exact = false;
+      const key = pw.join(" ");
+      let s = 0, toks = null, exact = false, single = false;
       for (const list of streams) {
         const at = findSeq(list, pw);
         if (at < 0 || negated(P.raw, list[at].i, L)) continue;
         const allGeneric = pw.every(isGeneric);
         let v;
-        if (src === "trigger") v = F.n === 1 && allGeneric ? 2 : 10;
-        else if (src === "name" || src === "title") v = F.n >= 2 ? 7 : (allGeneric ? 0 : 6);
+        if (src === "user") v = 9;   // words you set for this LoRA in the app
+        else if (src === "trigger") v = (F.n === 1 && allGeneric) || gtrig.has(key) ? 2 : 10;
+        else if (named(src)) v = F.n >= 2 ? 7 : (allGeneric ? 0 : 6);
         else if (src === "concept") v = 4;   // a general adult LoRA, by what it's for ("nude", "nsfw")
-        else v = F.n >= 2 ? 3 : (allGeneric ? 0 : 2);   // tags: supporting evidence only
+        // tags: supporting evidence, unless a several-word tag only a few LoRAs have ("thick thighs")
+        else v = F.n >= 2 ? ((S.tag.get(key) || 0) <= RARE && !pw.every((w) => L && L.ignore.has(w)) ? 5 : 3) : (allGeneric ? 0 : 2);
         if (v > s) { s = v; toks = list.slice(at, at + pw.length); exact = true; }
       }
-      if (!s && (src === "name" || src === "title") && pw.length >= 2) {
+      if (!s && pw.length >= 2 && src !== "concept") {
+        // the same words close together in another order ("thick, full thighs", "hips super wide")
+        const near = findNear(P.s1, pw, isNegI);
+        if (near) {
+          const v = src === "user" ? 8 : src === "trigger" ? (gtrig.has(key) ? 0 : 8) : named(src) ? 6
+            : ((S.tag.get(key) || 0) <= RARE ? 4 : 0);
+          if (v > s) { s = v; toks = near; }
+        }
+      }
+      if (!s && named(src) && pw.length >= 2) {
         // most of a longer name: 2+ of its words, one of them distinctive ("2007 phone camera")
         const found = pw.map(present);
         const hw = pw.filter((w, k) => found[k]);
         const distinct = hw.filter((w) => !isGeneric(w));
         if (hw.length >= 2 && distinct.length >= 1 && hw.length >= pw.length - 1) { s = 4; toks = found.filter(Boolean); }
+      }
+      if (!s && named(src) && pw.length >= 3) {
+        // a 2-word part of a longer name that only a few LoRAs have ("thick thighs" of "thick thighs save lives")
+        for (let k = 0; k + 1 < pw.length && !s; k++) {
+          if ((S.pair.get(pw[k] + " " + pw[k + 1]) || 0) > RARE) continue;
+          const near = findNear(P.s1, [pw[k], pw[k + 1]], isNegI);
+          if (near) { s = 5; toks = near; }
+        }
+      }
+      if (!s && named(src) && pw.length >= 2) {
+        // one rare, distinctive word of the name: "macromastia" for krea2_macromastia_clothed. Long words only, so
+        // "greek temple" doesn't pick Greek_Sandals
+        for (const w of pw) {
+          if (isGeneric(w) || (L && L.ignore.has(w)) || (S.word.get(w) || 0) > RARE) continue;
+          if (w.length < 7) continue;
+          const t = present(w);
+          if (t) { s = 4; toks = [t]; single = true; break; }
+        }
+      }
+      if (W.size && s < 6 && src !== "tag" && src !== "concept") {
+        // "macromastia=0.4": you named this LoRA's word, so it is used
+        const t = pw.map(present).find((x) => x && W.has(x.w));
+        if (t) { s = 6; toks = [t]; single = true; }
       }
       if (L && (src === "name" || src === "title" || src === "trigger")) {
         // an adult word with only maker / quality words around it: "<maker> improved nudity", "she has a hairy pussy"
@@ -334,9 +437,16 @@
         best = s; why = text; via = src;
         cpos = L ? pw.filter((w, k) => (isConcept(w) || (src === "concept" && L.canon.has(w))) && pw.indexOf(w) === k
           && (toks || []).some((t) => eq(t, w))) : [];
+        // a match on one word claims that word: "macromastia" loads one LoRA, not the clothed and the naked one
+        claim = single ? (toks || []).map((t) => t.i) : [];
+        used = (toks || []).map((t) => t.i);
+      }
+      if (s && toks && W.size) {   // a strength typed after one of the matched words
+        const t = toks.find((x) => W.has(x.w));
+        if (t) wt = W.get(t.w);
       }
     });
-    return { score: best, why, via, cpos, hits };
+    return { score: best, why, via, cpos, hits, claim, used, wt };
   }
 
   function round05(x) { return Math.round(x * 20) / 20; }
@@ -359,12 +469,18 @@
       sfw = P.s2.some((t) => t.w === "sfw" && !negated(P.raw, t.i, L))
         || P.s1.concat(P.s2).some((t) => (L.nudeish.has(t.w) || t.alts.some((a) => L.nudeish.has(a))) && negated(P.raw, t.i, L));
     }
+    const S = stats(items, L, fam);
+    const gtrig = new Set((opts.generic_triggers || []).map((t) => words(t).map(stem).join(" ")));
+    const W = weights(prompt);
+    // does the prompt itself ask for adult content? (then an explicit LoRA may win a tie, else the clothed one does)
+    const adultAsk = !!L && P.s1.concat(P.s2).some((t) => (L.canon.has(t.w) || t.alts.some((a) => L.canon.has(a)))
+      && !L.body.has(t.w) && !negated(P.raw, t.i, L));
     const found = [];
     (items || []).forEach((it) => {
       if (it.family !== fam || it.auto === false) return;
       if (dismissed.has(it.group) || dismissed.has(it.name)) return;
       if (sfw && it.nsfw) return;
-      const r = scoreItem(it, P, generic, L);
+      const r = scoreItem(it, P, generic, L, S, gtrig, W);
       if (r.score < 4) return;
       found.push(Object.assign({ it }, r));
     });
@@ -385,19 +501,28 @@
       });
       return out;
     };
-    const ranked = Object.values(byGroup).sort((a, b) => b.score - a.score || tie(b) - tie(a) || (b.it.mtime || 0) - (a.it.mtime || 0));
+    const tame = (f) => (adultAsk ? (f.it.nsfw ? 1 : 0) : (f.it.nsfw ? 0 : 1));
+    const ranked = Object.values(byGroup).sort((a, b) => b.score - a.score || tame(b) - tame(a) || tie(b) - tie(a)
+      || (b.it.mtime || 0) - (a.it.mtime || 0));
     const cap = Math.max(1, Math.min(6, parseInt(opts.max, 10) || 3));   // how many Auto-pick may load (your setting)
     const chosen = [];
     const kinds = {};
-    const claimed = new Set();
+    const claimed = new Set(), usedPos = new Set(), whys = new Set();
     for (const f of ranked) {
       if (chosen.length >= cap) break;
       const k = f.it.kind || "concept";
       if ((k === "style" || k === "character") && kinds[k]) continue;   // two styles / two people fight each other
       const at = where(f.cpos);
+      (f.claim || []).forEach((p) => at.add(p));
       if ([...at].some((p) => claimed.has(p))) continue;   // one LoRA per adult word ("cum" doesn't load three)
+      // a word another pick already used can't pick a LoRA on its own ("nude ... macromastia" is the naked one only),
+      // and one trigger shared by two LoRAs ("mcrmst": clothed + naked) loads one of them
+      if ((f.claim || []).some((p) => usedPos.has(p))) continue;
+      if ((f.via === "trigger" || f.via === "user") && whys.has(f.why.toLowerCase())) continue;
       kinds[k] = (kinds[k] || 0) + 1;
       at.forEach((p) => claimed.add(p));
+      (f.used || []).forEach((p) => usedPos.add(p));
+      whys.add(f.why.toLowerCase());
       chosen.push(f);
     }
     const stack = chosen.length >= 3 ? 0.75 : chosen.length === 2 ? 0.85 : 1;
@@ -409,19 +534,20 @@
       // below ~0.6 most LoRAs barely show; only go lower when the maker recommends it
       s = Math.max(s, Math.min(base, 0.6));
       s = Math.min(1.2, Math.max(0.3, round05(s)));
+      if (f.wt != null) s = Math.round(f.wt * 100) / 100;   // "macromastia=0.4": exactly what you typed
       // a trigger word the prompt doesn't have yet (short ones only: long ones are instructions for edit LoRAs)
       let add = "";
-      if (f.via !== "trigger") {
-        const trig = (it.triggers || []).find((t) => t && t.split(/\s+/).length <= 4 && t.length <= 40);
+      if (f.via !== "trigger" && f.via !== "user" && it.add_trigger !== false) {
+        const trig = it.insert || (it.triggers || []).find((t) => t && t.split(/\s+/).length <= 4 && t.length <= 40);
         const has = (it.triggers || []).some((t) => promptLow.indexOf(" " + words(t).join(" ") + " ") >= 0);
         if (trig && !has) add = trig;
       }
       return { name: it.name, strength: s, why: f.why, via: f.via, kind: it.kind, group: it.group, score: f.score,
-               add_trigger: add, folder: it.folder, auto: true };
+               add_trigger: add, folder: it.folder, auto: true, typed: f.wt != null };
     });
   }
 
-  const api = { pick, stem, words, negated: (p, i, opts) => negated(words(p), i, prep(opts || {})),
+  const api = { pick, stem, words, weights, stripWeights, negated: (p, i, opts) => negated(words(p), i, prep(opts || {})),
                 tokens: (p, opts) => tokenize(p, prep(opts || {}), true) };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.LoraMatch = api;

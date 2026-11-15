@@ -658,6 +658,97 @@ def group_key(family, name, words):
     return "%s|%s" % (family or "", " ".join(words) if words else _stem_name(name).lower())
 
 
+# ---------------------------------------------------------------- sliders
+# A slider LoRA works at strengths far outside 0-1 (-10 ... +20), and its sign is the direction: + bigger / brighter /
+# older, - smaller / darker / younger. Some come with one trigger phrase per direction. The app reads the
+# range, what each direction does and those phrases from the maker's notes, so a slider starts at a strength that
+# actually shows and gets the right words for the direction you set.
+_NUM = r"[+-]?\s?\d+(?:\.\d+)?"
+_RANGE_RX = [
+    re.compile(r"(?i)(?:range|weights?|strengths?|values?|權重)[^0-9+\-\n]{0,40}?(%s)\s*(?:to|~|～|–|—|/|-(?=\s*[+-]?\d))\s*(%s|\?)" % (_NUM, _NUM)),
+    re.compile(r"(?i)between\s+(%s)\s+and\s+(%s)" % (_NUM, _NUM)),
+    re.compile(r"(?i)(?:from\s+)?(%s)\s+to\s+(%s)" % (_NUM, _NUM)),
+]
+_CJK = re.compile(r"[぀-ヿ㐀-鿿]")
+
+
+def _f(x):
+    return float(str(x).replace(" ", ""))
+
+
+def slider_range(text):
+    """(low, high) from the maker's notes ('Lora weight: +15 to -10', 'Recommended range: -10.0 to 10.0',
+    'works well between -5 and +5', '+9 to -?'), or None."""
+    t = str(text or "")
+    for rx in _RANGE_RX:
+        for m in rx.finditer(t):
+            a = _f(m.group(1))
+            b = -abs(a) if m.group(2) == "?" else _f(m.group(2))
+            lo, hi = min(a, b), max(a, b)
+            if hi - lo >= 0.5 and max(abs(lo), abs(hi)) <= 60:
+                return round(lo, 2), round(hi, 2)
+    return None
+
+
+def _direction_text(text, sign):
+    # "from solitary figures on the negative end to crowded, bustling compositions on the positive side"
+    m = re.search(r"(?i)(?:from\s+|to\s+)?([^,.;:]{3,60}?)\s+(?:on|at)\s+the\s+%s\s+(?:end|side)" % sign, str(text or ""))
+    if m:
+        t = re.sub(r"(?i)^.*?\b(?:from|to)\s+", "", m.group(1)).strip(" ,")
+        if t:
+            return t[:60]
+    m = re.search(r"(?i)%s\s+weights?\s*(?:\([^)]*\))?\s*(?::|make|makes|=|->|→)?\s*(?:the\s+)?([^.;\n]{3,80})" % sign, str(text or ""))
+    if not m:
+        return ""
+    t = re.split(r"(?i),?\s+while\s+|,\s*(?:and\s+)?negative|,\s*(?:and\s+)?positive", m.group(1))[0]
+    t = re.sub(r"(?i)^[\s):,(]*(?:the\s+)?(?:lora\s+)?", "", t).strip(" ,:")
+    return t[:60]
+
+
+# opposite ends a slider's file name can be named after ('skinny_fat', 'flaccid_erect'): (minus end, plus end)
+_ANTONYMS = {("skinny", "fat"), ("thin", "fat"), ("thin", "thick"), ("flaccid", "erect"), ("young", "old"),
+             ("small", "big"), ("small", "large"), ("short", "long"), ("short", "tall"), ("dark", "light"),
+             ("dark", "bright"), ("cold", "warm"), ("cool", "warm"), ("day", "night"), ("sad", "happy"),
+             ("dry", "wet"), ("anime", "real"), ("cartoon", "real"), ("simple", "detailed"), ("flat", "curvy")}
+_SLIDER_NOISE = set("slider sliders lora loraholic krea krea2 klein klein9b v1 v2 v3 v4 v5 the of".split())
+SLIDER_MAKERS = set()   # first words shared by 3+ slider file names (a maker's prefix), filled by build()
+
+
+def slider_info(name, about, raw_triggers):
+    """{lo, hi, default, pos, neg, pos_trigger, neg_trigger} for a slider LoRA."""
+    rng = slider_range(about)
+    # no range in its notes: stay mild (+-2, starting at 1). A tested low-resolution slider that states none already
+    # looks heavily lo-fi at +1.5 and breaks the picture at +-4 (Krea 2 Turbo)
+    lo, hi = rng if rng else (-2.0, 2.0)
+    pos, neg = _direction_text(about, "positive"), _direction_text(about, "negative")
+    rev = re.search(r"(?i)\b(\w+er)\s+is\s+(?:the\s+)?negative", str(about or ""))   # 'brighter is negative'
+    if rev and not neg:
+        neg, pos = rev.group(1).lower(), pos or "the opposite (%s is minus)" % rev.group(1).lower()
+    if not pos and not neg:
+        # 'skinny_fat': minus = skinny, plus = fat (only real opposites); else 'more X' / 'less X'
+        ws = [w for w in _split_words(_stem_name(name)) if w not in _SLIDER_NOISE and w not in NAME_NOISE
+              and w not in SLIDER_MAKERS and not any(w in m or m in w for m in SLIDER_MAKERS if len(w) >= 4)
+              and not re.fullmatch(r"v?\d+[a-z]?\d*", w)]
+        pair = next(((a, b) for a, b in _ANTONYMS for i in range(len(ws) - 1)
+                     if {ws[i], ws[i + 1]} == {a, b}), None)
+        if pair:
+            first = next(w for w in ws if w in pair)
+            neg, pos = (first, pair[1] if first == pair[0] else pair[0])
+        elif ws:
+            what = " ".join(ws[:3])
+            pos, neg = "more " + what, "less " + what
+    trig = [str(t).strip() for t in raw_triggers or [] if str(t or "").strip() and not _CJK.search(str(t))]
+    pos_t = trig[0] if trig else ""
+    neg_t = trig[1] if len(trig) > 1 else ""
+    pos = pos or pos_t[:50]
+    neg = neg or neg_t[:50] or ("the opposite" if pos else "")
+    # a strength that shows: about 40% of the way to the top of the range (a little lower for small ranges)
+    top = hi if hi > 0 else abs(lo)
+    default = round(max(min(top, 1.0), top * 0.4) * (1 if hi > 0 else -1), 1)
+    return {"lo": lo, "hi": hi, "default": default, "known_range": bool(rng), "pos": pos, "neg": neg,
+            "pos_trigger": pos_t[:220], "neg_trigger": neg_t[:220]}
+
+
 def _gather_triggers(sources):
     """[(source, [raw trigger strings])] in priority order -> (triggers, [[trigger, source]], extra hint phrases)."""
     trig, info, hints, seen = [], [], [], set()
@@ -747,7 +838,15 @@ def describe(rec, card, side, online=None, user=None, vocab=frozenset()):
     series = re.sub(r"[_\-.]?(?:e|ep|epoch|step|s)?\d{2,}$", "", _stem_name(name), flags=re.I).lower()
     # the trigger to put in front of the prompt when this LoRA is used: a short one (long ones are edit instructions)
     insert = next((t for t in triggers if len(t.split()) <= 4 and len(t) <= 40 and t.lower() not in GENERIC_TRIGGERS), "")
+    slider = None
+    if kind == "slider":
+        raw = list(user.get("triggers") or []) or (list(card.get("triggers") or []) + side["triggers"] + online_trig)
+        slider = slider_info(name, about, raw)
+        if _num(user.get("strength")) is None and user.get("slider_strength") is not None:
+            slider["default"] = float(user["slider_strength"])
+        strength = slider["default"]
     return {
+        "slider": slider,
         "kind": kind, "auto": auto, "strength": round(float(strength), 2), "phrases": phrases[:24], "triggers": triggers,
         "trigger_info": trig_info, "insert": insert, "add_trigger": user.get("add_trigger") is not False,
         "title": title[:80], "about": about[:300], "online": online.get("src") or "",
@@ -796,6 +895,15 @@ def build(names, lora_dirs, data_dir):
         fresh[key] = rec
         side = sidecar_info(full) if full else {"triggers": [], "tags": [], "weight": None, "about": "", "title": ""}
         recs.append((name, rec, side, online_of(name), mtime))
+    # a maker's prefix on 3+ slider names ('<Maker>_Breasts_Slider', '<Maker>_Light_Slider') isn't what a slider does
+    firsts = {}
+    for name, _r, _s, _o, _m in recs:
+        if _RE_SLIDER.search(_stem_name(name)):
+            w0 = (re.split(r'[_\-\s.]+', _stem_name(name).lower()) or [''])[0]
+            firsts[w0] = firsts.get(w0, 0) + 1
+    SLIDER_MAKERS.clear()
+    SLIDER_MAKERS.update(w for w, c in firsts.items() if c >= 3 and len(w) >= 6 and w not in GENERIC
+                         and w not in _ADULT_BODY_WORDS and w not in BODY_WORDS)
     # every word the library uses (names, titles, tags) + ordinary words: glued triggers are split with it
     vocab = set(w for w in GENERIC if len(w) >= 3)
     for name, rec, side, onl, _m in recs:

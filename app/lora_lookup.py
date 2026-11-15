@@ -80,7 +80,7 @@ def sha256_file(full, stop=None):
     return h.hexdigest()
 
 
-def _clean_about(text, n=400):
+def _clean_about(text, n=2000):   # long enough for a slider's "recommended range" further down
     t = html.unescape(re.sub(r"<[^>]+>", " ", str(text or "")))
     return " ".join(t.split())[:n]
 

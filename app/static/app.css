@@ -1475,3 +1475,11 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 .lora-about { font-size: 12px; max-height: 5.5em; overflow: auto; }
 .lora-field { display: grid; gap: 4px; font-size: 13px; }
 .lora-field input { width: 100%; box-sizing: border-box; }
+
+/* slider LoRAs: exact number box + what + and - do */
+.lora-strength { display: flex; align-items: center; gap: 8px; }
+.lora-strength input[type="range"] { flex: 1; min-width: 0; }
+.lora-num { width: 64px; padding: 4px 6px; border-radius: 8px; border: 1px solid rgba(255,255,255,.15); background: transparent; color: inherit; font: inherit; font-size: 13px; }
+.lora-dir { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.35; }
+.lora-dir.hidden { display: none; }
+.lora-slider-note { font-size: 13px; }

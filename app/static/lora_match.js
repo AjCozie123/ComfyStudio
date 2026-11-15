@@ -315,12 +315,12 @@
 
   /* "macromastia=0.4": the strength you want for the LoRA that word picks. {stem: number}; the words also count as
      asked-for, so the LoRA they name is used even on a weaker match. */
-  const WEIGHT_RX = /([A-Za-z][\w'-]*)\s*=\s*(\d*\.\d+|\d+(?:\.\d+)?)/g;
+  const WEIGHT_RX = /([A-Za-z][\w'-]*)\s*=\s*([+-]?\s?(?:\d*\.\d+|\d+(?:\.\d+)?))/g;
   function weights(prompt) {
     const out = new Map();
     String(prompt || "").replace(WEIGHT_RX, (m, w, n) => {
-      const v = parseFloat(n);
-      if (isFinite(v) && v >= 0 && v <= 2) words(w).forEach((x) => out.set(stem(x), v));
+      const v = parseFloat(String(n).replace(/\s/g, ""));   // sliders go negative and far past 2 ("breasts=-6")
+      if (isFinite(v) && v >= -60 && v <= 60) words(w).forEach((x) => out.set(stem(x), v));
       return m;
     });
     return out;
@@ -477,11 +477,15 @@
       && !L.body.has(t.w) && !negated(P.raw, t.i, L));
     const found = [];
     (items || []).forEach((it) => {
-      if (it.family !== fam || it.auto === false) return;
+      // a slider (never picked by words alone: its strength and sign matter) is used when you type one of its words
+      // with a strength: "breasts=6", "resolution=-4", "fat=5"
+      const slider = it.kind === "slider" && !!it.slider;
+      if (it.family !== fam || (it.auto === false && !(slider && W.size))) return;
       if (dismissed.has(it.group) || dismissed.has(it.name)) return;
       if (sfw && it.nsfw) return;
       const r = scoreItem(it, P, generic, L, S, gtrig, W);
       if (r.score < 4) return;
+      if (slider && r.wt == null) return;
       found.push(Object.assign({ it }, r));
     });
     // one per group: the best match, then the newest file
@@ -502,8 +506,10 @@
       return out;
     };
     const tame = (f) => (adultAsk ? (f.it.nsfw ? 1 : 0) : (f.it.nsfw ? 0 : 1));
-    const ranked = Object.values(byGroup).sort((a, b) => b.score - a.score || tame(b) - tame(a) || tie(b) - tie(a)
-      || (b.it.mtime || 0) - (a.it.mtime || 0));
+    // "breasts=-6" / "=12": only a slider takes that, so a slider wins; "=0.6": an ordinary LoRA does
+    const fit = (f) => (f.wt == null ? 0 : ((f.wt < 0 || f.wt > 2) === !!(f.it.kind === "slider") ? 1 : 0));
+    const ranked = Object.values(byGroup).sort((a, b) => fit(b) - fit(a) || b.score - a.score || tame(b) - tame(a)
+      || tie(b) - tie(a) || (b.it.mtime || 0) - (a.it.mtime || 0));
     const cap = Math.max(1, Math.min(6, parseInt(opts.max, 10) || 3));   // how many Auto-pick may load (your setting)
     const chosen = [];
     const kinds = {};
@@ -537,7 +543,7 @@
       if (f.wt != null) s = Math.round(f.wt * 100) / 100;   // "macromastia=0.4": exactly what you typed
       // a trigger word the prompt doesn't have yet (short ones only: long ones are instructions for edit LoRAs)
       let add = "";
-      if (f.via !== "trigger" && f.via !== "user" && it.add_trigger !== false) {
+      if (f.via !== "trigger" && f.via !== "user" && it.add_trigger !== false && it.kind !== "slider") {
         const trig = it.insert || (it.triggers || []).find((t) => t && t.split(/\s+/).length <= 4 && t.length <= 40);
         const has = (it.triggers || []).some((t) => promptLow.indexOf(" " + words(t).join(" ") + " ") >= 0);
         if (trig && !has) add = trig;

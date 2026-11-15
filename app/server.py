@@ -926,7 +926,18 @@ def lora_trigger_prompt(prompt, loras):
         if not isinstance(l, dict) or not l.get("name") or l.get("add_trigger") is False:
             continue
         info = _lora_info(l["name"])
-        if info and (info.get("add_trigger") is False or info.get("kind") in LI.NEVER_AUTO):
+        if info and (info.get("add_trigger") is False or info.get("kind") in ("utility", "tool")):
+            continue
+        sl = info.get("slider") if info else None
+        if sl:
+            # a slider's words follow the direction you set: + uses its plus phrase, - its minus phrase
+            try:
+                s = float(l.get("strength", sl.get("default") or 1))
+            except (TypeError, ValueError):
+                s = 1.0
+            t = sl.get("pos_trigger") if s >= 0 else sl.get("neg_trigger")
+            if t and not _has_words(prompt, t) and t.lower() not in [a.lower() for a in adds]:
+                adds.append(" ".join(t.split())[:220].rstrip(" ."))
             continue
         t = l.get("add_trigger") if isinstance(l.get("add_trigger"), str) and l.get("add_trigger") else info.get("insert")
         if not isinstance(t, str) or not t.strip():
@@ -2883,14 +2894,25 @@ def _clean_request(data):
     return data
 
 
-_WEIGHT_RX = re.compile(r"([A-Za-z][\w'-]*)\s*=\s*(\d*\.\d+|\d+(?:\.\d+)?)")
+_WEIGHT_RX = re.compile(r"([A-Za-z][\w'-]*)\s*=\s*([+-]?\s?(?:\d*\.\d+|\d+(?:\.\d+)?))")
 
 
 def strip_lora_weights(prompt):
     """'macromastia=0.4' sets that LoRA's strength in the page (static/lora_match.js); the model only reads the word."""
     if not prompt or "=" not in prompt:
         return prompt
-    return re.sub(r"[ \t]{2,}", " ", _WEIGHT_RX.sub(r"\1", prompt))
+
+    def one(m):
+        try:
+            neg = float(m.group(2).replace(" ", "")) < 0
+        except ValueError:
+            neg = False
+        # "fat=-6" is the skinny end of a slider: the word itself would pull the other way, so it goes too
+        return "" if neg else m.group(1)
+    out = _WEIGHT_RX.sub(one, prompt)
+    out = re.sub(r"\s*,\s*(?=,|$)", "", out)            # "light, , fat" / trailing ", "
+    out = re.sub(r"(^|[.!?]\s*),\s*", r"\1", out)          # a leading comma left behind
+    return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
 def submit_job(data):

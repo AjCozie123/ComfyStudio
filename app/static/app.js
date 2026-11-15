@@ -6300,14 +6300,34 @@ function bindShell() {
       const row = document.createElement("div");
       row.className = "lora-row";
       row.innerHTML = '<span class="lora-name"></span><button type="button" class="icon-btn sm" aria-label="Remove">✕</button>' +
-        '<label class="lora-strength">Strength <input type="range" min="-1" max="2" step="0.05"><span class="lora-val"></span></label>';
+        '<label class="lora-strength">Strength <input type="range" min="-1" max="2" step="0.05">' +
+        '<input type="number" class="lora-num" step="0.05" aria-label="Exact strength"></label>' +
+        '<p class="lora-dir muted hidden"></p>';
       row.querySelector(".lora-name").textContent = short(l.name);
       row.querySelector(".lora-name").title = l.name + " (tap for its trigger words)";
       row.querySelector(".lora-name").addEventListener("click", () => window.__loraInfo && window.__loraInfo(l.name));
-      const r = row.querySelector("input"), v = row.querySelector(".lora-val");
-      r.value = l.strength; v.textContent = Number(l.strength).toFixed(2);
-      r.addEventListener("input", () => { v.textContent = Number(r.value).toFixed(2); });
-      r.addEventListener("change", () => { const all = load(); all[i].strength = Number(r.value); save(all); });
+      const r = row.querySelector('input[type="range"]'), v = row.querySelector(".lora-num");
+      // a slider works far outside -1..2 (its maker's range), and its sign is the direction
+      const it = window.__loraItem ? window.__loraItem(l.name) : null;
+      const sl = it && it.slider;
+      if (sl) {
+        r.min = String(Math.min(sl.lo, -1)); r.max = String(Math.max(sl.hi, 2)); r.step = "0.1"; v.step = "0.1";
+        const dir = row.querySelector(".lora-dir");
+        dir.textContent = "Slider " + sl.lo + " to " + sl.hi + (sl.known_range ? "" : " (range not stated by its maker)")
+          + (sl.pos ? " · + " + sl.pos : "") + (sl.neg ? " · − " + sl.neg : "")
+          + ((sl.pos_trigger || sl.neg_trigger) ? " · its words for that direction are added to the prompt" : "");
+        dir.classList.remove("hidden");
+      }
+      r.value = l.strength; v.value = Number(l.strength).toFixed(2);
+      const set = (x) => { const all = load(); if (!all[i]) return; all[i].strength = Math.round(Number(x) * 100) / 100; save(all); };
+      r.addEventListener("input", () => { v.value = Number(r.value).toFixed(2); });
+      r.addEventListener("change", () => set(r.value));
+      v.addEventListener("change", () => {
+        const x = Number(v.value);
+        if (!isFinite(x)) { v.value = Number(load()[i].strength).toFixed(2); return; }
+        if (x < Number(r.min) || x > Number(r.max)) { r.min = String(Math.min(Number(r.min), x)); r.max = String(Math.max(Number(r.max), x)); }
+        r.value = String(x); set(x);
+      });
       row.querySelector("button").addEventListener("click", () => { const all = load(); all.splice(i, 1); save(all); render(); });
       box.appendChild(row);
     });
@@ -6322,17 +6342,14 @@ function bindShell() {
     const opts = await ensureOptions();
     const hit = opts.find((o) => o === want) || opts.find((o) => o.toLowerCase().includes(want.toLowerCase()));
     if (!hit) { toast("No LoRA matches “" + want + "”"); return; }
-    const list = load();
-    if (list.some((l) => l.name === hit)) { toast("Already added"); return; }
-    if (list.length >= 6) { toast("6 LoRAs at most"); return; }
-    list.push({ name: hit, strength: 1.0 });
-    save(list);
+    if (window.__ensureLoraIndex) await window.__ensureLoraIndex();
+    window.__addLora(hit);
     $("lora-search").value = "";
-    render();
   }
 
   $("lora-pill").addEventListener("click", async (e) => {
     await ensureOptions();
+    if (window.__ensureLoraIndex) await window.__ensureLoraIndex();   // sliders' ranges for the rows
     render();
     showPop("lora-pop", e.currentTarget);
   });
@@ -6342,7 +6359,10 @@ function bindShell() {
     const list = load();
     if (list.some((l) => l.name === name)) { toast("Already added"); return; }
     if (list.length >= 6) { toast("6 LoRAs at most"); return; }
-    list.push({ name, strength: typeof strength === "number" ? strength : 1.0 });
+    // a slider starts where it shows (about 40% of its range); others at 1.0
+    const it = window.__loraItem ? window.__loraItem(name) : null;
+    const start = it && it.slider ? Number(it.slider.default) : 1.0;
+    list.push({ name, strength: typeof strength === "number" ? strength : start });
     save(list);
     render();
   };
@@ -8204,6 +8224,7 @@ function bindShell() {
     box.innerHTML = '<div class="lora-info-head"><b></b><button type="button" class="icon-btn sm" aria-label="Close">✕</button></div>'
       + '<p class="muted lora-info-meta"></p>'
       + (trig ? "<p>Trigger words:</p><ul class=\"lora-trig\">" + trig + "</ul>" : '<p class="muted">No trigger words known for this LoRA. If you know them, add them below.</p>')
+      + (it.slider ? '<p class="lora-slider-note"></p>' : "")
       + (it.about ? '<p class="muted lora-about"></p>' : "")
       + '<label class="lora-field">Its trigger words (comma between them)<input type="text" class="search-box" data-f="triggers"></label>'
       + '<label class="lora-field">Also pick it when my prompt says (comma between them)<input type="text" class="search-box" data-f="words" placeholder="e.g. huge hips, wide hips"></label>'
@@ -8214,6 +8235,14 @@ function bindShell() {
     box.querySelector(".lora-info-meta").textContent = [it.folder || "", FAM_LABEL[it.family] || it.family || "model unknown", it.kind,
       "strength " + it.strength + (it.weight_from === "maker" ? " (maker’s)" : it.weight_from === "you" ? " (yours)" : "")].filter(Boolean).join(" · ");
     if (it.about) box.querySelector(".lora-about").textContent = it.about;
+    if (it.slider) {
+      const sl = it.slider;
+      box.querySelector(".lora-slider-note").textContent = "Slider: works from " + sl.lo + " to " + sl.hi
+        + (sl.known_range ? " (its maker’s range)" : " (its maker didn’t say; try within this)") + ", starts at " + sl.default + ". "
+        + (sl.pos ? "Plus: " + sl.pos + ". " : "") + (sl.neg ? "Minus: " + sl.neg + ". " : "")
+        + "Type a word of its name with a number to use it, e.g. " + (String(it.title || short(it.name)).split(/[\s_-]+/).find((w) => w.length > 3 && !/slider|krea|lora|loraholic|^v\d/i.test(w) && !(sl.pos && !sl.pos.toLowerCase().includes(w.toLowerCase()) && /^more /.test(sl.pos))) || "word").toLowerCase()
+        + "=" + sl.default + ".";
+    }
     const f = (k) => box.querySelector('[data-f="' + k + '"]');
     const yours = (it.trigger_info || []).every((t) => t[1] === "you") && (it.trigger_info || []).length;
     f("triggers").value = yours ? (it.triggers || []).join(", ") : "";
@@ -8239,6 +8268,9 @@ function bindShell() {
     box.scrollIntoView({ block: "nearest" });
   }
   window.__loraInfo = loraInfo;
+  // the index entry of one LoRA (sliders carry their range and what + / - do), for the hand-added rows
+  window.__loraItem = (name) => (INDEX || []).find((x) => x.name === name) || null;
+  window.__ensureLoraIndex = ensureIndex;
   function engineFam() {
     const a = window.__wfActive && window.__wfActive();
     if (!a) return state.media === "video" ? null : "minimax_h3";

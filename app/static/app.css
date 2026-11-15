@@ -1484,11 +1484,30 @@ body.gs-open:not(.gs-expand) #krea-hint { display: none; }
 .lora-dir.hidden { display: none; }
 .lora-slider-note { font-size: 13px; }
 
-/* "Generating" pill (top bar): any job running, from any device */
-.gen-pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(143,224,176,.35);
-  background: rgba(143,224,176,.10); color: #bff0d2; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; margin-right: 6px; }
-.gen-pill.hidden { display: none; }
-.gen-pill.is-elsewhere { border-color: rgba(255,200,90,.5); background: rgba(255,200,90,.12); color: #ffe3a8; }
-.gen-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: genPulse 1.2s ease-in-out infinite; }
+/* Console pill (top bar) + its live log drop-down */
+.gen-pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; font: inherit;
+  font-size: 13px; cursor: pointer; white-space: nowrap; margin-right: 6px; border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05); color: #cfd3da; }
+.gen-pill.is-busy { border-color: rgba(143,224,176,.4); background: rgba(143,224,176,.12); color: #bff0d2; }
+.gen-pill.is-wait { border-color: rgba(255,200,90,.5); background: rgba(255,200,90,.12); color: #ffe3a8; }
+.gen-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: .55; }
+.gen-pill.is-busy .gen-dot, .gen-pill.is-wait .gen-dot { animation: genPulse 1.2s ease-in-out infinite; }
 @keyframes genPulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
-@media (max-width: 560px) { .gen-pill { padding: 5px 9px; font-size: 12px; max-width: 46vw; overflow: hidden; text-overflow: ellipsis; } }
+.console-pop { position: fixed; top: 58px; right: 12px; width: min(640px, calc(100vw - 24px)); max-height: min(70vh, 640px);
+  display: flex; flex-direction: column; z-index: 60; background: #16171b; border: 1px solid rgba(255,255,255,.12);
+  border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.55); overflow: hidden; }
+.console-pop.hidden { display: none; }
+.console-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.console-now { flex: 1; min-width: 0; color: #9aa0aa; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.console-tabs { display: flex; align-items: center; gap: 6px; padding: 8px 12px; flex-wrap: wrap; }
+.console-tabs button { font: inherit; font-size: 13px; padding: 5px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.12); background: transparent; color: #cfd3da; }
+.console-tabs button.is-on { background: rgba(255,255,255,.12); color: #fff; }
+.console-all { margin-left: auto; font-size: 12px; color: #9aa0aa; display: inline-flex; gap: 6px; align-items: center; }
+.console-log { flex: 1; min-height: 160px; margin: 0; padding: 10px 12px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace;
+  color: #d7dbe2; white-space: pre-wrap; word-break: break-word; background: #0f1013; }
+@media (max-width: 560px) {
+  .gen-pill { padding: 5px 9px; font-size: 12px; }
+  .console-pop { top: 52px; left: 8px; right: 8px; width: auto; max-height: 72vh; }
+  .console-all { margin-left: 0; }
+}

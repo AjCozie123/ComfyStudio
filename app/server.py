@@ -159,6 +159,42 @@ logging.basicConfig(
 )
 log = logging.getLogger("h3studio")
 
+# ---------------------------------------------------------------- the Console pill (what the app is doing, live)
+import collections as _collections
+CONSOLE = _collections.deque(maxlen=500)
+_console_n = [0]
+_console_lock = threading.Lock()
+
+
+def console_add(text):
+    with _console_lock:
+        _console_n[0] += 1
+        CONSOLE.append({"n": _console_n[0], "t": time.strftime("%H:%M:%S"), "m": str(text)[:500]})
+
+
+class _ConsoleLog(logging.Handler):
+    """The app's own log lines worth seeing: warnings, errors, and what it did. Page refreshes (GETs) are left out."""
+    def emit(self, r):
+        try:
+            msg = r.getMessage()
+        except Exception:
+            return
+        if r.levelno < logging.WARNING:
+            if '"GET ' in msg or '"HEAD ' in msg or "/api/clientlog" in msg or "/api/console" in msg:
+                return
+            if '"POST ' in msg:
+                m = re.search(r'"POST (/api/[\w/]+)', msg)
+                if not m or m.group(1) in ("/api/jobs",):
+                    return
+                msg = "Request received: " + m.group(1).replace("/api/", "")
+        if r.exc_info and r.exc_info[1] is not None:
+            msg += " (%s: %s)" % (type(r.exc_info[1]).__name__, r.exc_info[1])
+        lead = "ERROR: " if r.levelno >= logging.ERROR else "Warning: " if r.levelno >= logging.WARNING else ""
+        console_add(lead + msg.split("\n")[0])
+
+
+log.addHandler(_ConsoleLog())
+
 
 def _safe_input_path(name):
     rel = str(name or "").replace("\\", "/").lstrip("/")
@@ -889,6 +925,76 @@ def _lora_info(name):
         except Exception as e:
             log.info("lora index for triggers: %s", e)
     return LI.LAST.get(name) or LI.LAST.get(str(name).replace("/", "\\")) or LI.LAST.get(str(name).replace("\\", "/")) or {}
+
+
+def _console_jobs():
+    """Every change of every job, as a plain line in the Console: new, enhancing, each step, done / error / cancelled."""
+    seen = {}
+    while True:
+        try:
+            for jid, j in list(jobs.items()):
+                st, msg = j.get("status"), str(j.get("message") or "")
+                p, mx = int(j.get("progress") or 0), int(j.get("progress_max") or 0)
+                name = (j.get("prompt_user") or j.get("prompt") or "").strip().replace("\n", " ")
+                tag = "[%s] " % (name[:38] + ("…" if len(name) > 38 else "")) if name else "[job] "
+                key = (st, msg.split(" · ")[0], p if st == "running" and mx else -1)
+                if seen.get(jid) == key:
+                    continue
+                first = jid not in seen
+                seen[jid] = key
+                if first and st in ("queued", "waiting_comfy", "running"):
+                    console_add("New job: %s%s" % (name[:90] or "(no prompt)", (" — " + str(j.get("workflow_name"))) if j.get("workflow_name") else ""))
+                if st == "running" and mx and p:
+                    console_add("%sGenerating · step %d / %d" % (tag, p, mx))
+                elif st in ("queued", "waiting_comfy", "running") and msg:
+                    console_add(tag + msg)
+                elif st == "success":
+                    took = (" in %.0f s" % (time.time() - float(j["t"]))) if j.get("t") else ""
+                    files = [i.get("filename") for i in (j.get("images") or []) if isinstance(i, dict)]
+                    console_add("%sDone%s%s" % (tag, took, (" → " + ", ".join(files[:3])) if files else ""))
+                elif st == "error":
+                    console_add("%sERROR: %s" % (tag, j.get("error") or msg or "failed"))
+                elif st == "cancelled":
+                    console_add(tag + "Cancelled")
+            for jid in [k for k in seen if k not in jobs]:
+                seen.pop(jid, None)
+        except Exception:
+            pass
+        time.sleep(0.7)
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_COMFY_ROUTINE = re.compile(r"\[assets-event\]|Asset scan|Seeder start|Fast scan complete|Scan\(\(|got prompt$|"
+                            r"Prompt executed in [0-9.]+ seconds$", re.I)
+
+
+def console_state(after_n=0, after_t="", quiet=True):
+    """Lines for the Console pill: the app's (after line number after_n) and ComfyUI's own console (after time
+    after_t), plus the jobs running now."""
+    with _console_lock:
+        app = [e for e in CONSOLE if e["n"] > after_n]
+    lines, comfy_ok, last_t = [], True, after_t
+    try:
+        raw = comfy("GET", "/internal/logs/raw", timeout=4)
+        for e in (raw.get("entries") or []):
+            t = str(e.get("t") or "")
+            if after_t and t <= after_t:
+                continue
+            last_t = max(last_t, t)
+            # progress bars rewrite one line with \r: keep what it ended as
+            text = _ANSI.sub("", str(e.get("m") or "")).split("\r")[-1].strip()
+            # a progress bar's long row of blocks wraps badly on a phone: keep "62% 5/8 [00:17<00:10, 3.49s/it]"
+            text = re.sub(r"\|[▀-▟\s#=-]*\|", " ", text)
+            text = re.sub(r"\s{2,}", " ", text)
+            if not text or (quiet and _COMFY_ROUTINE.search(text)):
+                continue
+            lines.append({"t": t[11:19], "m": text[:500]})
+    except Exception:
+        comfy_ok = False
+    active = [{"id": j.get("id"), "status": j.get("status"), "message": j.get("message"), "progress": j.get("progress"),
+               "progress_max": j.get("progress_max"), "prompt": (j.get("prompt_user") or "")[:80]}
+              for j in list(jobs.values()) if j.get("status") in ("queued", "waiting_comfy", "running")]
+    return {"app": app[-300:], "comfy": lines[-300:], "comfy_ok": comfy_ok, "comfy_t": last_t, "jobs": active}
 
 
 def person_lock_on():
@@ -4053,6 +4159,13 @@ class H(BaseHTTPRequestHandler):
                                 "online": dict(LL.status(), on=lora_online_on())}, **LI.client_lists()))
         if path == "/api/loras/lookup":
             return self.j(dict(LL.status(), on=lora_online_on()))
+        if path == "/api/console":
+            # the Console pill: the app's own activity + ComfyUI's console, newer than what the page already has
+            try:
+                n = int((q.get("n") or ["0"])[0] or 0)
+            except ValueError:
+                n = 0
+            return self.j(console_state(n, (q.get("t") or [""])[0], (q.get("all") or ["0"])[0] != "1"))
         if path == "/api/loras":
             try:
                 oi = object_info()
@@ -5048,6 +5161,7 @@ def main():
     threading.Thread(target=_update_loop, daemon=True).start()
     threading.Thread(target=_worker, daemon=True).start()
     LORA_WORKER.start()   # LoRA trigger words from CivitAI / CivArchive, only while idle
+    threading.Thread(target=_console_jobs, daemon=True).start()   # job changes -> the Console pill
     # Bind the Tailscale IP in a side thread; skip gracefully if it is absent.
     extra = []
     for h in HOSTS[1:]:

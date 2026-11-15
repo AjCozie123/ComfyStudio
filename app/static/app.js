@@ -8900,41 +8900,115 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
 })();
 
 
-/* ===== "Generating" pill v20261115 =====
-   Shows whenever anything is generating or waiting, whichever device started it (PC or phone). A page only follows
-   the jobs it started itself, so a job sent from the phone was invisible on the PC: tap the pill to watch it here
-   (the usual card with progress and live preview, then the result). */
+/* ===== Console pill v20261115 =====
+   Always in the top bar. It says what is happening right now (Idle / Generating 3/8 / Enhancing / Waiting for ComfyUI),
+   whichever device started the job (PC or phone). Tap it for the live log: what Comfy Studio is doing (each job: new,
+   enhancing, every step, done / error) and ComfyUI's own console (models loading, sampling, warnings, errors).
+   "Watch here" follows a job started on another device here, with its live preview and result. */
 (function () {
   const chip = $("status");
   if (!chip || $("gen-pill")) return;
   const pill = document.createElement("button");
   pill.type = "button";
   pill.id = "gen-pill";
-  pill.className = "gen-pill hidden";
-  pill.innerHTML = '<span class="gen-dot" aria-hidden="true"></span><span class="gen-text"></span>';
+  pill.className = "gen-pill is-idle";
+  pill.setAttribute("aria-haspopup", "dialog");
+  pill.setAttribute("aria-expanded", "false");
+  pill.innerHTML = '<span class="gen-dot" aria-hidden="true"></span><span class="gen-text">Console</span>';
   chip.parentNode.insertBefore(pill, chip);
-  let active = [];
+
+  const panel = document.createElement("div");
+  panel.id = "console-pop";
+  panel.className = "console-pop hidden";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Console");
+  panel.innerHTML =
+    '<div class="console-head"><b>Console</b><span class="console-now"></span>' +
+    '<button type="button" class="chip-btn console-watch hidden">Watch here</button>' +
+    '<button type="button" class="icon-btn sm console-x" aria-label="Close">✕</button></div>' +
+    '<div class="console-tabs" role="tablist">' +
+    '<button type="button" role="tab" data-tab="app" class="is-on">Comfy Studio</button>' +
+    '<button type="button" role="tab" data-tab="comfy">ComfyUI</button>' +
+    '<label class="console-all"><input type="checkbox"> Show routine lines</label></div>' +
+    '<pre class="console-log" tabindex="0" aria-live="polite"></pre>';
+  document.body.appendChild(panel);
+  const logBox = panel.querySelector(".console-log");
   const LIVE = ["queued", "waiting_comfy", "running"];
-  async function check() {
-    let list;
-    try { list = await api("/api/jobs"); } catch (e) { return; }
-    active = (list || []).filter((j) => j && LIVE.includes(j.status));
-    if (!active.length) { pill.classList.add("hidden"); return; }
-    const run = active.find((j) => j.status === "running") || active[0];
+  let active = [], tab = "app", open = false, timer = 0;
+  const lines = { app: [], comfy: [] };
+  let lastN = 0, lastT = "";
+
+  function nowText(list) {
+    if (!list.length) return { short: "Idle", long: "Nothing is generating", cls: "is-idle" };
+    const run = list.find((j) => j.status === "running") || list[0];
     const max = run.progress_max || 0, v = run.progress || 0;
+    const what = run.status === "running" ? (max ? "Generating" : (String(run.message || "").split("…")[0].split("...")[0] || "Working"))
+      : run.status === "waiting_comfy" ? "Waiting for ComfyUI" : "Queued";
+    const more = list.length > 1 ? " · " + list.length + " jobs" : "";
+    return { short: (max ? v + "/" + max : what.split(" ")[0]) + (list.length > 1 ? " +" + (list.length - 1) : ""),
+             long: what + (max ? " · " + v + "/" + max : "") + more, cls: run.status === "running" ? "is-busy" : "is-wait" };
+  }
+  function paintPill() {
+    const s = nowText(active);
+    const narrow = window.innerWidth < 560;
+    pill.querySelector(".gen-text").textContent = active.length ? (narrow ? s.short : s.long) : (narrow ? "Log" : "Console");
+    pill.className = "gen-pill " + s.cls;
     const mine = new Set((state.activeJobs || []).map((j) => j.id));
     const elsewhere = active.filter((j) => !mine.has(j.id)).length;
-    // phone: the top bar is narrow, so just the step count (or "Live" / "Queued")
-    const narrow = window.innerWidth < 560;
-    pill.querySelector(".gen-text").textContent = narrow
-      ? (max ? v + "/" + max : run.status === "running" ? "Live" : "Queued") + (active.length > 1 ? " +" + (active.length - 1) : "")
-      : (run.status === "running" ? "Generating" : run.status === "waiting_comfy" ? "Waiting for ComfyUI" : "Queued")
-        + (max ? " · " + v + "/" + max : "") + (active.length > 1 ? " · " + active.length + " jobs" : "");
-    pill.title = elsewhere ? "Started on another device: tap to watch it here" : "Tap to see the live preview";
-    pill.classList.toggle("is-elsewhere", elsewhere > 0);
-    pill.classList.remove("hidden");
+    pill.title = active.length ? s.long + (elsewhere ? " (started on another device)" : "") + " — tap for the live log"
+      : "Tap for the live log";
+    panel.querySelector(".console-now").textContent = s.long;
+    panel.querySelector(".console-watch").classList.toggle("hidden", !elsewhere);
   }
-  pill.addEventListener("click", () => {
+  async function checkJobs() {
+    try { active = ((await api("/api/jobs")) || []).filter((j) => j && LIVE.includes(j.status)); } catch (e) { return; }
+    paintPill();
+  }
+  function render() {
+    const list = lines[tab];
+    const atEnd = logBox.scrollHeight - logBox.scrollTop - logBox.clientHeight < 40;
+    logBox.textContent = list.length ? list.map((e) => e.t + "  " + e.m).join("\n")
+      : (tab === "comfy" ? "No ComfyUI lines yet." : "Nothing has happened yet. Send something and it shows here.");
+    if (atEnd) logBox.scrollTop = logBox.scrollHeight;
+  }
+  async function pull(reset) {
+    if (reset) { lines.app = []; lines.comfy = []; lastN = 0; lastT = ""; }
+    const all = panel.querySelector(".console-all input").checked ? "1" : "0";
+    let d;
+    try { d = await api("/api/console?n=" + lastN + "&t=" + encodeURIComponent(lastT) + "&all=" + all); } catch (e) { return; }
+    (d.app || []).forEach((e) => { lines.app.push(e); lastN = Math.max(lastN, e.n); });
+    lines.comfy = lines.comfy.concat(d.comfy || []);
+    if (d.comfy_t) lastT = d.comfy_t;
+    if (!d.comfy_ok && !lines.comfy.length) lines.comfy.push({ t: "", m: "ComfyUI isn't answering right now." });
+    lines.app = lines.app.slice(-400); lines.comfy = lines.comfy.slice(-400);
+    active = (d.jobs || []);
+    paintPill();
+    render();
+  }
+  function setOpen(v) {
+    open = v;
+    panel.classList.toggle("hidden", !v);
+    pill.setAttribute("aria-expanded", v ? "true" : "false");
+    clearInterval(timer);
+    if (v) {
+      pull(!lines.app.length && !lines.comfy.length);
+      timer = setInterval(() => pull(false), 1500);
+      setTimeout(() => { logBox.scrollTop = logBox.scrollHeight; }, 50);
+    }
+  }
+  pill.addEventListener("click", (e) => { e.stopPropagation(); setOpen(!open); });
+  panel.querySelector(".console-x").addEventListener("click", () => setOpen(false));
+  panel.querySelectorAll(".console-tabs [data-tab]").forEach((b) => b.addEventListener("click", () => {
+    tab = b.dataset.tab;
+    panel.querySelectorAll(".console-tabs [data-tab]").forEach((x) => x.classList.toggle("is-on", x === b));
+    render();
+    logBox.scrollTop = logBox.scrollHeight;
+  }));
+  panel.querySelector(".console-all input").addEventListener("change", () => pull(true));
+  document.addEventListener("click", (e) => { if (open && !panel.contains(e.target) && e.target !== pill) setOpen(false); });
+  document.addEventListener("keydown", (e) => { if (open && e.key === "Escape") setOpen(false); });
+  // follow a job started on another device here (its card, live preview and result)
+  panel.querySelector(".console-watch").addEventListener("click", () => {
     if (!state.activeJobs) state.activeJobs = [];
     if (!state.jobSnaps) state.jobSnaps = {};
     active.forEach((j) => {
@@ -8948,9 +9022,9 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     if (state.poll) clearInterval(state.poll);
     state.poll = setInterval(pollJobs, 500);
     pollJobs();
-    const box = $("job-queue");
-    if (box) box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    setOpen(false);
   });
-  check();
-  setInterval(check, 3000);
+  window.addEventListener("resize", paintPill);
+  checkJobs();
+  setInterval(() => { if (!open) checkJobs(); }, 3000);
 })();

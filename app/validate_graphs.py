@@ -27,6 +27,11 @@ def _combo_values(spec):
     first = spec[0]
     if isinstance(first, list) and first and all(isinstance(x, str) for x in first):
         return first
+    # newer ComfyUI node format: ["COMBO", {"options": [...]}] (e.g. the MiniMax H3 AIO model loader)
+    if first == "COMBO" and len(spec) > 1 and isinstance(spec[1], dict):
+        opts = spec[1].get("options")
+        if isinstance(opts, list) and opts and all(isinstance(x, str) for x in opts):
+            return opts
     return None
 
 

@@ -92,6 +92,21 @@ def pe_clip_for(pe_mode, available, quality_name):
     return quality_name or QUALITY_PE_DEFAULT, False
 
 
+def pe_clip_choose(pe_mode, available, quality_name, choice=""):
+    """The enhancer model the user picked in settings (any engine), if it is installed; else the automatic pick."""
+    choice = str(choice or "").strip()
+    if choice:
+        have = list(available or [])
+        n = {_norm(x): x for x in have}.get(_norm(choice))
+        if not n:
+            tail = _norm(choice).split("/")[-1]
+            n = next((x for x in have if _norm(x).split("/")[-1] == tail), None)
+        if n:
+            small = any(_norm(c).split("/")[-1] == _norm(n).split("/")[-1] for c in FAST_PE_CANDIDATES)
+            return n, small
+    return pe_clip_for(pe_mode, available, quality_name)
+
+
 def extract_expanded_caption(text):
     """Return expanded_caption from the first valid JSON object, or None.
 

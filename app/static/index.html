@@ -501,16 +501,18 @@
   </div>
 
   <div id="vlen-pop" class="pop hidden" role="dialog" aria-label="Video length" hidden>
-    <div class="pop-head"><h3>Length</h3><p class="pop-sub">Longer clips take more time and memory</p></div>
-    <div class="seg seg-wide" id="vlen-seg">
-      <button type="button" class="is-on" data-vlen="5">5s</button>
-      <button type="button" data-vlen="10">10s</button>
-    </div>
-    <label class="vlen-custom">Custom length
+    <div class="pop-head"><h3>Length</h3><p class="pop-sub">Type how many seconds you want</p></div>
+    <div class="seg seg-wide hidden" id="vlen-seg"></div>
+    <label class="vlen-custom">Seconds
       <input type="number" id="vlen-custom" min="1" max="120" step="1" inputmode="numeric" placeholder="seconds">
       <span>s</span>
       <button type="button" class="chip-btn primary" id="vlen-custom-set">Set</button>
     </label>
+    <label class="vlen-custom hidden" id="vclip-row">Clip length
+      <input type="number" id="vclip-custom" min="1" max="13" step="0.5" inputmode="decimal" placeholder="Auto">
+      <span>s</span>
+    </label>
+    <p class="pop-note hidden" id="vclip-note">Long videos are made of short clips joined with no cut. Auto picks what fits this PC at this size. Shorter clips use less memory and follow your shots more closely; longer ones may run out of memory.</p>
   </div>
 
   <div id="help-pop" class="pop hidden" role="dialog" aria-label="Help" hidden>
@@ -957,6 +959,6 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261115b"></script>
-  <script src="/static/app.js?v=20261115g"></script>
+  <script src="/static/app.js?v=20261116n"></script>
 </body>
 </html>

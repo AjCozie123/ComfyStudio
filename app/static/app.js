@@ -120,6 +120,20 @@ async function loadConfig() {
   fillSelect("clip_name", m.clip_name, d.clip_name);
   fillSelect("vae_name", m.vae_name, d.vae_name);
   fillSelect("pe_clip_name", m.pe_clip_name, d.pe_clip_name);
+  // one Prompt Enhancer model choice for every engine (built-in and workflows); "" = Auto (Fast / Quality pick)
+  {
+    const pc = $("pe_clip_name");
+    const auto = document.createElement("option");
+    auto.value = ""; auto.textContent = "Auto (best for Fast / Quality)";
+    pc.insertBefore(auto, pc.firstChild);
+    if (LS.get("cs.pe.choice.v", "") !== "1") { LS.set("cs.pe.choice", ""); LS.set("cs.pe.choice.v", "1"); }   // start on Auto once
+    const want = LS.get("cs.pe.choice", "");
+    pc.value = [...pc.options].some((o) => o.value === want) ? want : "";
+    if (!pc.dataset.peChoice) {
+      pc.dataset.peChoice = "1";
+      pc.addEventListener("change", () => LS.set("cs.pe.choice", pc.value));
+    }
+  }
   fillSelect("sampler_name", m.sampler_name, d.sampler_name || "euler");
   // where the app is open decides where pictures come from: this PC browses its folders, other devices use
   // their own file picker (so a phone or someone else's computer never sees this PC's files by accident)
@@ -1159,6 +1173,7 @@ async function generate() {
     clip_name: $("clip_name").value,
     vae_name: $("vae_name").value,
     pe_clip_name: $("pe_clip_name").value,
+    pe_clip_choice: LS.get("cs.pe.choice", ""),
     auto_assist: !$("auto-assist") || $("auto-assist").checked,   // new pictures too (sheets, camera, layout)
     ref_mode: !!(state.mode === "edit" && state.refMode),
     image_roles: (state.roles || []).slice(),
@@ -4012,6 +4027,8 @@ function bindShell() {
     { id: "4:3", w: 4, h: 3, name: "Classic" },
     { id: "3:4", w: 3, h: 4, name: "Portrait" },
     { id: "21:9", w: 21, h: 9, name: "Cinema" },
+    // the shape of Picture 1 (MiniMax H3's "Match input"); listed only when the engine offers it
+    { id: "match", w: 1, h: 1, name: "Match picture", pic: true },
   ];
   state.media = LS.get("cs.media", "image") === "video" ? "video" : "image";
   state.vmode = ["t2v", "i2v", "r2v", "v2v", "long"].indexOf(LS.get("cs.vmode", "t2v")) >= 0 ? LS.get("cs.vmode", "t2v") : "t2v";
@@ -4024,8 +4041,8 @@ function bindShell() {
 
   function syncVideoPills() {
     const a = VASPECTS.find((x) => x.id === state.video.aspect) || VASPECTS[0];
-    $("vsize-icon").innerHTML = ratioIconHtml(a.w, a.h);
-    $("vsize-label").textContent = a.id;
+    $("vsize-icon").innerHTML = a.pic ? picture1IconHtml() : ratioIconHtml(a.w, a.h);
+    $("vsize-label").textContent = a.pic ? "Match" : a.id;
     $("vsize-meta").textContent = state.video.res;
     $("vlen-label").textContent = state.video.len + "s";
     document.querySelectorAll("#vres-seg button").forEach((b) => b.classList.toggle("is-on", b.dataset.vres === state.video.res));
@@ -4036,8 +4053,8 @@ function bindShell() {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "res-option" + (x.id === state.video.aspect ? " is-on" : "");
-      b.innerHTML = ratioIconHtml(x.w, x.h) + '<span class="res-option-copy"><strong></strong></span>';
-      b.querySelector("strong").textContent = x.name + " " + x.id;
+      b.innerHTML = (x.pic ? picture1IconHtml() : ratioIconHtml(x.w, x.h)) + '<span class="res-option-copy"><strong></strong></span>';
+      b.querySelector("strong").textContent = x.pic ? "Match picture (its own shape)" : x.name + " " + x.id;
       b.addEventListener("click", () => {
         state.video.aspect = x.id;
         LS.set("cs.v.aspect", x.id);
@@ -4091,7 +4108,7 @@ function bindShell() {
     LS.set("cs.media", state.media);
     hidePops();
     closeAddMenu();
-    if (state.media === "video") setVideoMode(state.images.length ? "i2v" : state.vmode);
+    if (state.media === "video") setVideoMode(state.images.length && !["r2v", "v2v", "long"].includes(state.vmode) ? "i2v" : state.vmode);
     else { setMode(state.images.length ? "edit" : "t2i"); syncMediaChrome(); }
   }
   window.setMedia = setMedia;
@@ -4101,7 +4118,8 @@ function bindShell() {
   /* Adding pictures: Image -> Edit, Video -> Image to video (one start frame). */
   window.onImagesAdded = function () {
     if (state.media === "video") {
-      if (state.vmode !== "i2v" && state.vmode !== "r2v" && state.vmode !== "v2v") {
+      // Long stays Long: with a picture it becomes Long image to video (see chosenId)
+      if (state.vmode !== "i2v" && state.vmode !== "r2v" && state.vmode !== "v2v" && state.vmode !== "long") {
         setVideoMode("i2v");
         toast("Switched to Image to video");
       } else {
@@ -4169,7 +4187,7 @@ function bindShell() {
 
 /* ===== Workflows: engines, upload, node install, updates v20261111h ===== */
 (function () {
-  const TASK_LABEL = { t2i: "Text to image", edit: "Image edit", t2v: "Text to video", i2v: "Image to video", r2v: "Reference to video", long: "Long text to video", other: "Other" };
+  const TASK_LABEL = { t2i: "Text to image", edit: "Image edit", t2v: "Text to video", i2v: "Image to video", r2v: "Reference to video", long: "Long video", other: "Other" };
   const TASK_MEDIA = { t2i: "image", edit: "image", t2v: "video", i2v: "video", r2v: "video", long: "video", other: "image" };
   const ICON = {
     image: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17l5-4.5 3.5 3 3-2.5 4.5 4"/></svg>',
@@ -4192,6 +4210,19 @@ function bindShell() {
   window.__wfList = () => list;
   window.__wfActive = () => active;
   function chosenId(t) {
+    if (t === "long") {
+      // Long video follows the picture: with one it starts from it and keeps continuing from the end of each clip
+      // (Long image to video); without, Long text to video. Same model family as the one you picked.
+      const items = forTask("long");
+      const withPic = state.images.length > 0;
+      const fromPic = (w) => /i2v|image[ -]to[ -]video/i.test((w.id || "") + " " + (w.name || ""));
+      const savedL = LS.get("cs.wf.long", "");
+      const sw = items.find((w) => w.id === savedL);
+      if (sw && fromPic(sw) === withPic) return savedL;
+      const fam = sw ? (sw.family || "Custom") : "MiniMax H3";
+      const pickL = items.find((w) => fromPic(w) === withPic && (w.family || "Custom") === fam) || items.find((w) => fromPic(w) === withPic);
+      if (pickL) return pickL.id;
+    }
     const saved = LS.get("cs.wf." + t, "");
     if (saved && (saved === "builtin" || forTask(t).some((w) => w.id === saved))) return saved;
     if (isImageTask(t)) return "builtin";
@@ -4215,6 +4246,18 @@ function bindShell() {
     list.sort((a, b) => rank(a) - rank(b));
     return list;
   }
+  // Watchdog: if the page opened while ComfyUI was stopping, restarting or switching mode, the engine list
+  // comes back empty and the video pills (engine, size, length...) vanish. Keep fetching it until it is back.
+  let watchBusy = false;
+  setInterval(() => {
+    if (list.length || watchBusy || document.hidden) return;
+    watchBusy = true;
+    loadList().then(() => {
+      if (!list.length) return;
+      renderList().catch(() => {});
+      if (typeof applyEngine === "function") applyEngine();
+    }).catch(() => {}).finally(() => { watchBusy = false; });
+  }, 5000);
 
   function setBody(on) {
     const s = (on && active && active.card.slots) || {};
@@ -4262,13 +4305,41 @@ function bindShell() {
     $("wf-negative").value = LS.get("cs.wfneg." + card.id, d.negative || "");
     const box = $("wf-models");
     box.innerHTML = "";
+    // MiniMax H3 video: only the model slots this video type uses, each listing only the models that fit it
+    const h3v = card.family === "MiniMax H3" && card.media === "video";
+    const task = currentTask();
+    const isRef = (f) => /ref2v/i.test(String(f || ""));
+    // only the all-in-one node has both slots; a plain Reference workflow runs on its "Video model"
+    const hasRefSlot = (opt.models || []).some((m) => /^Reference model/i.test(m.label || ""));
+    const isH3Video = (f) => /(^|[\\/])minimax[\\/]|minimax|h3/i.test(String(f || "")) && !isRef(f)
+      && !/image|vae|qwen|lora|turbo|audio/i.test(String(f || "").split(/[\\/]/).pop());
     (opt.models || []).forEach((m) => {
+      let pickFrom = m.choices || [];
+      if (h3v && /^Reference model/i.test(m.label || "")) {
+        if (task !== "r2v") return;                       // only Reference to video uses it
+        pickFrom = pickFrom.filter(isRef);
+      } else if (h3v && /^Video model/i.test(m.label || "")) {
+        if (task === "r2v" && hasRefSlot) return;         // AIO Reference to video runs on the Reference model
+        pickFrom = pickFrom.filter(task === "r2v" ? isRef : isH3Video);
+      } else if (h3v) {
+        // the rest of a MiniMax H3 video workflow: only MiniMax files (falls back to the full list if none match)
+        const lab0 = m.label || "";
+        const name = (f) => String(f || "").split(/[\\/]/).pop();
+        const inH3 = (f) => /minimax|h3/i.test(String(f || ""));
+        let keep = null;
+        if (/^Text encoder/i.test(lab0)) keep = pickFrom.filter((f) => inH3(f) || /qwen3vl/i.test(name(f)));
+        else if (/^Video VAE/i.test(lab0)) keep = pickFrom.filter((f) => inH3(f) && /video/i.test(name(f)));
+        else if (/^Audio VAE/i.test(lab0)) keep = pickFrom.filter((f) => inH3(f) && /audio/i.test(name(f)));
+        else if (/^Image VAE/i.test(lab0)) keep = pickFrom.filter((f) => inH3(f) && /image/i.test(name(f)));
+        else if (/^Speed LoRA/i.test(lab0)) keep = pickFrom.filter((f) => inH3(f) && /turbo|speed|distill|lightning|step/i.test(name(f)));
+        if (keep && keep.length) pickFrom = keep;
+      }
       const lab = document.createElement("label");
       lab.className = "field";
       lab.textContent = (m.label || "Model") + (m.title && m.title !== m.label ? " · " + m.title : "") + " ";
       const sel = document.createElement("select");
       sel.dataset.key = m.key;
-      const choices = (m.choices || []).length ? m.choices : [m.value];
+      const choices = pickFrom.length ? pickFrom : ((m.choices || []).length ? m.choices : [m.value]);
       fillSelect(sel, choices, LS.get("cs.wfm." + card.id + "." + m.key, m.value));
       sel.addEventListener("change", () => LS.set("cs.wfm." + card.id + "." + m.key, sel.value));
       lab.appendChild(sel);
@@ -4286,6 +4357,33 @@ function bindShell() {
     if (!(opt.models || []).length) box.innerHTML = '<p class="pop-note">This workflow has no model loaders the app can change.</p>';
     // settings follow the model you pick (a Turbo model wants 8 steps, a Base model 50 ...)
     box.querySelectorAll("select").forEach((sel) => sel.addEventListener("change", () => applyModelRecipe(true)));
+    // Prompt Enhancer model: shown for every workflow (image and video), shared with the built-in engine
+    {
+      const lab = document.createElement("label");
+      lab.className = "field";
+      lab.textContent = "Prompt Enhancer model ";
+      const sel = document.createElement("select");
+      sel.id = "wf-pe-clip";
+      const auto = document.createElement("option");
+      auto.value = ""; auto.textContent = "Auto (best for Fast / Quality)";
+      sel.appendChild(auto);
+      ((state.cfg && state.cfg.models && state.cfg.models.pe_clip_name) || []).forEach((v) => {
+        const o = document.createElement("option"); o.value = v; o.textContent = v; sel.appendChild(o);
+      });
+      const want = LS.get("cs.pe.choice", "");
+      sel.value = [...sel.options].some((o) => o.value === want) ? want : "";
+      sel.addEventListener("change", () => {
+        LS.set("cs.pe.choice", sel.value);
+        const pc = $("pe_clip_name");
+        if (pc && [...pc.options].some((o) => o.value === sel.value)) pc.value = sel.value;
+      });
+      lab.appendChild(sel);
+      box.appendChild(lab);
+      const tip = document.createElement("p");
+      tip.className = "pop-note";
+      tip.textContent = "The model that rewrites your prompt when Enhance is on. Auto picks the small fast one for Fast and the big one for Quality.";
+      box.appendChild(tip);
+    }
     if (tuneMode() === "manual") restoreManual(card.id);
     applyModelRecipe(false);
     if ($("krea-keepface-group")) $("krea-keepface-group").classList.toggle("hidden", card.edit_kind !== "krea_edit");
@@ -4733,7 +4831,11 @@ function bindShell() {
   function snap32(v) { return Math.max(64, Math.round(v / 32) * 32); }
   function wfSize() {
     if (state.media === "video") {
-      const [a, b] = (state.video.aspect || "16:9").split(":").map(Number);
+      const p1v = state.images[0];
+      // "match": Picture 1's own proportions (16:9 when there is no picture yet)
+      const [a, b] = state.video.aspect === "match"
+        ? (p1v && p1v.width && p1v.height ? [p1v.width, p1v.height] : [16, 9])
+        : (state.video.aspect || "16:9").split(":").map(Number);
       const short = state.video.res === "480p" ? 480 : 720;
       return a >= b ? { width: snap32(short * a / b), height: snap32(short) } : { width: snap32(short), height: snap32(short * b / a) };
     }
@@ -4770,7 +4872,7 @@ function bindShell() {
       return;
     }
     const models = {};
-    document.querySelectorAll("#wf-models select").forEach((sel) => { models[sel.dataset.key] = sel.value; });
+    document.querySelectorAll("#wf-models select[data-key]").forEach((sel) => { models[sel.dataset.key] = sel.value; });
     const size = wfSize();
     const body = {
       mode: "workflow",
@@ -4792,6 +4894,7 @@ function bindShell() {
       height: size.height,
       size_auto: state.quality === "picture1" || state.quality === "keep" || state.quality === "match",
       seconds: card.media === "video" ? state.video.len : null,
+      clip_seconds: card.media === "video" && window.__userClip ? (window.__userClip() || null) : null,
       fps: (card.defaults || {}).fps || null,
       models,
       camera: Object.assign({}, state.camera || {}),
@@ -4801,6 +4904,7 @@ function bindShell() {
       inpaint_explicit: !!(state.inpaint && state.inpaint.explicit),
       pe: (card.media === "video" || card.media === "image") && $("pe").checked,
       pe_mode: state.peMode || "fast",
+      pe_clip_choice: LS.get("cs.pe.choice", ""),
       pe_tokens: state.peTokens || null,
       auto_assist: !$("auto-assist") || $("auto-assist").checked,   // every engine (new pictures, edits, videos)
       image_roles: (state.roles || []).slice(),
@@ -4818,7 +4922,7 @@ function bindShell() {
     if (card.edit_kind === "krea_edit" && tuneMode() === "auto") {
       applyModelRecipe(false);
       body.steps = $("steps").value; body.cfg = $("cfg").value;
-      document.querySelectorAll("#wf-models select").forEach((sel) => { body.models[sel.dataset.key] = sel.value; });
+      document.querySelectorAll("#wf-models select[data-key]").forEach((sel) => { body.models[sel.dataset.key] = sel.value; });
       if (body.edit_intent === "bodyswap" && window.__swapLora("body_swap_v"))   // the BFS recipe: body swap LoRA at 0.5
         body.loras = (body.loras || []).concat([{ name: window.__swapLora("body_swap_v"), strength: 0.5 }]);
     }
@@ -5642,7 +5746,8 @@ function bindShell() {
       icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="4" width="7" height="7" rx="1.6"/><rect x="2.5" y="13" width="7" height="7" rx="1.6"/><path d="M12 12h3M13.8 10.5l1.5 1.5-1.5 1.5"/><path d="M17.5 8.5l4 3.5-4 3.5z"/></svg>' },
     { id: "v2v", label: "Video", title: "Video to video", desc: "Edits, restyles or animates from a video you add (uploaded workflows).",
       icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="9" height="10" rx="2"/><path d="M4.5 10l3 2-3 2z"/><path d="M12.5 12h2.5M13.8 10.5l1.5 1.5-1.5 1.5"/><path d="M17.5 8.5l4 3.5-4 3.5z"/></svg>' },
-    { id: "long", label: "Long", title: "Long text to video", desc: "A longer story made of seamless clips.",
+    { id: "long", label: "Long", title: "Long video (from text or a picture)",
+      desc: "A longer video made of seamless clips. Add a picture to start from it: each clip carries on from the end of the last.",
       icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="6" height="10" rx="1.5"/><rect x="9" y="7" width="6" height="10" rx="1.5"/><path d="M17 9.5l5 2.5-5 2.5z"/></svg>' },
   ];
 
@@ -5712,10 +5817,14 @@ function bindShell() {
 
   window.onEngineChanged = function (active) {
     const c = active && active.card;
-    window.__videoAspects = c && c.aspects ? c.aspects.filter((a) => a !== "match") : null;
+    // "match" (Picture 1's own shape) stays when the engine offers it (MiniMax picture / reference / long video)
+    window.__videoAspects = c && c.aspects ? c.aspects.slice() : null;
     if (c && c.media === "video") {
       const lengths = c.lengths || [3, 5, 8, 10];
-      if (lengths.indexOf(state.video.len) < 0) state.video.len = c.default_length || lengths[0];
+      // any typed length is kept; only one past what this PC can do at all is brought back down
+      const topLen = Math.max(0, ...Object.values(c.limits || {})) || Math.max(...lengths);
+      if (!(state.video.len > 0)) state.video.len = c.default_length || lengths[0];
+      else if (state.video.len > topLen) state.video.len = topLen;
       const res = c.resolutions || ["480p", "720p"];
       if (res.indexOf(state.video.res) < 0) state.video.res = c.default_resolution || res[0];
       if (window.__videoAspects && window.__videoAspects.indexOf(state.video.aspect) < 0) state.video.aspect = window.__videoAspects[0];
@@ -6505,7 +6614,7 @@ function bindShell() {
 
 /* ===== Spec-aware length, upscale, image MP cap v20261111p ===== */
 (function () {
-  const PRESETS = [5, 10];
+  const PRESETS = [];   // length is typed (any number of seconds); no preset buttons
   function card() { const a = window.__wfActive && window.__wfActive(); return a && a.card; }
   function maxFor(c, res) {
     const lim = (c && c.limits) || {};
@@ -6518,10 +6627,32 @@ function bindShell() {
     if (!c || c.media !== "video") { p.textContent = ""; return; }
     const lim = c.limits || {};
     const basis = c.limits_basis === "tested" ? "tested on this PC" : "estimated for this PC";
-    const cap = lim[state.video.res];
-    let t = Object.keys(lim).map((r) => r + ": up to " + lim[r] + " s").join(" · ") + " (" + basis + ").";
-    if (c.clip_seconds) t += " Made of " + c.clip_seconds + " s clips so each one fits in memory.";
-    if (cap && state.video.len > cap) t += " At " + state.video.res + " this clip will be " + cap + " s.";
+    const res = state.video.res, len = state.video.len;
+    const cap = lim[res];
+    let t;
+    if (c.single && c.extend) {
+      // Text / Image to video: one clip up to its limit, longer = extended video at the same size
+      const one = c.single[res] || 0, ext = c.extend[res] || 0;
+      const clip = window.__clipFor ? window.__clipFor(c) : ((c.clip_by_res || {})[res] || c.clip_seconds || 5);
+      const nClips = Math.max(1, Math.round(len / clip)), perClip = Math.round(len / nClips * 10) / 10;
+      if (one && len <= one) t = "At " + res + " this is one clip (up to " + one + " s in one clip on this PC).";
+      else if (ext) t = (one ? "At " + res + " one clip is at most " + one + " s, so " + len + " s" : "At " + res + " " + len + " s") +
+        " is made as an extended video: " + nClips + " clips of about " + perClip + " s at " + res +
+        ", each continuing from the last. Up to " + ext + " s.";
+      else {
+        const bigExt = Object.keys(c.extend).sort((a, b) => (c.extend[b] ? parseInt(b) : 0) - (c.extend[a] ? parseInt(a) : 0))[0];
+        t = "At " + res + " this PC makes one clip of up to " + one + " s, so the video will be " + one + " s.";
+        if (len > one && bigExt) t += " For longer, pick " + bigExt + " (made as an extended video, up to " + c.extend[bigExt] +
+          " s) and use Upscale on the finished video to reach " + res + " or 1080p.";
+      }
+      const extended = !(one && len <= one) && ext;
+      t += extended && (c.extend_tested || []).indexOf(res) < 0 ? " (estimated for this PC)" : " (" + basis + ")";
+    } else {
+      t = Object.keys(lim).map((r) => r + ": up to " + lim[r] + " s").join(" · ") + " (" + basis + ").";
+      if (c.clip_seconds) t += " Made of " + ((c.clip_by_res || {})[res] || c.clip_seconds) + " s clips so each one fits in memory.";
+    }
+    if (cap && len > cap) t += " At " + res + " the video will be " + cap + " s.";
+    if (window.__shotNote) t += window.__shotNote();
     p.textContent = t;
   }
   function setLen(v) {
@@ -6555,6 +6686,89 @@ function bindShell() {
   $("vlen-custom-set").addEventListener("click", () => { setLen($("vlen-custom").value); hidePops(); });
   $("vlen-custom").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); setLen($("vlen-custom").value); hidePops(); } });
 
+  /* ---------- "Shot 1: ... Shot 2: ..." in a MiniMax video prompt: one clip per shot ----------
+     Typing shots sets the length to one clip per shot (or the lengths written, "Shot 1 (3s):"), capped at what this
+     PC makes at that size. Change Length yourself and it stays until the number of shots changes. The server lays
+     the shots out over whatever length is sent (see plan_shots in server.py). */
+  const SHOT_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+  const SHOT_RX = /(?:^|(?<=[\s.!?;,\n(\[]))\[?\s*(?:shot\s*(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)|(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+shot)\s*\]?(?:\s*[(\[,\-–—]?\s*(\d+(?:\.\d+)?)\s*(?:s|secs?|seconds?)\b\s*[)\]]?)?/gi;
+  function readShots(text) {
+    const out = [];
+    for (const m of String(text || "").matchAll(SHOT_RX)) {
+      const raw = (m[1] || m[2] || "").toLowerCase();
+      out.push({ n: /^\d+$/.test(raw) ? Number(raw) : (SHOT_WORDS[raw] || 0), own: m[3] ? Number(m[3]) : null });
+    }
+    return out.length >= 2 && out.every((s, i) => s.n === i + 1) ? out : [];
+  }
+  window.__readShots = readShots;
+  function shotCard() {
+    const c = card();
+    return c && c.family === "MiniMax H3" && c.media === "video" && ["t2v", "i2v", "long"].indexOf(c.task) >= 0 ? c : null;
+  }
+  function userClip() { const v = Number(LS.get("cs.v.clip", "") || 0); return v > 0 ? Math.max(1, Math.min(13, v)) : 0; }
+  window.__userClip = userClip;
+  function clipFor(c) { return userClip() || ((c.clip_by_res || {})[state.video.res]) || c.clip_seconds || 5; }
+  window.__clipFor = clipFor;
+  // the Clip length box: only for MiniMax videos that can be extended
+  function syncClipRow() {
+    const c = card();
+    const on = !!(c && c.family === "MiniMax H3" && c.media === "video" && (c.extend || c.task === "long"));
+    $("vclip-row").classList.toggle("hidden", !on);
+    $("vclip-note").classList.toggle("hidden", !on);
+    const u = userClip();
+    $("vclip-custom").value = u ? u : "";
+    $("vclip-custom").placeholder = c ? "Auto (" + (((c.clip_by_res || {})[state.video.res]) || c.clip_seconds || 5) + ")" : "Auto";
+  }
+  window.__syncClipRow = syncClipRow;
+  function setClip(v) {
+    const n = Number(v || 0);
+    LS.set("cs.v.clip", n > 0 ? String(Math.max(1, Math.min(13, Math.round(n * 2) / 2))) : "");
+    syncClipRow(); shotSig = ""; syncShots(); note();
+  }
+  $("vclip-custom").addEventListener("change", () => setClip($("vclip-custom").value));
+  $("vclip-custom").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); setClip($("vclip-custom").value); } });
+  let shotSig = "";
+  function syncShots() {
+    const c = shotCard();
+    if (!c || state.media !== "video") return;
+    const shots = readShots($("prompt").value);
+    const sig = shots.map((s) => s.n + ":" + (s.own || "")).join(",");
+    if (sig === shotSig) return;
+    shotSig = sig;
+    if (shots.length < 2) { note(); return; }
+    const clip = clipFor(c);
+    // one shot = one generation: each shot is one clip long (Auto: what fits this PC at this size, or Clip length)
+    const n = Math.min(shots.length, 7);
+    let total = shots.some((s) => s.own) ? shots.slice(0, n).reduce((a, s) => a + (s.own || clip), 0) : n * clip;
+    const top = (c.limits || {})[state.video.res];
+    if (top && total > top) total = top;
+    setLen(Math.round(total));
+  }
+  $("prompt").addEventListener("input", () => { clearTimeout(syncShots._t); syncShots._t = setTimeout(syncShots, 250); });
+  window.__resyncShots = function () { shotSig = ""; syncShots(); };     // size / clip length changed
+  window.__shotNote = function () {
+    const c = shotCard();
+    const shots = c ? readShots($("prompt").value) : [];
+    if (shots.length < 2) return "";
+    const clip = clipFor(c), len = state.video.len, n = shots.length;
+    const per = Math.round(len / Math.min(n, 7) * 10) / 10;
+    if (per < 2) {
+      const ext = c.extend || {};
+      if (!ext[state.video.res]) {
+        const big = Object.keys(ext).sort((a, b) => parseInt(b) - parseInt(a))[0];
+        if (big) return " Your " + n + " shots play one after another inside one clip. For one clip per shot, pick " + big + " (extended video), then Upscale the finished video.";
+      }
+      return " Too short for each of your " + n + " shots to be its own generation, so they play one after another inside one clip (give it " + n * clip + " s for one " + clip + " s generation per shot).";
+    }
+    const g = Math.min(n, 7);
+    let t = " Your " + n + " shots = " + g + " generations of " + per + " s: Shot 1 is the first clip, each next shot continues from the last frame of the one before.";
+    if (n > 7) t += " MiniMax makes at most 7 per video, so shots 7-" + n + " share the last one.";
+    const safe = ((c.clip_by_res || {})[state.video.res]) || c.clip_seconds || 5;
+    if (per > safe + 0.4) t += " " + per + " s per generation is more than the " + safe + " s that fits safely at this size, so it may run out of memory.";
+    return t;
+  };
+
   function resNote() {
     const c = card();
     const hw = window.__hw || {};
@@ -6570,9 +6784,10 @@ function bindShell() {
     if (typeof baseEngine === "function") baseEngine.apply(this, arguments);
     buildLength();
     resNote();
+    if (window.__syncClipRow) window.__syncClipRow();
   };
   /* the resolution buttons are rebuilt by the engine; keep the note in step when they change */
-  $("vres-seg").addEventListener("click", () => setTimeout(() => { note(); resNote(); }, 0));
+  $("vres-seg").addEventListener("click", () => setTimeout(() => { if (window.__resyncShots) window.__resyncShots(); note(); resNote(); if (window.__syncClipRow) window.__syncClipRow(); }, 0));
 
   /* ---------- upscale a finished video ---------- */
   let upItem = null;
@@ -6743,7 +6958,7 @@ function bindShell() {
 
   function pool() {
     if (state.media !== "video") return ASPECTS.map((a) => a.id);
-    if (window.__videoAspects && window.__videoAspects.length) return window.__videoAspects;
+    if (window.__videoAspects && window.__videoAspects.length) return window.__videoAspects.filter((a) => a !== "match");
     return ["16:9", "9:16", "1:1", "4:3", "3:4"];
   }
 
@@ -8603,7 +8818,7 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
    Auto/Manual, Manual values, LoRAs and workflow model picks were already saved by their own parts of the app.
    Never saved: the prompt, the negative prompt, pictures, Reuse settings. */
 (function () {
-  const INPUTS = ["pe", "auto-assist", "random-seed", "seed", "unet_name", "clip_name", "vae_name", "pe_clip_name"];
+  const INPUTS = ["pe", "auto-assist", "random-seed", "seed", "unet_name", "clip_name", "vae_name"];   // the enhancer model is saved as cs.pe.choice
   let ready = false, last = "";
   function snapshot() {
     const s = {}, inp = {};
@@ -8638,6 +8853,7 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     }
     const inp = (saved && saved.inputs) || {};
     Object.keys(inp).forEach((id) => {
+      if (INPUTS.indexOf(id) < 0) return;      // a field this part no longer remembers (e.g. pe_clip_name)
       const el = $(id);
       if (!el) return;
       if (el.type === "checkbox") {
@@ -9027,4 +9243,22 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   window.addEventListener("resize", paintPill);
   checkJobs();
   setInterval(() => { if (!open) checkJobs(); }, 3000);
+})();
+
+/* Long video: adding or removing a picture switches between Long image to video (starts from the picture and keeps
+   continuing from the end of each clip) and Long text to video. */
+(function () {
+  if (typeof renderSlots !== "function") return;
+  const orig = renderSlots;
+  let had = null;
+  renderSlots = function () {
+    const r = orig.apply(this, arguments);
+    const has = (state.images || []).length > 0;
+    if (had !== null && has !== had && state.media === "video" && state.vmode === "long" && typeof window.applyEngine === "function") {
+      window.applyEngine();
+      toast(has ? "Long video will start from your picture" : "Long video from your text");
+    }
+    had = has;
+    return r;
+  };
 })();

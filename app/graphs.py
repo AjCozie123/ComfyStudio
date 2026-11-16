@@ -385,6 +385,7 @@ def _loaders(g, cfg):
 
 
 VIDEO_TASK = "pe_video_task.txt"      # video engines (with or without pictures): motion, camera and sound over time
+VIDEO_LONG_TASK = "pe_video_long_task.txt"   # long seamless video: one timed beat per clip ("0-5s: ...")
 _INPUT_TAIL = re.compile(r"\n\s*(?:input_text|User input)\s*:\s*\{input text\}.*\Z", re.S | re.I)
 
 
@@ -395,7 +396,7 @@ def pe_task_file(mode="t2i", pe_mode="fast", media="image", route=""):
     import pe as PE
     st = PE.settings(pe_mode)
     if media == "video":
-        return VIDEO_TASK
+        return VIDEO_LONG_TASK if route == "long" else VIDEO_TASK
     if mode == "edit":
         if media == GENERIC_MEDIA and route and route != "general":
             # focused instructions for this kind of edit (replace, remove, body shape, pose ...), when they exist
@@ -662,7 +663,7 @@ def build_pe_only(prompt, mode="t2i", images=None, pe_mode="fast", models=None, 
     g["user_prompt"] = _node("PrimitiveStringMultiline", {"value": prompt}, "Text (user_prompt)")
     max_length, thinking = PE.resolve_tokens(st["id"], mode, pe_tokens, prompt, len(links), generic=generic)
     if media == "video":
-        task = VIDEO_TASK
+        task = VIDEO_LONG_TASK if route == "long" else VIDEO_TASK
     _pe_chain(
         g, "user_prompt", True, links,
         system, task, max_length, pe_clip,

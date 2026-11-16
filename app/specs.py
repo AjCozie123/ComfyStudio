@@ -69,8 +69,60 @@ def effective(card, hw):
     if kind == "h3_long":
         clip = _tier(H3_CLIP, vram)
         out["clip_seconds"] = clip
-        out["limits"] = {r: min(s, clip * 7) for r, s in tier.items()}
+        # an extended video is made of short clips, so any size where ONE clip of that length fits is usable
+        # (8 GB: 720p, since a 5 s 720p clip fits). Those sizes are estimated, not tested.
+        for r, s in extend_sizes(vram, native, clip).items():
+            tier.setdefault(r, s)
+        out["resolutions"] = sorted(tier, key=lambda r: RES_ORDER.index(r) if r in RES_ORDER else 99)
+        out["clip_by_res"] = {r: c for r, c in extend_clips(vram, native, clip).items() if r in tier and c != clip}
+        out["limits"] = {r: min(s, out["clip_by_res"].get(r, clip) * 7) for r, s in tier.items()}
+    elif kind == "h3" and card.get("task") in ("t2v", "i2v"):
+        # Text / Image to video: one clip up to its limit; longer is made as an extended video (short clips joined)
+        # at the same size, so 720p (1080p on big cards) keeps its quality past one clip's length.
+        clip = _tier(H3_CLIP, vram)
+        ext = extend_sizes(vram, native, clip)
+        long_tier = dict(_tier(VIDEO_TIERS["h3_long"], vram))
+        for r, s in ext.items():
+            long_tier.setdefault(r, s)
+        per = extend_clips(vram, native, clip)
+        ext = {r: min(s, per.get(r, clip) * 7) for r, s in long_tier.items() if r in native}
+        out["single"] = dict(tier)
+        out["extend"] = ext
+        # only sizes in the long table were measured on the tested card; the rest are estimates
+        out["extend_tested"] = sorted(_tier(VIDEO_TIERS["h3_long"], vram)) if int(vram) == TESTED_VRAM else []
+        out["clip_seconds"] = clip
+        out["clip_by_res"] = {r: c for r, c in per.items() if c != clip and r in ext}
+        both = set(tier) | set(ext)
+        out["resolutions"] = sorted(both, key=lambda r: RES_ORDER.index(r) if r in RES_ORDER else 99)
+        out["limits"] = {r: max(tier.get(r, 0), ext.get(r, 0)) for r in both}
     return out
+
+
+def extend_clips(vram, native, clip):
+    """Seconds per clip for an extended (clip-by-clip) MiniMax video at each size this PC can do: where one clip of
+    at least 5 s fits at that size (shorter clips at big sizes, e.g. 16 GB 1080p uses 5 s clips)."""
+    single = _tier(VIDEO_TIERS["h3"], vram)
+    # needs headroom: an extended video holds the carried-over frames and the refine pass on top of one clip, so a
+    # size qualifies only when a single clip of 10 s fits there. Tested 2026-11-16 on 8 GB: 720p extended (one clip
+    # fits only 5 s) ran out of memory at the end of the first clip with H3 Eros Max beta6 int8.
+    # Where one clip fits only 5-9 s, extended videos use SHORT 3 s clips (each later clip holds 3 + 1.6 s carried
+    # over, under the 5 s that fits) through the AIO's Long Video node, so e.g. 720p still works on 8 GB. Estimated.
+    out = {}
+    for r, s in single.items():
+        if r not in (native or single):
+            continue
+        if s >= 10:
+            out[r] = min(clip, s)
+        elif s >= 5:
+            out[r] = SHORT_CLIP
+    return out
+
+
+SHORT_CLIP = 3
+
+
+def extend_sizes(vram, native, clip):
+    return {r: c * 7 for r, c in extend_clips(vram, native, clip).items()}
 
 
 def image_mp_max(hw):

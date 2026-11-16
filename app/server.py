@@ -1198,7 +1198,10 @@ def make_pe_graph(prompt, mode, images, pe_mode, models, pe_system_extra="", pe_
 
 
 def pe_route_for(job):
-    """Which focused edit instructions the enhancer uses (only for picture edits on non-MiniMax engines)."""
+    """Which focused edit instructions the enhancer uses (only for picture edits on non-MiniMax engines), or 'long'
+    for a long seamless video (one timed beat per clip)."""
+    if job.get("pe_media") == "video" and job.get("video_long_secs"):
+        return "long"
     if job.get("mode") != "edit" or job.get("pe_media") != graphs.GENERIC_MEDIA or job.get("pe_system_override"):
         return ""
     return PE.route_edit(job.get("prompt_user") or job.get("pe_input") or job.get("prompt") or "")
@@ -1559,6 +1562,9 @@ def apply_effective(card, hw):
     card["limits_basis"] = eff["basis"]
     if eff.get("clip_seconds"):
         card["clip_seconds"] = eff["clip_seconds"]
+    for k in ("clip_by_res", "single", "extend", "extend_tested"):
+        if eff.get(k):
+            card[k] = eff[k]
     if card.get("default_resolution") not in card["resolutions"]:
         card["default_resolution"] = card["resolutions"][0]
     return card
@@ -2007,9 +2013,197 @@ def page_build():
         return ""
 
 
+_SHOT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+               "first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth": 6, "seventh": 7, "eighth": 8,
+               "ninth": 9, "tenth": 10}
+# "Shot 1:", "shot two -", "[Shot 3]", "Second shot:" ... optionally with its own length: "Shot 1 (3s):", "Shot 2 - 7 seconds:"
+_SHOT_RX = re.compile(
+    r"(?:(?<=^)|(?<=[\s.!?;,\n(\[]))\[?\s*(?:shot\s*(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"|(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+shot)\s*\]?"
+    r"(?:\s*[(\[,\-–—]?\s*(\d+(?:\.\d+)?)\s*(?:s|secs?|seconds?)\b\s*[)\]]?)?"
+    r"\s*(?:[:.\-–—)]+\s*)?", re.I)
+
+
+def parse_shots(text):
+    """-> (text before Shot 1, [(own seconds or None, what happens)]) when the prompt has shots numbered 1, 2, 3 ...
+    (at least two); else (text, [])."""
+    marks = list(_SHOT_RX.finditer(text or ""))
+    nums = []
+    for m in marks:
+        raw = (m.group(1) or m.group(2) or "").lower()
+        nums.append(int(raw) if raw.isdigit() else _SHOT_WORDS.get(raw, 0))
+    if len(nums) < 2 or nums != list(range(1, len(nums) + 1)):
+        return text, []
+    shots = []
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        body = text[m.end():end].strip().strip(",;").strip()
+        if body and body[-1] not in ".!?\"'":
+            body += "."
+        body = body[:1].upper() + body[1:]
+        own = float(m.group(3)) if m.group(3) else None
+        shots.append((own if own and own > 0 else None, body))
+    return text[:marks[0].start()].strip(), shots
+
+
+def _fmt_s(x):
+    x = round(x, 1)
+    return str(int(x)) if x == int(x) else str(x)
+
+
+MAX_GENERATIONS = 7     # the MiniMax H3 AIO makes at most 1 clip + 6 extensions per video
+
+
+def plan_shots(shots, head, length, clip, top, safe=None):
+    """One shot = one generation: Shot 1 is the first clip, Shot 2 the first extension (continuing from the last
+    frame of Shot 1), Shot 3 the next ... Returns (prompt, seconds, seamless?, note, seconds per generation).
+
+    - No length given: each shot is one clip long (the clip length that fits this PC at that size, or the user's
+      own Clip length), e.g. 3 shots at 720p on 8 GB = 3 x 3 s.
+    - A length given: the shots share it equally (the AIO gives every extension the same length).
+    - Shots with their own length ("Shot 1 (3s):"): their average (same reason).
+    - More than this PC makes at that size, or more than 13 s per generation: shortened evenly to fit.
+    - Under 2 s per shot: too short to be separate generations, so they play in order inside one clip.
+    - More than 7 shots: shots 8+ join the 7th generation (the AIO's limit)."""
+    n = len(shots)
+    if n > MAX_GENERATIONS:
+        last = " ".join(body for _, body in shots[MAX_GENERATIONS - 1:])
+        shots = shots[:MAX_GENERATIONS - 1] + [(None, last)]
+        extra_note = "MiniMax makes at most %d generations per video, so shots %d-%d were joined into the last one. " % (
+            MAX_GENERATIONS, MAX_GENERATIONS, n)
+        n = MAX_GENERATIONS
+    else:
+        extra_note = ""
+    own = [d for d, _ in shots]
+    if any(own):
+        per = sum(d if d else float(clip) for d in own) / n
+        why = "the lengths you gave the shots (evened out: every extension is the same length)"
+    elif length and float(length) > 0:
+        per = float(length) / n
+        why = "your length shared between the shots"
+    else:
+        per = float(clip)
+        why = "one clip per shot"
+    note = extra_note
+    if per > 13:
+        per = 13.0
+        note += "A generation is at most 13 s, so each shot is 13 s. "
+    if top and per * n > top:
+        per = float(top) / n
+        note += "That would be more than this PC makes at this size (%s s), so each shot was shortened to fit. " % _fmt_s(top)
+    per = round(per, 1)
+    first = ((head.rstrip(" .") + ". ") if head else "")
+    if per < 2:
+        joins = ["At the start, "] + ["Then "] * max(0, n - 2) + (["Finally, "] if n > 1 else [])
+        parts = []
+        for (d, body), j in zip(shots, joins):
+            bb = body[:1].lower() + body[1:] if body[:1].isupper() and not body[1:2].isupper() else body
+            parts.append(j + bb)
+        total = round(per * n, 1)
+        note += ("%s s is too short to give each of your %d shots its own generation, so they play one after another "
+                 "inside one clip. Give it %s s for one %s s generation per shot." % (
+                     _fmt_s(total), n, _fmt_s(n * clip), _fmt_s(clip)))
+        return first + " ".join(parts), total, False, note.strip(), 0
+    out = []
+    for i, (d, body) in enumerate(shots):
+        if i == 0 and first:
+            body = first + body
+        out.append("%s-%ss: %s" % (_fmt_s(i * per), _fmt_s((i + 1) * per), body))
+    total = round(per * n, 1)
+    note += ("Your %d shots = %d generations of %s s (%s), %s s in total. Shot 1 is the first clip; each next shot "
+             "continues from the last frame of the one before, with no cut." % (n, n, _fmt_s(per), why, _fmt_s(total)))
+    if safe and per > safe + 0.4:
+        note += (" %s s per generation is more than the %s s that fits safely at this size on this PC, so it may run "
+                 "out of memory." % (_fmt_s(per), _fmt_s(safe)))
+    return " ".join(out), total, True, note, per
+
+
+def long_clip_choice(card, data):
+    """Seconds per clip for an extended MiniMax video: the user's own (Length > Clip length, 1-13 s) or Auto (what
+    fits this PC at that size: 5 s, or 3 s where one clip fits only 5 s, e.g. 720p on 8 GB). -> (clip, auto)."""
+    eff = SP.effective(card, hardware())
+    res = data.get("res") or card.get("default_resolution")
+    auto = float((eff.get("clip_by_res") or {}).get(res) or eff.get("clip_seconds") or 5)
+    if data.get("_shot_clip"):                     # shots: one generation per shot, each this long
+        return float(data["_shot_clip"]), auto
+    try:
+        user = float(data.get("clip_seconds") or 0)
+    except (TypeError, ValueError):
+        user = 0.0
+    return (max(1.0, min(13.0, round(user, 1))) if user > 0 else auto), auto
+
+
+def apply_shots(card, data):
+    """MiniMax H3 video: the user's numbered shots are laid out in time (see plan_shots)."""
+    if card.get("family") != "MiniMax H3" or card.get("media") != "video" or card.get("task") not in ("t2v", "i2v", "long"):
+        return data, ""
+    head, shots = parse_shots(data.get("prompt") or "")
+    if len(shots) < 2:
+        return data, ""
+    eff = SP.effective(card, hardware())
+    res = data.get("res") or card.get("default_resolution")
+    clip, safe = long_clip_choice(card, data)
+    top = (eff.get("limits") or {}).get(res)
+    try:
+        length = float(data.get("seconds") or 0)
+    except (TypeError, ValueError):
+        length = 0.0
+    text, secs, seamless, note, per = plan_shots(shots, head, length, clip, top, safe)
+    data = dict(data, prompt=text, seconds=secs, _shots=min(len(shots), MAX_GENERATIONS) if seamless else 0,
+                _shot_clip=per if seamless else None)
+    return data, note
+
+
+def route_extended(wid, card, graph, data):
+    """Text / Image to video asked for more seconds than one clip can do at that size on this PC: make it as an
+    extended video instead (the matching Long workflow: short clips at the same size, each continuing from the
+    last), so 720p (1080p on big cards) keeps its quality. Model picks carry over by slot name."""
+    if card.get("family") != "MiniMax H3" or card.get("media") != "video" or card.get("task") not in ("t2v", "i2v"):
+        return wid, card, graph, data, ""
+    eff = SP.effective(card, hardware())
+    single, ext = eff.get("single") or {}, eff.get("extend") or {}
+    res = data.get("res") or card.get("default_resolution")
+    try:
+        secs = float(data.get("seconds") or 0)
+    except (TypeError, ValueError):
+        return wid, card, graph, data, ""
+    shots = int(data.get("_shots") or 0)
+    if not secs or (secs <= single.get(res, 0) and shots < 2) or res not in ext:
+        return wid, card, graph, data, ""
+    long_id = "h3_long_i2v" if card["task"] == "i2v" else "h3_long_t2v"
+    try:
+        lcard, lgraph = WF.get(long_id)
+    except Exception:
+        return wid, card, graph, data, ""
+    # model picks: same slot label -> the long workflow's index
+    src = {str(i): (m.get("label") or "") for i, m in enumerate((card.get("slots") or {}).get("models") or [])}
+    dst = {(m.get("label") or ""): str(i) for i, m in enumerate((lcard.get("slots") or {}).get("models") or [])}
+    models = {}
+    for k, v in (data.get("models") or {}).items():
+        if src.get(str(k)) in dst:
+            models[dst[src[str(k)]]] = v
+    data = dict(data, workflow_id=long_id, models=models, overrides=None)
+    clip = (eff.get("clip_seconds") or 5)
+    n = int(-(-secs // clip))
+    note = ("One %s clip on this PC is at most %s s, so this was made as an extended video: %d clips of about %s s "
+            "at %s, each continuing from the last." % (res, single.get(res, 0) or "under 5", n, clip, res))
+    return long_id, lcard, lgraph, data, note
+
+
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
+    ext_note = shot_note = ""
+    try:
+        data, shot_note = apply_shots(card, data)
+    except Exception as e:
+        log.info("shot marks skipped: %s", e)
+    try:
+        wid, card, graph, data, ext_note = route_extended(wid, card, graph, data)
+    except Exception as e:
+        log.info("extended-video routing skipped: %s", e)
+    if shot_note:
+        ext_note = shot_note
     slots = card.get("slots") or {}
     prompt = (data.get("prompt") or "").strip()
     if prompt and data.get("understanding") is not False:
@@ -2150,7 +2344,11 @@ def submit_workflow_job(data):
     # Auto understanding: the same <Picture N> notes the built-in engine gets (roles, outfits, sheets, ...).
     # every engine: new pictures get the text-to-image understanding (sheets, camera ...), edits the edit one, and a
     # video made from pictures uses them as references (keeps who is who)
-    if prompt and data.get("auto_assist") and not data.get("inpaint_mask") and card.get("assist", True) is not False:
+    # A video that STARTS from the picture (Image to video, Long image to video) is not a reference job: the
+    # "pictures are references only, no base image" notes would contradict it (and land in the story's last shot).
+    video_starts_from_pic = (not is_image) and card.get("family") == "MiniMax H3" and card.get("task") in ("i2v", "long")
+    if (prompt and data.get("auto_assist") and not data.get("inpaint_mask") and card.get("assist", True) is not False
+            and not video_starts_from_pic):
         video_refs = (not is_image) and bool(images)
         a_mode = ("ref" if (data.get("ref_mode") or video_refs) else "edit") if images else "t2i"
         try:
@@ -2178,8 +2376,19 @@ def submit_workflow_job(data):
     seed = data.get("seed")
     if data.get("random_seed") or seed in (None, "", "random"):
         seed = None
+    # a long seamless video: the whole timed story is kept (one beat per clip), not cut to one clip's worth
+    try:
+        long_secs = float(data.get("seconds") or card.get("default_length") or 0) if card.get("task") == "long" else 0.0
+    except (TypeError, ValueError):
+        long_secs = 0.0
+    # clip by clip (Long Video node) when the clip length isn't one the Seamless Planner has (e.g. 3 s for 720p on
+    # 8 GB) or the user wrote shots (each shot = exactly its own clip); otherwise the planner splits the story
+    long_clip = long_clip_choice(card, data)[0] if (card.get("task") == "long" and long_secs) else 0.0
+    use_clips = bool(long_clip and round(long_secs / long_clip) >= 2
+                     and (long_clip not in WF.PLANNER_CLIPS or int(data.get("_shots") or 0) >= 2))
+    long_raw = prompt_sent
     if card.get("prompt_style") == "h3":
-        prompt_sent = WF.h3_wrap(prompt_sent, card.get("prompt_trigger") or "")
+        prompt_sent = WF.h3_wrap(prompt_sent, card.get("prompt_trigger") or "", long_secs)
     res = data.get("res") or card.get("default_resolution")
     if card.get("resolutions") and res not in card["resolutions"]:
         res = card.get("default_resolution") or card["resolutions"][0]
@@ -2188,6 +2397,8 @@ def submit_workflow_job(data):
         aspect = card["aspects"][0]
     seconds = data.get("seconds") or card.get("default_length")
     notes = [lock_note] if lock_note and data.get("inpaint_mask") else []
+    if ext_note:
+        notes.append(ext_note)
     cap = (card.get("limits") or {}).get(res)
     if seconds and cap and float(seconds) > cap:
         notes.append("%s makes at most %s s at %s on this PC, so the clip is %s s." % (card.get("name"), cap, res, cap))
@@ -2239,7 +2450,8 @@ def submit_workflow_job(data):
         "seconds": seconds,
         "res": res,
         "aspect": aspect,
-        "clip": card.get("clip_seconds"),
+        "clip": (int(long_clip) if long_clip in WF.PLANNER_CLIPS else 5) if long_clip else
+                ((card.get("clip_by_res") or {}).get(res) or card.get("clip_seconds")),
         "fps": data.get("fps"),
         "models": data.get("models") or {},
         "loras": [l for l in (data.get("loras") or []) if isinstance(l, dict)]
@@ -2253,6 +2465,15 @@ def submit_workflow_job(data):
     }
     g, used_seed = WF.fill(card, graph, values, APP_OUT + "/wf/" + card["id"])
     notes += values.pop("_lora_notes", None) or []
+    if use_clips:
+        try:
+            lcp = WF.long_clip_prompts(g, long_raw, long_secs, long_clip, card.get("prompt_trigger") or "")
+            if lcp:
+                log.info("long video clip by clip: %s", lcp["desc"])
+                prompt_sent = lcp["plan"]          # what the job shows: Shot 1 (0-3s): ... Shot 2 (3-6s): ...
+        except Exception as e:
+            log.info("clip-by-clip long video skipped: %s", e)
+            use_clips = False
     # sorted save folder: ComfyStudio/<engine>/<model>/<t2i|edit|video>/<workflow id>_00001_.png
     wf_model = graph_model(g)
     wf_prefix = out_dir(engine_label(card), wf_model, kind_label(card)) + "/" + _seg(card["id"], "workflow")
@@ -2346,10 +2567,11 @@ def submit_workflow_job(data):
         "camera": camera,
         "models": {},
         "resolution_in": "",
+        "long_clips": {"clip": long_clip, "total": long_secs} if use_clips else None,
     }
     if pe_on:
         pe_mode = "quality" if data.get("pe_mode") == "quality" else "fast"
-        pe_clip_used, pe_small = PE.pe_clip_for(pe_mode, _clip_names(), graphs.DEFAULTS["pe_clip_name"])
+        pe_clip_used, pe_small = PE.pe_clip_choose(pe_mode, _clip_names(), graphs.DEFAULTS["pe_clip_name"], data.get("pe_clip_choice"))
         pe_clip_used = pe_clip_available(pe_clip_used)
         if not pe_clip_used:            # no enhancer model on this PC: run with your own prompt
             pe_on = False
@@ -2368,7 +2590,14 @@ def submit_workflow_job(data):
             extra = dialect.get("hint") or ""
         if assist_info:
             extra = (ASSIST.pe_task_prefix(assist_info) + "\n" + extra).strip()
+        if long_secs and pe_media == "video":
+            lc = long_clip or 5.0
+            clips = max(1, int(round(long_secs / lc))) if use_clips else max(1, int(-(-long_secs // lc)))
+            per = round(long_secs / clips, 1) if use_clips else lc
+            extra = (extra + "\nTotal length: %g seconds, made of %d clips of %g seconds each (0-%gs, %g-%gs, ...)."
+                     % (long_secs, clips, per, per, per, 2 * per)).strip()
         job.update({
+            "video_long_secs": long_secs if pe_media == "video" else 0,
             "pe": True, "pe_mode": pe_mode, "pe_tokens": pe_tokens_in(data.get("pe_tokens")), "pe_media": pe_media,
             # edits: the enhancer reads your words plus the guards; sentences in pe_keep_tail are added back after it
             "pe_input": pe_input if image_edit else "",
@@ -2411,8 +2640,21 @@ def apply_wf_enhanced_prompt(job):
             text = text.rstrip(" .") + ". " + s
     text = PD.translate(text, dialect)
     text = lora_trigger_prompt(text, job.get("pe_loras"))   # the rewrite would otherwise drop LoRA trigger words
+    lc = job.get("long_clips")
+    if lc and job.get("graph"):
+        try:
+            lcp = WF.long_clip_prompts(job["graph"], text, lc["total"], lc["clip"], job.get("prompt_trigger") or "")
+            if lcp:
+                for slot in job.get("wf_prompt_slots") or []:      # the (unused) planner story box: keep it in step
+                    node = job["graph"].get(str(slot["node"]))
+                    if node is not None:
+                        node["inputs"][slot["input"]] = text
+                job["prompt_sent"] = lcp["plan"]
+                return
+        except Exception as e:
+            log.info("clip-by-clip long video (enhanced) skipped: %s", e)
     if job.get("prompt_style") == "h3":
-        text = WF.h3_wrap(text, job.get("prompt_trigger") or "")
+        text = WF.h3_wrap(text, job.get("prompt_trigger") or "", job.get("video_long_secs") or 0)
     elif job.get("prompt_style") == "h3_frames":
         text = WF.h3_frames(text, job.get("frames_n") or 1, job.get("seconds"))
     if job.get("prompt_suffix") and job["prompt_suffix"] not in text:
@@ -3129,7 +3371,7 @@ def submit_job(data):
     models = {k: data[k] for k in ("unet_name", "clip_name", "vae_name", "pe_clip_name", "sampler_name", "scheduler", "cfg", "denoise", "weight_dtype", "clip_type", "ref_megapixels") if k in data and data[k] not in (None, "")}
     alias_info = {"text": prompt, "refs": [], "warnings": []}
     input_size = None
-    pe_clip_used, pe_small = PE.pe_clip_for(pe_mode, _clip_names(), models.get("pe_clip_name") or graphs.DEFAULTS["pe_clip_name"])
+    pe_clip_used, pe_small = PE.pe_clip_choose(pe_mode, _clip_names(), models.get("pe_clip_name") or graphs.DEFAULTS["pe_clip_name"], data.get("pe_clip_choice"))
     pe_models = dict(models)
     pe_models["pe_clip_name"] = pe_clip_used
     ref_mode = bool(data.get("ref_mode")) and mode == "edit"

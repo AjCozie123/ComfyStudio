@@ -1413,8 +1413,11 @@ def h3_frames(prompt, n_images, seconds):
     return "\n".join(lines) + "\n\nsummary:\n" + (prompt or "").strip()
 
 
-def h3_wrap(text, trigger=""):
-    """Plain words -> MiniMax H3's field format (prompts that already use the fields pass through)."""
+def h3_wrap(text, trigger="", long_seconds=0):
+    """Plain words -> MiniMax H3's field format (prompts that already use the fields pass through).
+    long_seconds: a long seamless video of that length. Its story is split into clips by the AIO's Seamless Planner
+    (on time marks like '5-10s:' / '[Shot 2] At 00:12' / '---', else evenly), so the whole story is kept: about 45
+    words per 5-second clip instead of one clip's 90."""
     t = (text or "").strip()
     if not t or re.search(r"integrated_multimodal_description|detailed_description|overall_soundscape", t):
         return t
@@ -1422,12 +1425,96 @@ def h3_wrap(text, trigger=""):
     if not _CAMERA_RX.search(t):
         t = t.rstrip() + (" " if t.endswith((".", "!", "?", ">")) else ". ") + "The camera is steady with a slow, natural drift."
     words = t.split()
-    if len(words) > 90:
-        t = " ".join(words[:90]).rstrip(",;:") + "."
+    try:
+        clips = max(1, int(-(-float(long_seconds or 0) // 5)))
+    except (TypeError, ValueError):
+        clips = 1
+    cap = max(90, 45 * clips) if long_seconds else 90
+    if len(words) > cap:
+        t = " ".join(words[:cap]).rstrip(",;:") + "."
     lead = (trigger + " ") if trigger and not _ANIMATED_RX.search(t) else ""
     sound = "Voices and natural room tone, no voice-over." if "<d>" in t else "Natural ambient sound and room tone, no voice-over."
     return ("integrated_multimodal_description: [Shot 1] %s%s\n\noverall_soundscape: %s\n\nnon_diegetic_music: N/A"
             % (lead, t, sound))
+
+
+PLANNER_CLIPS = (5, 7, 10, 15)          # the Seamless Planner's own clip lengths
+_BEAT_RX = re.compile(r"(?:(?<=^)|(?<=[\s.!?\"']))(\d+(?:\.\d+)?)\s*s?\s*(?:-|–|to)\s*(\d+(?:\.\d+)?)\s*s(?:ec(?:onds?)?)?\s*:\s*", re.I)
+
+
+def _sentences(t):
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", (t or "").strip()) if s.strip()]
+
+
+def long_clip_prompts(graph, story, total, clip, trigger=""):
+    """A long MiniMax video made clip by clip with the AIO's own Long Video node instead of the Seamless Planner:
+    any clip length (1-13 s, e.g. 3 s clips so 720p fits on 8 GB) and each clip gets exactly its own part of the
+    story ("0-5s: ... 5-10s: ..." from the user's shots or the enhancer). Clip 1 is the AIO's own prompt and length;
+    clips 2+ go to the Long Video node, which the AIO marks as seamless continuations itself (and carries 1.6 s of
+    the clip before into each). Returns a short description, or "" when the workflow can't do it."""
+    aio = _find(graph, "MiniMaxH3AIO")
+    lv = _find(graph, "MiniMaxH3AIOLongVideo")
+    if not aio or not lv:
+        return ""
+    seam = _find(graph, "MiniMaxH3AIOSeamless")
+    total = max(1.0, float(total or 0))
+    clip = max(1.0, min(13.0, float(clip or 5)))
+    count = max(1, min(7, int(round(total / clip)) or 1))
+    per = round(total / count, 1)                      # even clips that add up to the length asked for
+    per = max(1.0, min(13.0, per))
+    body = (story or "").strip()
+    marks = list(_BEAT_RX.finditer(body))
+    groups = [[] for _ in range(count)]
+    if marks:
+        head = body[:marks[0].start()].strip()
+        for i, m in enumerate(marks):
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
+            text = body[m.end():end].strip()
+            if i == 0 and head:
+                text = head.rstrip(" .") + ". " + text
+            k = min(count - 1, int(float(m.group(1)) / per + 1e-6))
+            if text:
+                groups[k].append(text)
+    else:
+        sents = _sentences(body)
+        for i, s in enumerate(sents):
+            groups[min(count - 1, int(i * count / max(1, len(sents))))].append(s)
+    prompts, plain = [], []
+    for k in range(count):
+        text = " ".join(groups[k]).strip()
+        if not text:
+            text = "The same moment continues naturally, with small natural movement and the same camera."
+        plain.append(text)
+        if k > 0:
+            # each extension starts from the LAST FRAME of the one before (the AIO carries those frames over): say
+            # so, with that clip's end state, so nothing about the place, light or framing changes at the join
+            prev = _sentences(" ".join(groups[k - 1]))
+            end_state = prev[-1].rstrip(".") if prev else ""
+            if not re.search(r"\b(?:is|are|stands?|sits?|lies?)\s+now\b|\bnow\s+(?:is|are|stands?|sits?|lies?)\b", end_state, re.I):
+                end_state = ""        # an action, not a still end state: quoting it would make the clip do it again
+            lead = ("It continues straight on from the last frame of the previous clip%s, in exactly the same place "
+                    "with the same background, light, framing and camera distance. " % (
+                        (" (" + end_state[:1].lower() + end_state[1:] + ")") if end_state else ""))
+            # tested 2026-11-16: without this the last clip went back to the shot before ("leans in to the flowers")
+            text = lead + text.rstrip(" .") + ". Nothing from earlier in the video is repeated; the moment holds until the clip ends."
+        prompts.append(h3_wrap(text, trigger, 0))
+    ins = graph[aio]["inputs"]
+    ins["prompt"] = prompts[0]
+    ins["duration_seconds"] = per
+    li = graph[lv]["inputs"]
+    li["extra_clips"] = max(1, count - 1)
+    li["seconds_per_clip"] = per
+    for i in range(1, 7):
+        li["clip_%d_prompt" % i] = prompts[i] if i < len(prompts) else ""
+    if seam:
+        li["seamless"] = [seam, 0]
+    ins["long_video"] = [lv, 0]
+    if count == 1:
+        # one clip only: the Long Video node always adds at least one; keep it tiny and identical
+        li["seconds_per_clip"] = 1.0
+        li["clip_1_prompt"] = prompts[0]
+    plan = "\n".join("Shot %d (%g-%gs): %s" % (k + 1, k * per, (k + 1) * per, t) for k, t in enumerate(plain))
+    return {"desc": "%d clips of %g s" % (count, per), "plan": plan}
 
 
 def size_from_rule(rule, res, aspect):

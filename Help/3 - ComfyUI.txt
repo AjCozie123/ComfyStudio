@@ -1,0 +1,43 @@
+﻿COMFY STUDIO AND COMFYUI
+========================
+
+Comfy Studio is the easy front end. ComfyUI is the engine that actually makes the
+pictures and videos. You need both, and ComfyUI must be RUNNING while you use
+Comfy Studio.
+
+
+DON'T HAVE COMFYUI YET?
+-----------------------
+Pick ONE:
+
+A) ComfyUI Desktop (easiest)
+   https://www.comfy.org/download  -> install and open it.
+   It runs on port 8000. Comfy Studio finds it by itself.
+
+B) ComfyUI Portable (Windows, NVIDIA)
+   https://github.com/comfyanonymous/ComfyUI/releases  -> download
+   "ComfyUI_windows_portable_nvidia.7z", extract it (e.g. to C:\ComfyUI_windows_portable),
+   then double-click "run_nvidia_gpu.bat" inside it.
+   It runs on port 8188. Comfy Studio finds it by itself.
+
+Keep ComfyUI UPDATED (its own update script, or the Desktop app's updates):
+some engines use nodes only recent ComfyUI versions have.
+
+
+HOW COMFY STUDIO FINDS IT
+-------------------------
+- The installer looks for a running ComfyUI (ports 8188 and 8000 and a few others),
+  and if none is running, for a ComfyUI folder on your drives.
+- When ComfyUI is running, Comfy Studio also asks it where its folders are.
+- What it found is saved in app\data\settings.json.
+
+Moved or reinstalled ComfyUI?  Start ComfyUI, then run "Install Comfy Studio.bat"
+again - it finds the new place.
+
+
+THE DOT SAYS "ComfyUI is offline"
+---------------------------------
+- Start ComfyUI and wait until its window says it is ready
+  ("To see the GUI go to: http://127.0.0.1:...").
+- The dot turns green within a few seconds.
+- Still offline? Run "Install Comfy Studio.bat" again with ComfyUI running.

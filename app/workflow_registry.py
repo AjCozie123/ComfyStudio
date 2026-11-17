@@ -1463,6 +1463,13 @@ def long_clip_prompts(graph, story, total, clip, trigger=""):
     per = round(total / count, 1)                      # even clips that add up to the length asked for
     per = max(1.0, min(13.0, per))
     body = (story or "").strip()
+    # "Subject: ..." (written by the enhancer from the picture): who the person is, repeated in EVERY generation,
+    # because only clip 1 sees the picture; the rest only see the last frames of the clip before and drift
+    subject = ""
+    sm = re.match(r"\s*subject\s*:\s*(.+?)(?=\s*\d+(?:\.\d+)?\s*s?\s*(?:-|\u2013|to)\s*\d)", body, re.I | re.S)
+    if sm:
+        subject = sm.group(1).strip().rstrip(" .")
+        body = body[sm.end():].strip()
     marks = list(_BEAT_RX.finditer(body))
     groups = [[] for _ in range(count)]
     if marks:
@@ -1496,7 +1503,11 @@ def long_clip_prompts(graph, story, total, clip, trigger=""):
                     "with the same background, light, framing and camera distance. " % (
                         (" (" + end_state[:1].lower() + end_state[1:] + ")") if end_state else ""))
             # tested 2026-11-16: without this the last clip went back to the shot before ("leans in to the flowers")
-            text = lead + text.rstrip(" .") + ". Nothing from earlier in the video is repeated; the moment holds until the clip ends."
+            who = ("It is exactly the same person as at the start, unchanged: %s. " % subject) if subject else \
+                  "It is exactly the same person as at the start, with the same face, hair, clothes and shoes. "
+            text = lead + who + text.rstrip(" .") + ". Nothing from earlier in the video is repeated; the moment holds until the clip ends."
+        elif subject:
+            text = "The person: %s. %s" % (subject, text)
         prompts.append(h3_wrap(text, trigger, 0))
     ins = graph[aio]["inputs"]
     ins["prompt"] = prompts[0]
@@ -1514,7 +1525,90 @@ def long_clip_prompts(graph, story, total, clip, trigger=""):
         li["seconds_per_clip"] = 1.0
         li["clip_1_prompt"] = prompts[0]
     plan = "\n".join("Shot %d (%g-%gs): %s" % (k + 1, k * per, (k + 1) * per, t) for k, t in enumerate(plain))
-    return {"desc": "%d clips of %g s" % (count, per), "plan": plan}
+    return {"desc": "%d clips of %g s" % (count, per), "plan": plan, "prompts": prompts, "per": per, "count": count}
+
+
+# ---------------------------------------------------------------- long video from a picture, by reference
+# The way the user asked for it: Shot 1 is an Image to Video clip from the picture; every later shot is made with
+# the AIO's "Extend Video" mode, which continues from the last frames of the video so far AND sees the original
+# picture as a reference (Picture 1), so the person keeps their face, hair and clothes in every generation.
+# (Long Image to Video only gives the picture to the first clip; the rest drifted, e.g. a different outfit.)
+EXTEND_REF_LINE = ("The person is exactly the one in <Picture 1>: the same face, hair, body and the same clothes, "
+                   "shoes and accessories as in <Picture 1>. ")
+
+
+def ref_extend_split(graph, lcp, picture):
+    """Turn a clip-by-clip long graph into pass 1 (Shot 1 only, Image to Video) and return what pass 2 needs."""
+    aio = _find(graph, "MiniMaxH3AIO")
+    if not aio or not lcp or int(lcp.get("count") or 0) < 2 or not picture:
+        return None
+    base = copy.deepcopy(graph)
+    ins = graph[aio]["inputs"]
+    ins["mode"] = "Image to Video / First-Last Frame"
+    ins["prompt"] = lcp["prompts"][0]
+    ins["duration_seconds"] = lcp["per"]
+    ins.pop("long_video", None)
+    return {"base": base, "prompts": list(lcp["prompts"][1:]), "per": lcp["per"], "picture": picture}
+
+
+def _with_ref_line(prompt):
+    anchor = "integrated_multimodal_description: [Shot 1] "
+    i = prompt.find(anchor)
+    if i >= 0:
+        return prompt[:i + len(anchor)] + EXTEND_REF_LINE + prompt[i + len(anchor):]
+    return EXTEND_REF_LINE + prompt
+
+
+CAMERA_MOVE_RX = re.compile(r"\b(zoom\w*|close[- ]?ups?|push(es|ed|ing)?[- ]in|pull(s|ed|ing)?[- ]back|dolly|pans?|panning|"
+                            r"tilts?|tracking|tracks|orbits?|crane|handheld|camera (moves|follows|circles|rises|drops|swings))\b", re.I)
+CAMERA_LOCK_LINE = ("The camera is locked off on a tripod at exactly the same framing, distance and angle as the end of the "
+                    "previous clip: no zoom, no push-in, no close-ups and no reframing; the whole person stays in shot. ")
+
+
+def ref_extend_graph(spec, video_rel, save_prefix=None, lock_camera=True):
+    """Pass 2: Extend Video on the Shot 1 clip, with the original picture as the reference, one shot per extension.
+    lock_camera: every extension keeps the same framing (tested 2026-11-16: the references model kept lunging into
+    close-ups of the dress / hair); off when the user's prompt asks for a camera move."""
+    g = copy.deepcopy(spec["base"])
+    aio = _find(g, "MiniMaxH3AIO")
+    media = _find(g, "MiniMaxH3MediaLoader")
+    lv = _find(g, "MiniMaxH3AIOLongVideo")
+    planner = _find(g, "MiniMaxH3AIOPlanner")
+    if not aio or not media:
+        raise ValueError("this workflow has no MiniMax AIO / media loader for Extend Video")
+    g[media]["inputs"]["media_state"] = json.dumps([
+        {"kind": "video", "file": video_rel, "name": os.path.basename(video_rel), "enabled": True,
+         "has_audio": True, "audio_mode": "paired"},
+        {"kind": "picture", "file": spec["picture"], "name": os.path.basename(spec["picture"]), "enabled": True,
+         "has_audio": False, "audio_mode": "off"}])
+    prompts = [_with_ref_line(p) for p in spec["prompts"]]
+    if lock_camera:
+        anchor = "integrated_multimodal_description: [Shot 1] "
+        prompts = [(p.replace(anchor, anchor + CAMERA_LOCK_LINE, 1) if anchor in p else CAMERA_LOCK_LINE + p) for p in prompts]
+    per = spec["per"]
+    ins = g[aio]["inputs"]
+    ins["mode"] = "Extend Video"
+    ins["prompt"] = prompts[0]
+    ins["duration_seconds"] = per
+    if len(prompts) >= 2 and lv:
+        li = g[lv]["inputs"]
+        li["extra_clips"] = len(prompts) - 1
+        li["seconds_per_clip"] = per
+        for i in range(1, 7):
+            li["clip_%d_prompt" % i] = prompts[i] if i < len(prompts) else ""
+        ins["long_video"] = [lv, 0]
+    elif planner:
+        # one extension only: the Seamless Planner can say "no extra clips" (the Long Video node always adds one)
+        pi = g[planner]["inputs"]
+        pi["story"] = prompts[0]
+        pi["total_seconds"] = float(per)
+        pi["seconds_per_clip"] = "5 s - fastest, most control"
+        ins["long_video"] = [planner, 0]
+    if save_prefix:
+        for n in g.values():
+            if n.get("class_type") in ("SaveVideo", "SaveImage") and "filename_prefix" in (n.get("inputs") or {}):
+                n["inputs"]["filename_prefix"] = save_prefix
+    return g
 
 
 def size_from_rule(rule, res, aspect):
@@ -2252,6 +2346,7 @@ def _nearest_option(options, w, h, ratio_only=False):
 
 
 _fill_more_base = fill
+_MP_NODE_MAX = {"ImageScaleToTotalPixels": 16.0, "AitrepreneurOutputSize": 256.0}
 
 
 def fill(card, graph, values, out_prefix):
@@ -2265,7 +2360,11 @@ def fill(card, graph, values, out_prefix):
     if w <= 0 or h <= 0:
         return g, used_seed
     for slot in s.get("megapixels") or []:
-        _set(g, slot, round(max(0.1, min(16.0, w * h / 1e6)), 2))
+        # each node's own ceiling: ImageScaleToTotalPixels stops at 16 MP; the ULTRA Output Size node goes to 256 MP
+        # (tested 2026-11-16: a fixed 16 cap made a 30 MP pick come out at 16 MP)
+        cls = slot.get("class_type") or (g.get(str(slot.get("node"))) or {}).get("class_type") or ""
+        top = _MP_NODE_MAX.get(cls, 100.0)
+        _set(g, slot, round(max(0.1, min(top, w * h / 1e6)), 2))
     for key, ratio_only in (("size_combo", False), ("aspect_combo", True)):
         for slot in s.get(key) or []:
             pick = _nearest_option(slot.get("options") or [], w, h, ratio_only)
@@ -2640,3 +2739,55 @@ def apply_nag(graph, oi, items, verbs, phi=4.0, tau=2.5, alpha=0.25):
             new[k] = ins[k]
     graph[pk] = {"class_type": _NAG_NODE, "inputs": new, "_meta": {"title": "Krea2Edit NAG (protects what you listed)"}}
     return "on"
+
+
+# ---------------------------------------------------------------- Aitrepreneur Image Tools gallery loaders
+# MiniMax H3 Image ULTRA (Aitrepreneur, 2026-11) takes its pictures through gallery loaders that store a list of
+# {"filename", "subfolder", "type": "input"} in images_json, not through Load Image. Image Reference Loader = the
+# edit / outpaint pictures (Picture 1, 2 ... up to 16); Inpaint Reference Loader = Pictures 2-16 (Picture 1 is the
+# masked source, loaded by its own Load Image).
+_AIT_LOADERS = {"AitrepreneurImageReferenceLoader": 0, "AitrepreneurInpaintReferenceLoader": 1}
+_scan_ait = scan
+
+
+def scan(graph, oi=None):
+    card = _scan_ait(graph, oi)
+    c = card[0] if isinstance(card, tuple) else card
+    if not isinstance(c, dict):
+        return card
+    for nid, n in graph.items():
+        skip = _AIT_LOADERS.get(n.get("class_type"))
+        if skip is None or "images_json" not in (n.get("inputs") or {}):
+            continue
+        c.setdefault("slots", {}).setdefault("ait_refs", []).append(
+            {"node": nid, "input": "images_json", "label": "Pictures", "skip": skip, "max": 16})
+        if skip == 0:
+            c["picture_min"] = max(1, int(c.get("picture_min") or 0))
+        c["picture_max"] = max(int(c.get("picture_max") or 0), 16 if skip == 0 else 16)
+        c["picture_count"] = max(int(c.get("picture_count") or 0), 1)
+    # AusBoss Crop + Rotate + Pad loads its own picture by file name (the ULTRA outpaint section): that is Picture 1
+    for nid, n in graph.items():
+        if n.get("class_type") == "AUSBOSS_NODES_ImageCropRotatePad" and isinstance((n.get("inputs") or {}).get("image"), str):
+            imgs = c.setdefault("slots", {}).setdefault("images", [])
+            if not any(str(x.get("node")) == str(nid) for x in imgs):
+                imgs.append({"node": nid, "input": "image", "label": "Picture %d" % (len(imgs) + 1)})
+                c["picture_min"] = max(1, int(c.get("picture_min") or 0))
+                c["picture_max"] = max(int(c.get("picture_max") or 0), len(imgs))
+                c["picture_count"] = max(int(c.get("picture_count") or 0), len(imgs))
+    return card
+
+
+_fill_ait = fill
+
+
+def fill(card, graph, values, out_prefix):
+    g, used_seed = _fill_ait(card, graph, values, out_prefix)
+    imgs = [str(x).replace("\\", "/") for x in (values.get("images") or []) if str(x).strip()]
+    for sl in (card.get("slots") or {}).get("ait_refs") or []:
+        skip, most = int(sl.get("skip") or 0), int(sl.get("max") or 16)
+        items = [{"filename": n.rsplit("/", 1)[-1], "subfolder": n.rsplit("/", 1)[0] if "/" in n else "", "type": "input"}
+                 for n in imgs[skip:skip + most]]
+        node = g.get(str(sl["node"]))
+        if node is not None:
+            node["inputs"]["images_json"] = json.dumps(items)
+    return g, used_seed

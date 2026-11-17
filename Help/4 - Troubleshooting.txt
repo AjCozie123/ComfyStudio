@@ -1,0 +1,76 @@
+﻿COMFY STUDIO - TROUBLESHOOTING
+=============================
+
+First, two things that fix most problems:
+  1. Run "Install Comfy Studio.bat" again. It re-checks everything and tells you what's wrong.
+  2. Look in app\data\setup_report.txt (what setup did) and
+     app\data\server_start.log (what the app said when it started).
+
+
+"Can not find script file ...\Temp\...\start_app.vbs"  /  files missing  /  path has \Temp\ in it
+-----------------------------------------------------------------------------------------------
+You opened the installer from INSIDE the zip without extracting it.
+Right-click the zip > "Extract All...", open the extracted folder, double-click
+"Install Comfy Studio.bat". (See "1 - Install.txt", step 1.)
+
+
+"Windows protected your PC" (blue box)
+--------------------------------------
+Click "More info", then "Run anyway". Windows shows this for files from the internet.
+The installer removes this block from all Comfy Studio files.
+
+
+"Python was not found" / "is not recognized as an internal or external command"
+------------------------------------------------------------------------------
+Let the installer install it (press Y), or install Python 3.12 from
+https://www.python.org/downloads/ and TICK "Add python.exe to PATH". Then run the installer again.
+Python 3.14 is too new for some parts - use 3.12.
+
+
+"Some Python packages could not be installed"
+---------------------------------------------
+- Check the internet connection; a VPN or firewall may block pypi.org.
+- Antivirus may block the download: allow Python, run the installer again.
+- Very new Python (3.14+): install Python 3.12 instead.
+
+
+"Comfy Studio can't save files in this folder"
+----------------------------------------------
+Move the whole ComfyStudio folder to e.g. C:\ComfyStudio or Documents (not Program Files),
+then run the installer again.
+
+
+The app doesn't open / "did not start within 60 seconds"
+--------------------------------------------------------
+- Double-click "Start Comfy Studio.bat" once more (first start can be slow).
+- Restart the PC (another program may be using port 8198).
+- Still not: send app\data\server_start.log to whoever gave you Comfy Studio.
+
+
+It opens in the web browser instead of its own window
+-----------------------------------------------------
+Windows WebView2 is missing (older Windows 10). Everything works in the browser.
+For the app window install WebView2: https://developer.microsoft.com/microsoft-edge/webview2/
+(or run the installer again and press Y when it offers it).
+
+
+"ComfyUI is offline" (dot at the top right)
+-------------------------------------------
+Start ComfyUI and wait until it's ready. See "3 - ComfyUI.txt".
+
+
+An engine says it is missing files or node packs
+------------------------------------------------
+Workflows page: "Install all" for node packs (then restart ComfyUI), "Download" for models.
+
+
+"Out of memory" while generating
+--------------------------------
+Pick a smaller size or shorter video, close other programs (games, browsers with many tabs),
+or use a lighter engine. Each engine on the Workflows page says whether it fits your PC.
+
+
+Starting completely fresh
+-------------------------
+Close Comfy Studio, delete the folder app\data (this also removes your Library list and
+settings, NOT the pictures in ComfyUI's output folder), then run the installer again.

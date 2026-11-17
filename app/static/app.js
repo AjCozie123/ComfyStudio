@@ -12,7 +12,7 @@ const PRESETS = {
   "4mp":  { "1:1": "2048x2048", "4:3": "2368x1760", "3:4": "1760x2368", "3:2": "2496x1664", "2:3": "1664x2496", "16:9": "2720x1536", "9:16": "1536x2720", "21:9": "3136x1344" },
   "16mp": { "1:1": "4096x4096", "4:3": "4736x3552", "3:4": "3552x4736", "3:2": "5024x3360", "2:3": "3360x5024", "16:9": "5472x3072", "9:16": "3072x5472", "21:9": "6272x2688" },
 };
-const MP_CHIPS = [2, 4, 8, 12, 16];
+const MP_CHIPS = [2, 4, 8, 16, 30, 60];
 const ACCEPT = "image/jpeg,image/png,image/webp,image/gif,image/bmp,image/heic,image/heif,.heic,.heif";
 
 const state = {
@@ -74,7 +74,7 @@ function pyRound(x) {
 
 function formatMp(mp) {
   const n = Math.round(Number(mp) * 2) / 2;
-  const clamped = Math.min(20, Math.max(1, n));
+  const clamped = Math.min(100, Math.max(1, n));
   return (clamped % 1 === 0) ? String(clamped) : clamped.toFixed(1);
 }
 
@@ -373,7 +373,7 @@ function renderP1Dial() {
     $("p1-mp-num").disabled = orig;
   }
   if ($("p1-mp-slider")) {
-    const sliderVal = Math.min(20, Math.max(1, Math.round(Number(displayMp) * 2) / 2));
+    const sliderVal = Math.min(100, Math.max(1, Math.round(Number(displayMp) * 2) / 2));
     $("p1-mp-slider").value = sliderVal;
     $("p1-mp-slider").disabled = orig;
   }
@@ -391,7 +391,7 @@ function setP1Original(on) {
   if (!state.p1Original && state.images[0] && state.images[0].width && state.images[0].height) {
     const actual = (state.images[0].width * state.images[0].height) / 1e6;
     if (state.mp == null && state.p1Mp == null) {
-      state.mp = Math.min(20, Math.max(1, Math.round(actual * 2) / 2));
+      state.mp = Math.min(100, Math.max(1, Math.round(actual * 2) / 2));
       state.p1Mp = state.mp;
       state.customMp = state.mp;
     }
@@ -404,7 +404,7 @@ function setP1Original(on) {
 function setMp(value) {
   let n = Math.round(Number(value) * 2) / 2;
   if (!isFinite(n)) n = 4;
-  n = Math.min(20, Math.max(1, n));
+  n = Math.min(100, Math.max(1, n));
   state.mp = n;
   state.customMp = n;
   state.p1Mp = n;
@@ -1725,7 +1725,12 @@ async function refreshLibrary() {
   const q = "/api/gallery?mode=" + encodeURIComponent(state.libMode) + (state.libFav ? "&fav=1" : "");
   try {
     const data = await api(q);
-    const all = data.items || [];
+    // Images / Videos switch (remembered): only that kind, and the engine list then only shows engines that made it
+    let media = state.libMedia;
+    if (!media) { try { media = LS.get("cs.lib.media", "all"); } catch (e) { media = "all"; } }
+    state.libMedia = media;
+    document.querySelectorAll("#lib-media [data-libmedia]").forEach((b) => b.classList.toggle("is-on", b.dataset.libmedia === media));
+    const all = (data.items || []).filter((it) => media === "all" || (it.media || "image") === media);
     // engine filter: built from what is actually in the library (MiniMax H3, Krea 2 Edit, MOSS Image ...)
     const engineOf = (it) => String(it.workflow_name || "MiniMax H3").split(" · ")[0].replace(/\s*\(built-in\)\s*$/i, "").trim();
     const sel = $("lib-engine");
@@ -1742,7 +1747,8 @@ async function refreshLibrary() {
     const box = $("lib-grid");
     box.innerHTML = "";
     if (!state.library.length) {
-      box.innerHTML = '<p class="muted">Nothing in the library yet. Generate an image and it will show up here.</p>';
+      box.innerHTML = '<p class="muted">' + (state.libMedia === "video" ? "No videos here yet. Make one in Video mode and it will show up here."
+        : state.libMedia === "image" ? "No images here yet." : "Nothing in the library yet. Generate an image and it will show up here.") + '</p>';
       return;
     }
     state.library.forEach((it, i) => {
@@ -1787,7 +1793,7 @@ function applyResolution(res, match, keep) {
       state.p1Original = true;
     } else {
       state.p1Original = false;
-      state.p1Mp = Math.min(20, Math.max(1, Number(mp) || 8));
+      state.p1Mp = Math.min(100, Math.max(1, Number(mp) || 8));
     }
     setQuality("picture1");
     return;
@@ -1804,7 +1810,7 @@ function applyResolution(res, match, keep) {
     const asp = parts.slice(1).join(":") || "1:1";
     if (asp === "match" || asp === "picture1") {
       state.p1Original = false;
-      state.p1Mp = Math.min(20, Math.max(1, Number(mp) || 8));
+      state.p1Mp = Math.min(100, Math.max(1, Number(mp) || 8));
       setQuality("picture1");
       return;
     }
@@ -1836,7 +1842,7 @@ function applyResolution(res, match, keep) {
     });
     state.aspect = best.id;
     state.customAspect = best.id;
-    setCustomMp(Math.min(20, Math.max(1, mp)));
+    setCustomMp(Math.min(100, Math.max(1, mp)));
     setQuality("custom");
     return;
   }
@@ -2108,6 +2114,9 @@ function bind() {
   }));
   $("lib-fav").addEventListener("change", () => { state.libFav = $("lib-fav").checked; refreshLibrary(); });
   if ($("lib-engine")) $("lib-engine").addEventListener("change", () => { state.libEngine = $("lib-engine").value; refreshLibrary(); });
+  document.querySelectorAll("#lib-media [data-libmedia]").forEach((b) => b.addEventListener("click", () => {
+    state.libMedia = b.dataset.libmedia; LS.set("cs.lib.media", state.libMedia); refreshLibrary();
+  }));
 
   $("viewer-close").addEventListener("click", closeViewer);
   $("viewer-prev").addEventListener("click", () => openViewer(state.viewerIndex - 1));
@@ -4805,11 +4814,25 @@ function bindShell() {
   }
   window.applyEngine = applyEngine;
 
+  // a family with several parts (e.g. MiniMax H3 Image ULTRA: text to image, edit, inpaint, outpaint) works as one:
+  // picking it sets it for Create AND Edit; for Edit its plain edit engine, and the server switches to the family's
+  // inpaint / outpaint engine when you paint an area or ask to extend the picture
+  function familyPick(t, fam) {
+    if (fam === BUILTIN.family) return isImageTask(t) ? "builtin" : "";
+    const c = forTask(t).filter((w) => (w.family || "Custom") === fam);
+    const pick = c.find((w) => /\bedit\b/i.test(w.name || "") && !/inpaint|outpaint/i.test(w.name || ""))
+      || c.find((w) => !/inpaint|outpaint/i.test(w.name || "")) || c[0];
+    return (pick || {}).id || "";
+  }
   $("wf-family").addEventListener("change", () => {
     const t = currentTask();
     const fam = $("wf-family").value;
-    const first = fam === BUILTIN.family ? "builtin" : ((forTask(t).find((w) => (w.family || "Custom") === fam) || {}).id || "");
+    const first = familyPick(t, fam);
     if (first) LS.set("cs.wf." + t, first);
+    if (isImageTask(t)) ["t2i", "edit"].filter((x) => x !== t).forEach((x) => {
+      const id = familyPick(x, fam);
+      if (id) LS.set("cs.wf." + x, id);
+    });
     applyEngine();
   });
   $("wf-pick").addEventListener("change", () => {
@@ -4848,7 +4871,7 @@ function bindShell() {
       [a, b] = asp.split(":").map(Number);
     }
     // Ceiling: what this model handles well (card mp_max) and what this PC can draw.
-    const cap = Math.min((active && active.card && active.card.mp_max) || 4, (window.__hw && window.__hw.image_mp_max) || 8);
+    const cap = Math.min((active && active.card && active.card.mp_max) || 100, (window.__hw && window.__hw.image_mp_max) || 100);
     if ((state.quality === "picture1" || state.quality === "keep") && state.p1Original !== false && p1 && p1.width && p1.height) {
       const k = Math.min(1, Math.sqrt(cap * 1e6 / (p1.width * p1.height)));   // Original: Picture 1's own size
       return { width: snap32(p1.width * k), height: snap32(p1.height * k), capped: k < 1, cap: cap };
@@ -4966,6 +4989,7 @@ function bindShell() {
     $("result-frame").classList.toggle("hidden", !!isVideo);
     if (isVideo) {
       vid.src = "/api/image?id=" + encodeURIComponent(job.id);
+      vid.muted = true;
       try { vid.play().catch(() => {}); } catch (e) {}
       if ($("result-compare")) $("result-compare").classList.add("hidden");
     } else {
@@ -4980,13 +5004,21 @@ function bindShell() {
     (items || []).forEach((it, i) => {
       if (!it || it.media !== "video" || !kids[i]) return;
       const thumb = kids[i].querySelector(".thumb") || kids[i];
-      if (thumb.querySelector("video")) return;
+      if (thumb.querySelector("video, img.vid-thumb")) return;
       thumb.innerHTML = "";
-      const v = document.createElement("video");
-      v.muted = true; v.playsInline = true; v.preload = "metadata";
-      v.setAttribute("playsinline", "");
-      v.src = it.url + "#t=0.1";
-      thumb.appendChild(v);
+      const pic = document.createElement("img");
+      pic.className = "vid-thumb";
+      pic.alt = "Video";
+      pic.decoding = "async";      // not "lazy": the tile has no height until the picture arrives, so lazy never loads
+      pic.src = it.thumb || ("/api/thumb?id=" + encodeURIComponent(it.id));
+      pic.onerror = () => {           // no thumbnail (no ffmpeg): fall back to a silent paused player
+        const v = document.createElement("video");
+        v.muted = true; v.playsInline = true; v.preload = "metadata";
+        v.setAttribute("playsinline", "");
+        v.src = it.url + "#t=0.1";
+        pic.replaceWith(v);
+      };
+      thumb.appendChild(pic);
       const badge = document.createElement("span");
       badge.className = "vid-badge";
       badge.textContent = "▶ Video";
@@ -7001,8 +7033,8 @@ function bindShell() {
 
   function engineCap() {
     const a = window.__wfActive && window.__wfActive();
-    const hw = (window.__hw && window.__hw.image_mp_max) || 16;
-    return a ? Math.min(a.card.mp_max || 4, hw) : Math.min(20, hw);
+    const hw = (window.__hw && window.__hw.image_mp_max) || 100;
+    return a ? Math.min(a.card.mp_max || 100, hw) : Math.min(100, hw);
   }
 
   let lastKey = "";
@@ -7740,7 +7772,7 @@ function bindShell() {
   const labelMp = (txt) => { const m = String(txt || "").match(/([\d.]+)\s*MP/i); return m ? Number(m[1]) : null; };
   // Unknown hardware (ComfyUI was busy when the page loaded) must not shrink the menu: re-check until it's real.
   function hwKnown() { return !!(window.__hw && window.__hw.vram_gb && !window.__hw.error); }
-  function hwCap() { return hwKnown() ? (window.__hw.image_mp_max || 20) : 20; }
+  function hwCap() { return hwKnown() ? (window.__hw.image_mp_max || 100) : 100; }
   (async function recheck(n) {
     if (hwKnown() || n > 30) return;
     await new Promise((r) => setTimeout(r, n ? 10000 : 3000));
@@ -7752,7 +7784,7 @@ function bindShell() {
   })(0);
   function engineCap() {
     const a = window.__wfActive && window.__wfActive();
-    if (!a || state.media === "video") return { cap: Math.min(20, hwCap()), name: "MiniMax H3 (built-in)", builtin: true };
+    if (!a || state.media === "video") return { cap: Math.min(100, hwCap()), name: "MiniMax H3 (built-in)", builtin: true };
     const c = a.card || {}, rl = (c.slots || {}).res_label;
     let cap = c.mp_max || 4;
     if (rl && rl.map) {
@@ -7788,7 +7820,7 @@ function bindShell() {
     if (cap <= 2) return [1, 1.5, 2];
     if (cap <= 4) return [1, 2, 3, 4];
     if (cap <= 8) return [2, 4, 6, 8];
-    return [2, 4, 8, 12, 16].filter((v) => v <= cap);
+    return [2, 4, 8, 16, 30, 60].filter((v) => v <= cap);
   }
   const engineKey = () => "cs.mp.pick." + (state.media === "video" ? "video" : (state.engine || "builtin"));
   let lastChips = "", lastEngine = null, clamping = false;
@@ -7839,7 +7871,10 @@ function bindShell() {
       const saved = Number(LS.get(eng, "")) || 0;
       const orig = (state.quality === "picture1" || state.quality === "keep") && state.p1Original !== false;
       let want = null;
+      const act = window.__wfActive && window.__wfActive();
+      const start = Number(act && act.card && act.card.mp_rec) || 0;     // e.g. ULTRA's author: "start at 16 MP or higher"
       if (engineChanged && saved && Math.abs(saved - cur) > 0.01) want = Math.min(saved, cap);   // your pick for this engine
+      else if (engineChanged && !saved && start >= 8 && Math.abs(start - cur) > 0.01) want = Math.min(start, cap);
       else if (cur > cap + 0.01) want = cap;                                                     // more than it draws well
       if (want != null && !orig && Math.abs(want - cur) > 0.01) {
         clamping = true;
@@ -7861,9 +7896,14 @@ function bindShell() {
       const menu = $("res-menu");
       if (menu) menu.appendChild(note);
     }
-    if (builtin) note.textContent = "Up to " + cap + " MP on this PC.";
-    else if (cap < 4) note.textContent = name + " goes up to " + cap + " MP. For bigger pictures, use MiniMax H3 (built-in): up to " + Math.min(20, hwCap()) + " MP.";
-    else note.textContent = name + " goes up to " + cap + " MP.";
+    // no hard ceiling below 100 MP: you decide. Above what was tested on this PC (or the model's usual size) it says so.
+    const tested = (window.__hw && window.__hw.image_mp_tested) || 20;
+    const rec = (window.__wfActive && window.__wfActive() && window.__wfActive().card.mp_rec) || null;
+    const wantNow = Number(currentMp()) || 0;
+    let t = "Any size up to " + cap + " MP.";
+    if (rec && !builtin) t += " " + name + " usually works best up to " + rec + " MP.";
+    t += " Tested on this PC up to " + tested + " MP" + (wantNow > tested ? ": bigger needs more memory and time and may run out of memory." : ".");
+    note.textContent = t;
     // the trigger shows what will really be made
     const want = Number(currentMp()) || 0;
     if (!builtin && want > cap && $("res-trigger-meta")) $("res-trigger-meta").textContent = cap + " MP (engine max)";
@@ -9262,3 +9302,33 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     return r;
   };
 })();
+
+
+/* ===== Media guard v20261116: no sound from anything you can't see =====
+   Closing the viewer, hiding the preview, switching page, minimising or closing the window pauses every video /
+   audio that is no longer on screen. */
+(function () {
+  function onScreen(m) {
+    if (!m.isConnected || m.closest(".hidden, [hidden]")) return false;
+    if (m.offsetParent === null && getComputedStyle(m).position !== "fixed") return false;   // display:none somewhere
+    const r = m.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+  function sweep() {
+    document.querySelectorAll("video, audio").forEach((m) => {
+      if (!m.paused && !onScreen(m)) { try { m.pause(); } catch (e) {} }
+    });
+  }
+  function stopAll() {
+    document.querySelectorAll("video, audio").forEach((m) => { try { m.pause(); } catch (e) {} });
+  }
+  window.__pauseHiddenMedia = sweep;
+  window.__stopAllMedia = stopAll;
+  document.addEventListener("click", () => setTimeout(sweep, 80), true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") setTimeout(sweep, 80); }, true);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) stopAll(); });
+  window.addEventListener("pagehide", stopAll);
+  window.addEventListener("beforeunload", stopAll);
+  setInterval(sweep, 1000);
+})();
+/* ===== end media guard ===== */

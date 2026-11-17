@@ -88,7 +88,20 @@ def clause(user_prompt, mode, style=""):
     return ""
 
 
-def apply(prompt_sent, user_prompt, mode, style=""):
+UNDRESSED_PLAIN = "Keep them exactly as undressed as they are; add no clothing."
+UNDRESSED = ("The person in <Picture 1> has no clothes on: keep them exactly as undressed as they are, and add no "
+             "clothing, underwear or covering anywhere.")
+
+
+def apply(prompt_sent, user_prompt, mode, style="", undressed=False):
+    """undressed: NudeNet saw an undressed person in Picture 1 (nudity.py) - then never ask to keep their clothing."""
+    if undressed and mode == "edit":
+        if about_clothes(user_prompt or ""):       # the prompt is about dressing / clothes: it decides
+            return prompt_sent, False
+        c = UNDRESSED_PLAIN if style == "plain" else UNDRESSED
+        if c.lower()[:30] in (prompt_sent or "").lower():
+            return prompt_sent, False
+        return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
     c = clause(user_prompt, mode, style)
     if not c or c.split(":")[0].lower() in (prompt_sent or "").lower():
         return prompt_sent, False

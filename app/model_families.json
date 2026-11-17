@@ -14,7 +14,8 @@
    "mp_options": [
     2,
     4,
-    8
+    8,
+    16
    ],
    "sampling_note": "MiniMax H3 image: 6 steps, CFG 1, euler / simple (distilled). 8 steps also works well."
   },

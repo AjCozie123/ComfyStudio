@@ -1,0 +1,63 @@
+﻿COMFY STUDIO - HOW TO INSTALL
+=============================
+
+You do this once. It takes about 5 minutes (longer on a slow connection).
+
+
+BEFORE YOU START
+----------------
+- Windows 10 or 11, 64-bit.
+- An NVIDIA graphics card is best (8 GB of video memory or more).
+- An internet connection (setup downloads a few small Python parts).
+- ComfyUI (the engine Comfy Studio drives). You can install it before or after
+  Comfy Studio - see "3 - ComfyUI.txt".
+
+
+STEP 1 - EXTRACT THE ZIP  (the most common mistake is skipping this)
+----------------------------------------------------------------
+1. Find the zip you downloaded (usually in your Downloads folder).
+2. Right-click it and choose "Extract All...".
+   (If you use 7-Zip: right-click > 7-Zip > Extract to "ComfyStudio\".)
+3. Choose a simple place, for example:   C:\ComfyStudio
+   Avoid "Program Files" (Windows blocks saving there).
+4. Open the extracted folder. You should see:
+      app   (folder)
+      Help  (folder)
+      Install Comfy Studio.bat
+      Start Comfy Studio.bat
+      README.md
+
+   Do NOT double-click the files while you are still looking inside the zip.
+   That only copies one file to a temporary folder and setup can't find the rest.
+
+
+STEP 2 - RUN THE INSTALLER
+--------------------------
+Double-click "Install Comfy Studio.bat".
+
+If Windows shows a blue box "Windows protected your PC":
+   click "More info", then "Run anyway". (It shows this for any file from the internet.)
+
+The installer then does everything by itself, and tells you at each step what it did:
+   1. Checks the folder is complete and can save files.
+   2. Removes Windows' "downloaded from the internet" block from the files.
+   3. Finds Python. If you don't have it, it offers to install Python 3.12 for you
+      (press Y). Or install it yourself from https://www.python.org/downloads/
+      and TICK "Add python.exe to PATH".
+   4. Installs the Python parts Comfy Studio needs.
+   5. Checks Windows WebView2 (for the app's own window; offers to add it if missing).
+   6. Finds your ComfyUI - running, or installed on your PC - and remembers it.
+      If it finds more than one, it asks which one you use.
+   7. Adds a "Comfy Studio" shortcut to your Desktop and Start menu.
+   8. Starts Comfy Studio and checks it really opened.
+
+If anything goes wrong it STOPS and tells you in plain words what to do.
+(It also saves everything in app\data\setup_report.txt.)
+
+
+STEP 3 - DONE
+-------------
+Open Comfy Studio from the desktop shortcut or "Start Comfy Studio.bat".
+Next: "2 - Start and use.txt".
+
+Running the installer again is always safe: it re-checks and fixes things.

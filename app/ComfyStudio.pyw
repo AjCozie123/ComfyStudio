@@ -46,7 +46,13 @@ def server_up():
 def start_server():
     py = PY if os.path.isfile(PY) else sys.executable.replace("pythonw.exe", "python.exe")
     env = dict(os.environ, H3STUDIO_PORT=str(PORT))
-    subprocess.Popen([py, os.path.join(HERE, "server.py")], cwd=HERE, env=env,
+    # the server's own start-up messages go to data/server_start.log (Start Comfy Studio.bat shows them on a failure)
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        log = open(os.path.join(DATA, "server_start.log"), "w", encoding="utf-8", errors="replace")
+    except OSError:
+        log = subprocess.DEVNULL
+    subprocess.Popen([py, os.path.join(HERE, "server.py")], cwd=HERE, env=env, stdout=log, stderr=log,
                      creationflags=0x08000000 | 0x00000200)   # no window, own process group
 
 
@@ -131,6 +137,27 @@ body{display:flex;align-items:center;justify-content:center;flex-direction:colum
 <body><div class="d"></div><p id="m">Starting Comfy Studio…</p></body></html>"""
 
 
+def note_error(text):
+    try:
+        os.makedirs(DATA, exist_ok=True)
+        with open(os.path.join(DATA, "startup_error.log"), "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + text + chr(10))
+    except OSError:
+        pass
+
+
+def open_in_browser():
+    """No app window possible (pywebview or Windows' WebView2 missing): run the studio in the default browser."""
+    import webbrowser
+    if not server_up():
+        start_server()
+        for _ in range(120):
+            if server_up():
+                break
+            time.sleep(0.5)
+    webbrowser.open(URL)
+
+
 def main():
     # one copy only: a second launch just brings the open window forward
     mutex = kernel32.CreateMutexW(None, False, "Local\\" + APP_ID)
@@ -142,7 +169,12 @@ def main():
     except Exception:
         pass
 
-    import webview
+    try:
+        import webview
+    except Exception as e:
+        note_error("app window unavailable (%s: %s): opening in the browser" % (type(e).__name__, e))
+        open_in_browser()
+        return
     webview.settings["ALLOW_DOWNLOADS"] = True
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
 
@@ -181,9 +213,16 @@ def main():
         window.evaluate_js("document.getElementById('m').textContent="
                            "\"Comfy Studio didn't start. Close this window and open the app again.\"")
 
-    webview.start(boot, gui="edgechromium", private_mode=False,
-                  storage_path=os.path.join(DATA, "app_webview"), icon=ICON)
+    try:
+        webview.start(boot, gui="edgechromium", private_mode=False,
+                      storage_path=os.path.join(DATA, "app_webview"), icon=ICON)
+    except Exception as e:
+        # usually Windows' WebView2 is missing (older Windows 10): the browser works instead
+        note_error("app window failed (%s: %s): opening in the browser" % (type(e).__name__, e))
+        open_in_browser()
     del mutex
+    # the window is closed: end the whole app process now, so no video / sound can keep running in the background
+    os._exit(0)
 
 
 if __name__ == "__main__":

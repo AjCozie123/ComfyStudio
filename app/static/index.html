@@ -195,6 +195,11 @@
         <button type="button" data-lib="t2i">Created</button>
         <button type="button" data-lib="edit">Edited</button>
       </div>
+      <div class="seg" id="lib-media" role="tablist" aria-label="Pictures or videos">
+        <button type="button" class="is-on" data-libmedia="all">All</button>
+        <button type="button" data-libmedia="image">Images</button>
+        <button type="button" data-libmedia="video">Videos</button>
+      </div>
       <label class="pill toggle-pill fav-filter"><input type="checkbox" id="lib-fav"><span>★ Favourites</span></label>
       <select id="lib-engine" class="lib-engine hidden" aria-label="Show one engine"></select>
     </div>
@@ -379,8 +384,8 @@
         <button type="button" data-p1mp="16">16</button>
       </div>
       <div class="mp-row">
-        <input type="range" id="p1-mp-slider" min="1" max="20" step="0.5" value="8" aria-label="Megapixels">
-        <label class="mp-num">MP <input type="number" id="p1-mp-num" min="1" max="20" step="0.5" value="8"></label>
+        <input type="range" id="p1-mp-slider" min="1" max="100" step="0.5" value="8" aria-label="Megapixels">
+        <label class="mp-num">MP <input type="number" id="p1-mp-num" min="1" max="100" step="0.5" value="8"></label>
       </div>
       <p id="p1-output" class="mp-size">Output: —</p>
       <details class="pop-help fold-block" data-fold="help-size">
@@ -390,8 +395,8 @@
     </div>
     <div id="custom-mp" class="hidden">
       <div id="custom-aspects" class="aspects"></div>
-      <input type="number" id="mp-num" min="1" max="20" step="0.5" value="4">
-      <input type="range" id="mp-slider" min="1" max="20" step="0.5" value="4">
+      <input type="number" id="mp-num" min="1" max="100" step="0.5" value="4">
+      <input type="range" id="mp-slider" min="1" max="100" step="0.5" value="4">
       <div class="mp-chips" id="mp-chips"></div>
       <p id="mp-size"></p><p id="mp-hint"></p>
     </div>
@@ -959,6 +964,6 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261115b"></script>
-  <script src="/static/app.js?v=20261116n"></script>
+  <script src="/static/app.js?v=20261116t"></script>
 </body>
 </html>

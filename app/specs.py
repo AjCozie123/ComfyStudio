@@ -125,7 +125,15 @@ def extend_sizes(vram, native, clip):
     return {r: c * 7 for r, c in extend_clips(vram, native, clip).items()}
 
 
+IMAGE_MP_LIMIT = 100.0      # no ceiling below this: MiniMax H3 draws 60 MP+; bigger just needs more memory and time
+
+
 def image_mp_max(hw):
+    """The size menu's ceiling: the user decides (any PC can try). The tested sizes only drive the warning."""
+    return IMAGE_MP_LIMIT
+
+
+def image_mp_tested(hw):
     return _tier(IMAGE_MP, float(hw.get("vram_gb") or 0))
 
 

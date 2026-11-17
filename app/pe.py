@@ -532,7 +532,7 @@ def wants_new_framing(prompt):
     return bool(_MOVE_ASK.search(t) or _CROP_ASK.search(t) or _AWAY_ASK.search(t) or _CLOSER_ASK.search(t))
 
 
-def turn_polish(prompt, caption):
+def turn_polish(prompt, caption, undressed=False):
     """A turn of someone in an existing picture: they turn in place (same spot, same size) unless the instruction asks
     to move them, and keep the very same clothes seen from the new side. Said plainly whatever the enhancer wrote, and
     with Enhance off. Safe to run twice."""
@@ -546,8 +546,13 @@ def turn_polish(prompt, caption):
         lines.append("%s turns in place and the picture keeps exactly the same crop: the same parts of %s body are in view "
                      "and cut off at the same place, %s head at the same height, the same size and position in the picture. "
                      "Nothing that was outside the picture comes into view." % (subj, pron, pron))
-    lines.append("%s clothes are the very same garments seen from the new side, with the same colours, fabric, pattern, "
-                 "fit and coverage, continuing naturally around the body; nothing is added or removed." % pron.capitalize())
+    if undressed:      # NudeNet saw no clothes on them (nudity.py): never describe garments
+        lines.append("%s stays exactly as undressed as in the picture: no clothing, underwear or covering is added."
+                     % subj)
+    else:
+        lines.append("%s clothes are the very same garments seen from the new side, with the same colours, fabric, "
+                     "pattern, fit and coverage, continuing naturally around the body; nothing is added or removed."
+                     % pron.capitalize())
     # the looser turn setting lets bystanders drift or vanish: only the named person turns
     if not re.search(r"(?i)every other person", caption):
         lines.append("Only %s turns: every other person and object in the picture stays exactly as it is, in the same place "

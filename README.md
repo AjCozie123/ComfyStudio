@@ -3,39 +3,66 @@
 A simple, clean desktop front end for **ComfyUI** that runs on your own PC. Pick an engine (MiniMax H3, Krea 2,
 FLUX.2 Klein, MOSS, Qwen Image, LTX, or any workflow you upload), write a prompt, and go.
 
-## Get started
-
-### Method 1: Download (easiest)
-1. At the top of this page click the green **Code** button, then **Download ZIP**.
-2. Unzip it anywhere, for example `C:\ComfyStudio`.
-3. Double-click **Install Comfy Studio.bat**. It sets everything up and puts a **Comfy Studio** shortcut on your
-   desktop, then opens the app.
-
-### Method 2: With Git (easy updates)
-1. Click the green **Code** button, stay on the **Local** tab, choose **HTTPS** and copy the link.
-2. Open **Command Prompt** in the folder where you want it (for example `C:\`) and run:
-   ```
-   git clone https://github.com/AjCozie123/ComfyStudio.git
-   ```
-3. Open the new **ComfyStudio** folder and double-click **Install Comfy Studio.bat**.
-
-To update later, open Command Prompt in that folder and run `git pull` (or just use the app's own Update button).
-
-### Then, inside the app
-Open **Workflows**. Every engine shows what it still needs, and the app downloads it for you with one click: the
-models from their official pages and any ComfyUI node packs. You never have to hunt for files.
-
-**You only ever need two files:** **Install Comfy Studio.bat** (once) and **Start Comfy Studio.bat** (or the desktop
-shortcut). Everything else lives in the `app` folder, and you can ignore it.
+Step-by-step help for every part is in the **Help** folder (plain text files, open with a double-click):
+**1 - Install**, **2 - Start and use**, **3 - ComfyUI**, **4 - Troubleshooting**.
 
 ## What you need
-- Windows 10/11 with an NVIDIA GPU (8 GB VRAM or more is best; MiniMax H3 video also needs about 32 GB of RAM)
-- [ComfyUI](https://www.comfy.org/download) (portable or desktop), **updated to the latest version**, running.
-  Krea 2 Edit and LTX 2.3 use nodes that only recent ComfyUI versions have.
-- Python 3.10+ ([python.org](https://www.python.org/downloads/), tick "Add python.exe to PATH")
-- Optional: [Git for Windows](https://git-scm.com/download/win). Without it, node packs download as zips.
+- **Windows 10 or 11, 64-bit.** An NVIDIA graphics card is best (8 GB of video memory or more; MiniMax H3 video
+  also needs about 32 GB of RAM).
+- **ComfyUI**, kept up to date: [ComfyUI Desktop](https://www.comfy.org/download) (easiest) or
+  [ComfyUI Portable](https://github.com/comfyanonymous/ComfyUI/releases). You can install it before or after
+  Comfy Studio. See **Help / 3 - ComfyUI.txt**.
+- **Python 3.12** (64-bit). Don't have it? The installer offers to add it for you.
+- Optional: [Git for Windows](https://git-scm.com/download/win), for easy updates and node packs.
 
-Comfy Studio finds ComfyUI's folders by itself once ComfyUI is running (saved in `app\data\settings.json`).
+## Install (once, about 5 minutes)
+1. **Download:** green **Code** button at the top of this page, then **Download ZIP**
+   (or the zip from the latest **Release**).
+2. **Extract it. Don't skip this.** Right-click the zip, choose **Extract All...**, and pick a simple place like
+   `C:\ComfyStudio` (not Program Files). Running files from *inside* the zip doesn't work: only one file gets
+   copied to a temporary folder and the installer can't find the rest.
+3. **Open the extracted folder and double-click `Install Comfy Studio.bat`.**
+   If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**.
+
+The installer then does everything by itself, step by step, and says what it did:
+- checks the folder is complete and can save files;
+- unblocks the downloaded files;
+- finds Python, or offers to install Python 3.12;
+- installs the Python parts Comfy Studio needs, and checks they work;
+- checks Windows WebView2, which the app window uses (it offers to add it; without it the app opens in your
+  browser);
+- **finds your ComfyUI**, running or installed, and asks which one if you have several;
+- adds **Comfy Studio** shortcuts to your Desktop and Start menu;
+- starts Comfy Studio and confirms it really opened.
+
+If anything goes wrong it **stops and says exactly what to do**, and saves a report in
+`app\data\setup_report.txt`. Running the installer again is always safe.
+
+### With Git instead (easy updates)
+```
+git clone https://github.com/AjCozie123/ComfyStudio.git
+```
+Then open the new **ComfyStudio** folder and double-click **Install Comfy Studio.bat**. Update later with `git pull`,
+or the app's own **Check for updates**.
+
+## Start
+1. Start **ComfyUI**.
+2. Open **Comfy Studio**: the desktop shortcut, or double-click **Start Comfy Studio.bat**. It tells you what's
+   wrong if the app can't start.
+3. Open **Workflows**. Every engine shows what it still needs, and downloads it with one click: models from their
+   official pages, and ComfyUI node packs.
+
+**You only ever need two files:** **Install Comfy Studio.bat** (once) and **Start Comfy Studio.bat** (or the
+shortcut). Everything else lives in the `app` folder.
+
+## Quick fixes
+| Problem | Fix |
+|---|---|
+| `Can not find script file ...\Temp\...` or files missing | You ran it from inside the zip: **Extract All...** first, then run the installer from the extracted folder. |
+| "Windows protected your PC" | **More info**, then **Run anyway**. |
+| Python not found | Let the installer add it (press **Y**), or install Python 3.12 from python.org and tick **Add python.exe to PATH**. |
+| App doesn't open | Run **Start Comfy Studio.bat**: it shows the reason. Then see **Help / 4 - Troubleshooting.txt**. |
+| "ComfyUI is offline" | Start ComfyUI and wait until it's ready. See **Help / 3 - ComfyUI.txt**. |
 
 ## Node packs, models and engines
 Open **Workflows**.

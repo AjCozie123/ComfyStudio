@@ -28,6 +28,7 @@ import library as LIB
 import assist as ASSIST
 import camera as CAMERA
 import appearance as APPEARANCE
+import nudity as NUDITY
 import workflow_registry as WF
 import prompt_dialect as PD
 import nodes_manager as NM
@@ -1052,14 +1053,26 @@ def person_lock_mask(image_rel, user_prompt):
     return url, "Only the person was edited: everything around them is kept exactly as it was (automatic outline)."
 
 
-def head_cover_final(text, user_prompt, edit=False):
+def pic_undressed(names):
+    """NudeNet on Picture 1 (cached, ~0.05 s): True only when it clearly shows an undressed person."""
+    try:
+        for n in (names or [])[:1]:
+            p = _safe_input_path(n)
+            if p:
+                return bool(NUDITY.undressed(p))
+    except Exception:
+        pass
+    return False
+
+
+def head_cover_final(text, user_prompt, edit=False, undressed=False):
     """Last step for a prompt that puts on a mask / helmet / costume enclosing the head (pe.head_polish): the hair (and
     a covered face) leave every keep sentence, and one plain line says the hair is hidden inside. Runs after the guards
     and after Enhance, so nothing added later can ask to keep the hair again. edit: a picture is being edited (then a
     turn of the person also gets 'turns in place, same clothes seen from the new side', pe.turn_polish)."""
     try:
         if text and edit:
-            text = PE.turn_polish(user_prompt, text)   # a turn: in place, same crop, same clothes from the new side
+            text = PE.turn_polish(user_prompt, text, undressed)   # a turn: in place, same crop, same clothes
             text = PE.move_polish(user_prompt, text)   # "move her further back": a realistic new distance
         if text and PE.full_costume(user_prompt):
             text = PE.costume_polish(user_prompt, text)   # a full suit replaces the shoes and every garment too
@@ -1352,7 +1365,8 @@ def run_prompt_enhancer(job):
         except Exception:
             pass
         if str(job.get("pe_media") or "image").startswith("image"):
-            cached = head_cover_final(cached, job.get("prompt_user") or raw, edit=bool(job.get("source_images")))
+            cached = head_cover_final(cached, job.get("prompt_user") or raw, edit=bool(job.get("source_images")),
+                                      undressed=pic_undressed(job.get("source_images")))
         job["enhanced_prompt"] = cached
         job["pe_cached"] = True
         job["prompt"] = cached
@@ -1420,7 +1434,8 @@ def run_prompt_enhancer(job):
     except Exception as e:
         log.info("route polish: %s", e)
     if job.get("mode") != "t2v" and str(job.get("pe_media") or "image").startswith("image"):
-        caption = head_cover_final(caption, job.get("prompt_user") or raw, edit=bool(job.get("source_images")))
+        caption = head_cover_final(caption, job.get("prompt_user") or raw, edit=bool(job.get("source_images")),
+                                   undressed=pic_undressed(job.get("source_images")))
     job["enhanced_prompt"] = caption
     job["prompt"] = caption
     try:
@@ -2154,6 +2169,176 @@ def apply_shots(card, data):
     return data, note
 
 
+_OUTPAINT_RX = re.compile(
+    r"\b(out-?paint\w*|un-?crop\w*|zoom(?:ed|ing)?\s+out|pull(?:s|ed|ing)?\s+back|"
+    r"(?:extend|expand|widen|enlarge|grow)(?:s|ed|ing)?\s+(?:the\s+)?(?:image|picture|photo|canvas|background|scene|frame|shot|view)|"
+    r"(?:wider|bigger|larger)\s+(?:shot|view|angle|frame|canvas|scene)|show(?:s|ing)?\s+more\s+of|"
+    r"(?:more|extra)\s+(?:space|room|background|canvas)\s+(?:on|to|at|around))", re.I)
+
+
+def outpaint_pad(prompt, width, height):
+    """Sides and amounts for an outpaint from the user's words: 'left', 'top and bottom', 'all sides' ...;
+    '300px', '50%', 'a little' / 'a lot'. Default: 512 px left and right (the ULTRA workflow's own default)."""
+    t = (prompt or "").lower()
+    sides = set()
+    if re.search(r"\b(all (four )?sides|every side|everywhere|all around|around (it|her|him|them)|in every direction|zoom(ed|ing)? out|pull(s|ed|ing)? back)\b", t):
+        sides = {"left", "right", "top", "bottom"}
+    for s, rx in (("left", r"\bleft\b"), ("right", r"\bright\b"), ("top", r"\b(top|above|up(wards)?|sky|ceiling)\b"),
+                  ("bottom", r"\b(bottom|below|down(wards)?|feet|floor|ground)\b")):
+        if re.search(rx, t):
+            sides.add(s)
+    if re.search(r"\b(sides|horizontal(ly)?|wider|widen|landscape|panoram\w*)\b", t):
+        sides |= {"left", "right"}
+    if re.search(r"\b(vertical(ly)?|taller|portrait)\b", t):
+        sides |= {"top", "bottom"}
+    if not sides:
+        sides = {"left", "right"}
+    px = re.search(r"(\d{2,4})\s*(?:px|pixels?)\b", t)
+    pc = re.search(r"(\d{1,3})\s*(?:%|percent)", t)
+    out = {}
+    for s in ("left", "right", "top", "bottom"):
+        if s not in sides:
+            out[s] = 0
+            continue
+        dim = (width if s in ("left", "right") else height) or 1024
+        if px:
+            v = int(px.group(1))
+        elif pc:
+            v = int(dim * int(pc.group(1)) / 100.0)
+        elif re.search(r"\b(a (little|bit)|slightly|a touch)\b", t):
+            v = 256
+        elif re.search(r"\b(a lot|much|way|far|massively|double)\b", t):
+            v = 1024
+        else:
+            v = 512
+        out[s] = max(32, min(4096, int(round(v / 32.0)) * 32))
+    return out
+
+
+OUTPAINT_FILL = ("The outer margins of <Picture 1> are smeared, stretched edge pixels. Replace only those smeared margins with "
+                 "the natural continuation of the scene, so the picture becomes a wider view of the same place. Keep the "
+                 "sharp centre of <Picture 1> exactly as it is, at the same position and size. Continue the same perspective, "
+                 "lighting, colors and textures across the edges. Do not add another copy of any person, do not zoom in and "
+                 "do not reframe.")
+
+
+def outpaint_prompt(user_prompt, base=None):
+    """The outpaint model must get the workflow's own fill instruction, never 'zoom out ...' (tested 2026-11-16: it
+    redrew the whole scene, giant, into the margins). Whatever else the user wrote becomes 'In the new area: ...'."""
+    t = _OUTPAINT_RX.sub(" ", user_prompt or "")
+    t = re.sub(r"\b(\d{2,4}\s*(px|pixels?)|\d{1,3}\s*(%|percent)|by|on|to|the|both|all( four)?|sides?|left|right|top|bottom|"
+               r"above|below|horizontal(ly)?|vertical(ly)?|a (little|bit|lot)|slightly|much|more|of|around (her|him|them|it)|"
+               r"picture|image|canvas|frame|photo)\b", " ", t, flags=re.I)
+    t = re.sub(r"\d{1,3}\s*(%|percent)", " ", t, flags=re.I)
+    t = re.sub(r"\s*,\s*(,\s*)+", ", ", re.sub(r"\s+", " ", t)).strip(" .,;:-")
+    for _ in range(3):      # leftover joining words at the start: "and , add blue sky" -> "blue sky"
+        t = re.sub(r"^(?:(?:with|and|add|adding|plus)\b|,)[\s,]*", "", t, flags=re.I).strip(" .,;:-")
+    fill = base or OUTPAINT_FILL
+    if len(t.split()) >= 2:
+        fill = fill.rstrip(" .") + ". In the new area: " + t.rstrip(".") + "."
+    return fill
+
+
+def make_outpaint_canvas(src_rel, pad):
+    """Widen Picture 1 by `pad` px per side with stretched edge pixels (real colours in the margins for the model to
+    continue) and return (canvas file under ComfyUI's input folder, painted-area mask as a PNG data URL: white = the
+    new margins, reaching 24 px into the old edge so the join is redrawn smoothly)."""
+    import base64
+    import numpy as np
+    from PIL import Image, ImageFilter, ImageOps
+    with Image.open(os.path.join(INPUT, src_rel.replace("/", os.sep))) as im:
+        src = np.asarray(ImageOps.exif_transpose(im).convert("RGB"))
+    l, r, t, b = (int(pad.get(k) or 0) for k in ("left", "right", "top", "bottom"))
+    canvas = np.pad(src, ((t, b), (l, r), (0, 0)), mode="edge")
+    h, w = canvas.shape[:2]
+    m = np.zeros((h, w), np.uint8)
+    m[:, :] = 255
+    ov = 24
+    y0, y1 = t + (ov if t else 0), t + src.shape[0] - (ov if b else 0)
+    x0, x1 = l + (ov if l else 0), l + src.shape[1] - (ov if r else 0)
+    m[y0:y1, x0:x1] = 0
+    mask = Image.fromarray(m).filter(ImageFilter.GaussianBlur(8))
+    folder = os.path.join(INPUT, "ComfyStudio", "_outpaint")
+    os.makedirs(folder, exist_ok=True)
+    name = "%s_canvas.png" % uuid.uuid4().hex[:12]
+    Image.fromarray(canvas).save(os.path.join(folder, name))
+    buf = io.BytesIO()
+    mask.save(buf, "PNG")
+    return "ComfyStudio/_outpaint/" + name, "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), (w, h)
+
+
+OUTPAINT_INPAINT_PROMPT = ("The streaky stripes around the photo are not part of the scene: paint over every one of them so none "
+                           "remain. Show a wider view of the same place, continuing its ground, plants, walls, buildings and sky "
+                           "outwards in the same light and perspective{extra}. Keep the photo in the middle exactly as it is.")
+
+
+def route_family(wid, card, graph, data):
+    """A workflow family with separate edit / inpaint / outpaint engines (MiniMax H3 Image ULTRA ...) works as one:
+    an edit with a painted area runs on the family's inpaint engine, one that asks to extend the picture on its
+    outpaint engine (sides and amount read from the prompt), anything else on its edit engine. Model picks carry
+    over by slot name."""
+    fam = card.get("family") or ""
+    if card.get("media") != "image" or card.get("task") != "edit" or not fam or fam in ("Custom", "MiniMax H3"):
+        return wid, card, graph, data, ""
+    sibs = [c for c in WF.list_cards() if (c.get("family") or "") == fam and c.get("task") == "edit"]
+    by = lambda rx: next((c for c in sibs if re.search(rx, c.get("name") or "", re.I)), None)
+    inp, outp = by(r"inpaint"), by(r"outpaint")
+    edit = next((c for c in sibs if not re.search(r"inpaint|outpaint", c.get("name") or "", re.I)), None)
+    prompt = data.get("prompt") or ""
+    target, note = None, ""
+    if data.get("inpaint_mask") and inp:
+        target, note = inp, "Painted area: made with %s." % inp.get("name")
+    elif outp and _OUTPAINT_RX.search(prompt) and not data.get("inpaint_mask"):
+        target = outp
+        w, h = None, None
+        try:
+            from PIL import Image as _Im
+            with _Im.open(os.path.join(INPUT, (data.get("images") or [""])[0].replace("/", os.sep))) as im:
+                w, h = im.size
+        except Exception:
+            pass
+        pad = outpaint_pad(prompt, w, h)
+        if inp and (data.get("images") or []):
+            # tested 2026-11-16: the ULTRA Outpaint section's noise mask is ignored by MiniMax H3 (it drew a giant
+            # copy of the person, or left the margins gray); its Inpaint section locks the rest of the picture, so an
+            # outpaint is made there: the widened, edge-stretched picture with the new margins painted
+            canvas, mask_url, size = make_outpaint_canvas(data["images"][0], pad)
+            extra = re.sub(r"^In the new area:\s*", "", (outpaint_prompt(prompt).split(". In the new area: ", 1) + [""])[1]).strip(" .")
+            target = inp
+            data = dict(data, images=[canvas] + list((data.get("images") or [])[1:]), inpaint_mask=mask_url,
+                        inpaint_explicit=True, inpaint_areas=[], pe=False, size_auto=True, width=size[0], height=size[1],
+                        auto_assist=False, image_roles=[],
+                        prompt=OUTPAINT_INPAINT_PROMPT.format(extra=(": " + extra) if extra else ""))
+            note = "Extending the picture (%s) with %s." % (", ".join("%s %d px" % (k, v) for k, v in pad.items() if v),
+                                                             inp.get("name"))
+            tcard, tgraph = WF.get(target["id"])
+            src = {str(i): (m.get("label") or "") for i, m in enumerate((card.get("slots") or {}).get("models") or [])}
+            dst = {(m.get("label") or ""): str(i) for i, m in enumerate((tcard.get("slots") or {}).get("models") or [])}
+            models = {dst[src[str(k)]]: v for k, v in (data.get("models") or {}).items() if src.get(str(k)) in dst}
+            data = dict(data, workflow_id=target["id"], models=models, overrides=None)
+            return target["id"], tcard, tgraph, data, note
+        try:
+            _tc, _tg = WF.get(outp["id"])
+            _ps = ((_tc.get("slots") or {}).get("prompt") or [{}])[0]
+            base = _tg[str(_ps["node"])]["inputs"][_ps["input"]] if _ps else None
+        except Exception:
+            base = None
+        # the workflow's own fill instruction (+ what to put in the new area); Enhance would rewrite it, so it's off
+        data = dict(data, _outpaint_pad=pad, prompt=outpaint_prompt(prompt, base if isinstance(base, str) else None), pe=False)
+        note = "Extending the picture with %s: %s." % (outp.get("name"), ", ".join(
+            "%s %d px" % (k, v) for k, v in pad.items() if v))
+    elif edit and re.search(r"inpaint|outpaint", card.get("name") or "", re.I):
+        target = edit            # the inpaint / outpaint engine picked by hand, but nothing to inpaint / extend
+    if not target or target.get("id") == card.get("id"):
+        return wid, card, graph, data, note if target else ""
+    tcard, tgraph = WF.get(target["id"])
+    src = {str(i): (m.get("label") or "") for i, m in enumerate((card.get("slots") or {}).get("models") or [])}
+    dst = {(m.get("label") or ""): str(i) for i, m in enumerate((tcard.get("slots") or {}).get("models") or [])}
+    models = {dst[src[str(k)]]: v for k, v in (data.get("models") or {}).items() if src.get(str(k)) in dst}
+    data = dict(data, workflow_id=target["id"], models=models, overrides=None)
+    return target["id"], tcard, tgraph, data, note
+
+
 def route_extended(wid, card, graph, data):
     """Text / Image to video asked for more seconds than one clip can do at that size on this PC: make it as an
     extended video instead (the matching Long workflow: short clips at the same size, each continuing from the
@@ -2193,7 +2378,11 @@ def route_extended(wid, card, graph, data):
 def submit_workflow_job(data):
     wid = data.get("workflow_id") or ""
     card, graph = WF.get(wid)
-    ext_note = shot_note = ""
+    ext_note = shot_note = fam_note = ""
+    try:
+        wid, card, graph, data, fam_note = route_family(wid, card, graph, data)
+    except Exception as e:
+        log.info("family routing skipped: %s", e)
     try:
         data, shot_note = apply_shots(card, data)
     except Exception as e:
@@ -2204,6 +2393,8 @@ def submit_workflow_job(data):
         log.info("extended-video routing skipped: %s", e)
     if shot_note:
         ext_note = shot_note
+    if fam_note:
+        ext_note = (fam_note + " " + ext_note).strip()
     slots = card.get("slots") or {}
     prompt = (data.get("prompt") or "").strip()
     if prompt and data.get("understanding") is not False:
@@ -2283,8 +2474,12 @@ def submit_workflow_job(data):
         raise ValueError("This workflow repaints an area you choose. Tap Inpaint, paint where to change, then send.")
     if data.get("inpaint_mask") and card.get("media") == "image" and images and not inpaint:
         pre_id = uuid.uuid4().hex[:12]
+        # Krea 2 Edit gets NO magenta outline: its sampler mask (only the painted area is redrawn), the clean picture as
+        # its reference and the paste-back already keep the edit inside the area, and it reproduced the outline as
+        # faint pink lines from its grounded encoder (2026-11-16, side-profile turn). Other engines still need it.
         crop_rel, inpaint = inpaint_prepare(pre_id, images[0], data["inpaint_mask"], areas=data.get("inpaint_areas"),
-                                            numbers=False, explicit=bool(data.get("inpaint_explicit")))
+                                            numbers=False, explicit=bool(data.get("inpaint_explicit")),
+                                            mark=card.get("edit_kind") != "krea_edit")
         images[0] = crop_rel
         intent = edit_intent(prompt)
         inpaint["intent"] = intent
@@ -2313,7 +2508,8 @@ def submit_workflow_job(data):
         and ASSIST.swap_intent(data.get("prompt") or "", len(images or [])) not in ("body_swap", "subject_into_environment", "clothing_transfer")
     if prompt and keep_cloth:
         style = "plain" if (card.get("edit_kind") == "krea_edit" or card.get("prompt_style") == "plain") else ""
-        prompt, _cg = CG.apply(prompt, data.get("prompt") or "", "edit" if images else "t2i", style)
+        prompt, _cg = CG.apply(prompt, data.get("prompt") or "", "edit" if images else "t2i", style,
+                               undressed=pic_undressed(data.get("images")))
     # an edit that names one garment changes only that one (the others stay as they are)
     if (prompt and images and card.get("media") == "image" and guard_on(data, "only_garment", len(images))
             and card.get("edit_kind") != "anypaint" and ASSIST.swap_intent(data.get("prompt") or "", len(images)) not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap")):
@@ -2367,7 +2563,8 @@ def submit_workflow_job(data):
             prompt_sent = prompt
     prompt_sent = PD.translate(prompt_sent, dialect)
     if card.get("media") == "image" and card.get("edit_kind") != "anypaint":
-        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=bool(images))
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=bool(images),
+                                       undressed=pic_undressed(data.get("images")))
     prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
     # Enhance: new pictures, videos and picture EDITS (inpaint keeps your own words: its area wording is exact)
     pe_on = bool(card.get("media") in ("image", "video") and prompt and data.get("pe") and card.get("enhance", True) is not False
@@ -2384,8 +2581,10 @@ def submit_workflow_job(data):
     # clip by clip (Long Video node) when the clip length isn't one the Seamless Planner has (e.g. 3 s for 720p on
     # 8 GB) or the user wrote shots (each shot = exactly its own clip); otherwise the planner splits the story
     long_clip = long_clip_choice(card, data)[0] if (card.get("task") == "long" and long_secs) else 0.0
+    # ... and always for a long video from a picture: each generation then repeats who the person is (only the
+    # first clip sees the picture; tested 2026-11-16, the outfit changed near the end without it)
     use_clips = bool(long_clip and round(long_secs / long_clip) >= 2
-                     and (long_clip not in WF.PLANNER_CLIPS or int(data.get("_shots") or 0) >= 2))
+                     and (long_clip not in WF.PLANNER_CLIPS or int(data.get("_shots") or 0) >= 2 or bool(images)))
     long_raw = prompt_sent
     if card.get("prompt_style") == "h3":
         prompt_sent = WF.h3_wrap(prompt_sent, card.get("prompt_trigger") or "", long_secs)
@@ -2465,6 +2664,12 @@ def submit_workflow_job(data):
     }
     g, used_seed = WF.fill(card, graph, values, APP_OUT + "/wf/" + card["id"])
     notes += values.pop("_lora_notes", None) or []
+    if data.get("_outpaint_pad"):
+        for n in g.values():
+            if n.get("class_type") == "AUSBOSS_NODES_ImageCropRotatePad":
+                for side, v in data["_outpaint_pad"].items():
+                    n["inputs"]["pad_" + side] = int(v)
+    lcp = None
     if use_clips:
         try:
             lcp = WF.long_clip_prompts(g, long_raw, long_secs, long_clip, card.get("prompt_trigger") or "")
@@ -2568,6 +2773,10 @@ def submit_workflow_job(data):
         "models": {},
         "resolution_in": "",
         "long_clips": {"clip": long_clip, "total": long_secs} if use_clips else None,
+        # long video from a picture: Shot 1 from the picture, then Extend Video with the picture as reference
+        "ref_extend_on": bool(use_clips and images and card.get("task") == "long" and card.get("family") == "MiniMax H3"),
+        "ref_picture": images[0] if images else None,
+        "_lcp": lcp,
     }
     if pe_on:
         pe_mode = "quality" if data.get("pe_mode") == "quality" else "fast"
@@ -2645,6 +2854,7 @@ def apply_wf_enhanced_prompt(job):
         try:
             lcp = WF.long_clip_prompts(job["graph"], text, lc["total"], lc["clip"], job.get("prompt_trigger") or "")
             if lcp:
+                job["_lcp"] = lcp
                 for slot in job.get("wf_prompt_slots") or []:      # the (unused) planner story box: keep it in step
                     node = job["graph"].get(str(slot["node"]))
                     if node is not None:
@@ -2989,7 +3199,7 @@ def inpaint_mark(crop, mask_crop, areas, box, size, numbers=True):
     return marked
 
 
-def inpaint_prepare(job_id, image_rel, mask_data, pad=0.35, areas=None, numbers=True, explicit=False):
+def inpaint_prepare(job_id, image_rel, mask_data, pad=0.35, areas=None, numbers=True, explicit=False, mark=True):
     """Cut out the painted area of Picture 1 (with margin) as a new input; return (crop_rel, info)."""
     import base64
     from PIL import Image, ImageOps
@@ -3031,12 +3241,13 @@ def inpaint_prepare(job_id, image_rel, mask_data, pad=0.35, areas=None, numbers=
     crop = src.crop((cx0, cy0, cx1, cy1))
     if not explicit:                       # areas you made yourself (Separate) are never joined
         areas = merge_areas(m, areas)
-    try:
-        crop = inpaint_mark(crop, m.crop((cx0, cy0, cx1, cy1)), areas, (cx0, cy0), src.size, numbers)
-        marked = True
-    except Exception as e:
-        log.warning("inpaint marking skipped: %s", e)
-        marked = False
+    marked = False
+    if mark:
+        try:
+            crop = inpaint_mark(crop, m.crop((cx0, cy0, cx1, cy1)), areas, (cx0, cy0), src.size, numbers)
+            marked = True
+        except Exception as e:
+            log.warning("inpaint marking skipped: %s", e)
     crop.save(os.path.join(folder, crop_name))
     m.save(os.path.join(folder, mask_name))
     crop_mp = (cx1 - cx0) * (cy1 - cy0) / 1e6
@@ -3249,9 +3460,47 @@ def inpaint_blend_mask(orig, edited, mask, intent=None):
     return Image.composite(hard, alpha, strong)
 
 
-def leftover_magenta(img):
+def outline_band(mask_crop):
+    """Where the magenta outline was drawn (mark_areas: a ring along the painted area's edge), a little wider."""
+    from PIL import ImageChops, ImageFilter
+    w = max(3, (min(mask_crop.size) // 200) | 1)
+    k = w * 2 + 5
+    binm = mask_crop.convert("L").point(lambda v: 255 if v > 127 else 0)
+    return ImageChops.subtract(binm.filter(ImageFilter.MaxFilter(k)), binm.filter(ImageFilter.MinFilter(k)))
+
+
+def leftover_magenta(img, src=None, band=None):
     """Where the model left the magenta marking (it drew something smaller than the area): those spots keep the
-    original picture. Returns a soft mask (white = leftover magenta), a little wider so no pink fringe remains."""
+    original picture. Returns a soft mask (white = leftover magenta), a little wider so no pink fringe remains.
+    With src (the original crop): also FAINT copies of the outline - pixels that turned pinker than they were. Krea
+    copies its reference closely and left a pale pink frame on a gray backdrop that the strong test missed
+    (2026-11-16, side-profile turn)."""
+    from PIL import Image, ImageChops, ImageFilter
+    strong = _leftover_magenta_strong(img)
+    if src is None:
+        return strong
+    W, H = img.size
+    k = min(1.0, 1536.0 / max(W, H))
+    size = (max(8, int(W * k)), max(8, int(H * k)))
+    er, eg, eb = img.resize(size, Image.BILINEAR).split()
+    sr, sg, sb = src.convert("RGB").resize(size, Image.BILINEAR).split()
+    # pinkness = red over green and blue over green; how much MORE pink than the original is each pixel
+    d_rg = ImageChops.subtract(ImageChops.subtract(er, eg), ImageChops.subtract(sr, sg))
+    d_bg = ImageChops.subtract(ImageChops.subtract(eb, eg), ImageChops.subtract(sb, sg))
+    faint = ImageChops.multiply(d_rg.point(lambda v: 255 if v > 9 else 0), d_bg.point(lambda v: 255 if v > 7 else 0))
+    if band is not None:
+        # right where the outline was drawn even a trace of extra pink is the copied outline
+        near = ImageChops.multiply(d_rg.point(lambda v: 255 if v > 2 else 0), d_bg.point(lambda v: 255 if v > 1 else 0))
+        near = ImageChops.multiply(near, band.convert("L").resize(size, Image.BILINEAR).point(lambda v: 255 if v > 0 else 0))
+        faint = ImageChops.lighter(faint, near)
+    if not faint.getbbox():
+        return strong
+    faint = faint.filter(ImageFilter.MaxFilter(5))          # the whole width of the line, plus its soft edge
+    faint = faint.resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(max(1.0, min(W, H) * 0.002)))
+    return ImageChops.lighter(strong, faint)
+
+
+def _leftover_magenta_strong(img):
     from PIL import Image, ImageChops, ImageFilter
     W, H = img.size
     k = min(1.0, 1536.0 / max(W, H))
@@ -3281,11 +3530,12 @@ def inpaint_finish(job):
         src = ImageOps.exif_transpose(im).convert("RGB")
     with Image.open(os.path.join(INPUT, info["mask"].replace("/", os.sep))) as im:
         m = im.convert("L").crop((cx0, cy0, cx1, cy1))
+    m0 = m.copy()                          # the painted area as drawn (the magenta outline ran along its edge)
     edited = inpaint_align(src.crop((cx0, cy0, cx1, cy1)), edited, m)
     edited = inpaint_tone_match(src.crop((cx0, cy0, cx1, cy1)), edited, m)
     m = inpaint_blend_mask(src.crop((cx0, cy0, cx1, cy1)), edited, m, info.get("intent"))
     if info.get("marked"):
-        m = ImageChops.subtract(m, leftover_magenta(edited))
+        m = ImageChops.subtract(m, leftover_magenta(edited, src.crop((cx0, cy0, cx1, cy1)), outline_band(m0)))
     out = src.copy()
     out.paste(edited, (cx0, cy0), m)
     name = "inpaint_%s.png" % job["id"]
@@ -3403,11 +3653,13 @@ def submit_job(data):
             )
             prompt_sent = assist_info.get("prompt") or prompt_user
         if guard_on(data, "keep_clothing", 0) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
-            prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+            prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i",
+                                        undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
-        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=(mode == "edit"))
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=(mode == "edit"),
+                                       undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=False)
     else:
@@ -3473,7 +3725,8 @@ def submit_job(data):
             edit_kind = "ref"
             # Keep the user's chosen aspect / Match Picture 1 size. Layout adapts to W x H.
         if guard_on(data, "keep_clothing", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
-            prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
+            prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i",
+                                        undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
         if guard_on(data, "only_garment", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
             prompt_sent, _og = CG.apply_only_garment(prompt_sent, data.get("prompt") or "", "edit")
@@ -3484,7 +3737,8 @@ def submit_job(data):
             prompt_sent, _qg = CG.apply_quality(prompt_sent, data.get("prompt") or "", "edit")
         if data.get("understanding") is not False:
             prompt_sent = UND.apply_extra(prompt_sent, DATA, "builtin")
-        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=(mode == "edit"))
+        prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=(mode == "edit"),
+                                       undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
         if inpaint and inpaint.get("box"):
@@ -3693,6 +3947,58 @@ def _collect_images(hist_entry):
     return preferred or others
 
 
+def _exact_av_copy(src, dst, fps=24.0):
+    """Copy a clip with its sound cut / padded to EXACTLY the pictures' length. Extend Video rejects a clip whose
+    sound is more than 0.5% off (tested 2026-11-16: MiniMax's own AAC sound runs ~1% long on a 3 s clip, because AAC
+    pads to whole blocks), so the copy is a .mov with uncompressed sound; the pictures are copied untouched."""
+    import subprocess
+    ff = pc_browse.FFMPEG or "ffmpeg"
+    flags = 0x08000000 if os.name == "nt" else 0
+    r = subprocess.run([ff, "-hide_banner", "-i", src, "-map", "0:v:0", "-f", "null", "-"], capture_output=True,
+                       text=True, timeout=120, creationflags=flags)
+    frames = re.findall(r"frame=\s*(\d+)", r.stderr)
+    rate = re.search(r"Audio:.*?(\d+) Hz", r.stderr)
+    if not frames or not rate:
+        shutil.copy2(src, dst)
+        return dst
+    want = int(round(int(frames[-1]) / fps * int(rate.group(1))))
+    subprocess.run([ff, "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0",
+                    "-c:v", "copy", "-af", "apad,atrim=end_sample=%d" % want, "-c:a", "pcm_s16le", dst],
+                   check=True, timeout=300, creationflags=flags)
+    return dst
+
+
+def _start_ref_extend(job):
+    """Pass 2 of a long video from a picture: copy Shot 1's clip into ComfyUI's input folder and queue Extend Video
+    (the clip as Video 1, the original picture as Picture 1 = reference). Returns the new prompt id."""
+    first = job["images"][0]
+    src = os.path.join(OUTPUT, (first.get("subfolder") or "").replace("/", os.sep), first["filename"])
+    rel = "ComfyStudio/_extend/%s_shot1.mov" % job["id"]
+    dst = os.path.join(INPUT, rel.replace("/", os.sep))
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    _exact_av_copy(src, dst)
+    save_prefix = None
+    for n in (job.get("graph") or {}).values():
+        if n.get("class_type") in ("SaveVideo", "SaveImage"):
+            save_prefix = (n.get("inputs") or {}).get("filename_prefix")
+            break
+    asked = " ".join(str(job.get(k) or "") for k in ("prompt_user", "prompt"))
+    g2 = WF.ref_extend_graph(job["then_extend"], rel, save_prefix, lock_camera=not WF.CAMERA_MOVE_RX.search(asked))
+    resp = comfy("POST", "/prompt", {"prompt": g2, "client_id": CLIENT_ID}, timeout=60)
+    pid = resp.get("prompt_id") or resp.get("promptId")
+    if not pid:
+        raise ValueError("ComfyUI did not accept the Extend Video step")
+    job["_shot1_images"] = job["images"]
+    job["images"] = []
+    job["_ext_pid"] = pid
+    job["prompt_id"] = pid
+    job["graph_extend"] = g2
+    n = len(job["then_extend"]["prompts"])
+    job["message"] = "Shot 1 done. Extending %d more shot%s with your picture as the reference…" % (n, "" if n == 1 else "s")
+    log.info("reference extend queued: %s (%d shots)", pid, n)
+    return pid
+
+
 def _wait_for_job(job):
     """Poll history / live events until our prompt finishes. Never interrupts a foreign job."""
     pid = job["prompt_id"]
@@ -3716,6 +4022,19 @@ def _wait_for_job(job):
                     except Exception:
                         log.exception("inpaint blend")
                         job["message"] = "Blending failed; showing the edited close-up."
+                if job["images"] and job.get("then_extend") and not job.get("_ext_pid"):
+                    try:
+                        pid = _start_ref_extend(job)
+                        t0 = time.time()
+                        lost = {}
+                        continue
+                    except Exception as e:
+                        log.exception("reference extend")
+                        job["note"] = (job.get("note", "") + " Extending with your picture failed (%s), so this is Shot 1 only."
+                                       % str(e)[:160]).strip()
+                if not job["images"]:
+                    if job.get("_shot1_images"):           # pass 2 saved nothing: keep Shot 1
+                        job["images"] = job["_shot1_images"]
                 if not job["images"]:
                     job["status"] = "error"
                     job["error"] = "The run finished but no image was saved."
@@ -3735,6 +4054,23 @@ def _wait_for_job(job):
                     job["input_snapshots"] = rec.get("input_snapshots") or []
                     if not job.get("test_run"):      # a workflow's Test run stays out of the Library
                         gallery_add(rec)
+                job["t_done"] = time.time()
+                return
+            if job.get("_ext_pid") and job.get("_shot1_images") and "interrupt" not in str(ev.get("error") or "").lower():
+                # Extend Video failed: keep Shot 1 rather than nothing
+                job["note"] = (job.get("note", "") + " Extending with your picture failed (%s), so this is Shot 1 only."
+                               % str(ev.get("error") or "error")[:200]).strip()
+                job["images"] = job["_shot1_images"]
+                job["status"] = "success"
+                job["message"] = "Done (Shot 1 only)."
+                rec = LIB.library_record(job, OUTPUT, APP_OUT, INPUT)
+                rec["media"] = "video"
+                if job.get("workflow_id"):
+                    rec.update(workflow_id=job["workflow_id"], workflow_name=job.get("workflow_name"), task=job.get("task"),
+                               model_name=job.get("model_name"))
+                job["input_snapshots"] = rec.get("input_snapshots") or []
+                if not job.get("test_run"):
+                    gallery_add(rec)
                 job["t_done"] = time.time()
                 return
             job["status"] = "error"
@@ -3829,6 +4165,13 @@ def _worker():
                         continue
             job["status"] = "running"
             job["message"] = "Starting…"
+            if job.get("ref_extend_on") and job.get("_lcp") and not job.get("then_extend"):
+                try:
+                    job["then_extend"] = WF.ref_extend_split(job["graph"], job["_lcp"], job.get("ref_picture"))
+                    if job["then_extend"]:
+                        job["message"] = "Shot 1 from your picture…"
+                except Exception as e:
+                    log.info("reference extend skipped: %s", e)
             body = {"prompt": job["graph"], "client_id": CLIENT_ID}
             try:
                 resp = comfy("POST", "/prompt", body, timeout=60)
@@ -4135,6 +4478,9 @@ def make_thumb(full, size=384):
     cache = os.path.join(THUMBS, hashlib.sha1((full + "|s%d|%s|" % (size, THUMB_CACHE_VER) + str(os.path.getmtime(full))).encode()).hexdigest() + ".jpg")
     if os.path.isfile(cache):
         return open(cache, "rb").read()
+    if os.path.splitext(full)[1].lower() in VIDEO_EXT:
+        # a video: a frame from its first second (ffmpeg), so the Library shows a picture instead of text
+        return open(pc_browse.video_frame_jpeg(full, cache, size), "rb").read()
     from PIL import Image, ImageOps
     im = ImageOps.exif_transpose(Image.open(full))
     im.thumbnail((size, size), Image.Resampling.LANCZOS)
@@ -4364,11 +4710,12 @@ class H(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self.j({"error": str(e)}, 404)
             card = apply_effective(card, hardware())
-            if not card.get("mp_max") and card.get("media") == "image":
-                # an uploaded workflow doesn't say how big it draws well: use its model family's range (MOSS 1-2 MP ...)
+            if card.get("media") == "image":
+                # the user decides how big: up to 100 MP on any image engine; the model family's usual range
+                # (MOSS 1-2 MP, MiniMax H3 2-8 MP ...) is only shown as "recommended"
                 prof = next((p for p in WF.profiles() if p.get("id") == card.get("profile")), None)
-                if prof and prof.get("mp_options"):
-                    card = dict(card, mp_max=max(prof["mp_options"]))
+                rec = card.get("mp_max") or (max(prof["mp_options"]) if prof and prof.get("mp_options") else None)
+                card = dict(card, mp_max=max(float(card.get("mp_max") or 0), SP.IMAGE_MP_LIMIT), mp_rec=rec)
             try:
                 knobs = WF.workflow_knobs(card, _graph, object_info())
             except Exception as e:
@@ -4418,6 +4765,7 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/hardware":
             hw = hardware()
             hw["image_mp_max"] = SP.image_mp_max(hw)
+            hw["image_mp_tested"] = SP.image_mp_tested(hw)
             return self.j(hw)
         if path == "/api/upscale/options":
             it = gallery_get((q.get("id") or [""])[0])
@@ -4661,6 +5009,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send_range(full, VIDEO_TYPES[os.path.splitext(full)[1].lower()],
                                         it["filename"] if path == "/api/download" else None)
             if path == "/api/thumb" and os.path.splitext(full)[1].lower() in VIDEO_EXT:
+                log.info("video thumbnail failed for %s (is ffmpeg installed?)", it.get("filename"))
                 return self.send_bytes(404, b"video", "text/plain")
             data, ctype = serve_oriented_bytes(full)
             headers = {"Cache-Control": "max-age=3600"}
@@ -4864,6 +5213,13 @@ class H(BaseHTTPRequestHandler):
             if parts:
                 try:
                     oi = object_info()
+                    # the cached node list may be older than a pack just installed: refresh it once if anything is missing
+                    try:
+                        g0, _ = WF.load_any(parsed, oi, section=parts[0]["id"])
+                        if WF.scan(g0, oi).get("missing_nodes"):
+                            oi = object_info(force=True)
+                    except Exception:
+                        oi = object_info(force=True)
                     out = []
                     for p in parts:
                         try:
@@ -5132,6 +5488,8 @@ class H(BaseHTTPRequestHandler):
             try:
                 for name in raw_names:
                     pth = _safe_input_path(name)
+                    if pth:
+                        NUDITY.prefetch(pth)        # dressed or not, checked now so Generate never waits
                     if not pth:
                         continue
                     digest = APPEARANCE.file_digest(pth)

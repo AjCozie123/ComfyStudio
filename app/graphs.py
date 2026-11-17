@@ -64,7 +64,7 @@ ASPECT_RATIOS = {
     "21:9": (21, 9),
 }
 MP_MIN = 1.0
-MP_MAX = 20.0
+MP_MAX = 100.0
 MP_STEP = 0.5
 
 
@@ -76,7 +76,7 @@ def size_for_megapixels(aw, ah, mp, multiple=32):
     """
     mp = float(mp)
     if mp < MP_MIN - 1e-9 or mp > MP_MAX + 1e-9:
-        raise ValueError("Custom size must be between 1 and 20 megapixels.")
+        raise ValueError("Custom size must be between 1 and %g megapixels." % MP_MAX)
     if aw <= 0 or ah <= 0:
         raise ValueError("Aspect ratio must be positive.")
     area = mp * 1_000_000.0

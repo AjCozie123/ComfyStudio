@@ -1,0 +1,39 @@
+﻿COMFY STUDIO - STARTING AND FIRST STEPS
+======================================
+
+
+STARTING
+--------
+1. Start ComfyUI first (see "3 - ComfyUI.txt").
+2. Open Comfy Studio: the "Comfy Studio" shortcut on your Desktop / Start menu,
+   or double-click "Start Comfy Studio.bat".
+
+It opens in its own window. (If Windows' WebView2 is missing it opens in your
+web browser instead - same app, at http://127.0.0.1:8198 .)
+
+The dot at the top right says whether ComfyUI is connected.
+
+
+FIRST TIME: GET THE ENGINES
+---------------------------
+1. Click "Workflows" at the top.
+2. Each engine (MiniMax H3, Krea 2, FLUX.2 Klein, MOSS, Qwen Image, LTX ...) shows:
+   - whether it fits your PC (from your graphics card and memory),
+   - which model files it still needs.
+3. If a banner says node packs are missing, click "Install all", then restart ComfyUI.
+4. Click "Download" on the engines you want. Files come from their official pages
+   and go straight into the right ComfyUI folder. Nothing downloads unless you press it.
+
+
+MAKING THINGS
+-------------
+- Image / Video at the bottom switches what you make.
+- Create = a new picture from your words.  Edit = change a picture you add with "+".
+- The pills above the prompt set size, engine, Enhance (rewrites your prompt in detail),
+  camera, LoRAs and more.
+- Everything you make is in "Library".
+
+
+CLOSING
+-------
+Close the window. ComfyUI keeps running until you close it yourself.

@@ -76,6 +76,8 @@ def clause(user_prompt, mode, style=""):
     t = user_prompt or ""
     if not t.strip() or about_clothes(t):
         return ""
+    if mode == "edit" and removes_person(t):
+        return ""              # "keep their clothing" would tell the model the person stays
     if mode == "edit" and _WEARABLE.search(t):
         return ""
     if mode == "edit":
@@ -252,11 +254,32 @@ def named_item(user_prompt):
     return " ".join(words).strip().lower()
 
 
+_PERSON_NOUN = re.compile(r"\b(person|people|man|men|woman|women|girl|girls|boy|boys|guy|guys|lady|ladies|child|"
+                          r"children|kid|kids|baby|subject|figure|character|everyone|everybody|someone|somebody|"
+                          r"individual|human|humans|couple)\b", re.I)
+_PRONOUN_ONLY = re.compile(r"\b(remov\w*|eras\w*|delet\w*|get rid of|take out)\s+(him|her|them)\s*(?:from\b|[.!]?\s*$)", re.I)
+
+
+def removes_person(user_prompt):
+    """'Remove the person from <Picture 1>' / 'erase the man' / 'remove her' -> True; 'remove her jacket',
+    'remove the man's hat', 'remove the tattoo from her arm' -> False (something on the person goes, not them)."""
+    t = user_prompt or ""
+    if not _REMOVE_EDIT.search(t) or named_item(t):
+        return False
+    return bool(_PERSON_NOUN.search(t) or _PRONOUN_ONLY.search(t))
+
+
 def removal_clause(user_prompt, mode, style=""):
     """For a removal: only the named thing goes; everything else stays (other objects, and anything else worn)."""
     t = (user_prompt or "").strip()
     if mode != "edit" or not t or not _REMOVE_EDIT.search(t):
         return ""
+    if removes_person(t):
+        # the WHOLE person goes: "including anything they are wearing stays" told the model to keep them (2026-11-20)
+        if style == "plain":
+            return "Remove the named person or people completely, clothes and all, and show what is behind them; everything else stays the same."
+        return ("Remove the named person or people completely, clothes and all, and show what was behind them. Everything else in "
+                "<Picture 1> stays exactly as it is.")
     item = named_item(t)
     if item:
         if style == "plain":

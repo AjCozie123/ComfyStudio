@@ -3631,6 +3631,29 @@ def _leftover_magenta_strong(img):
     return hit.resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(max(1.5, min(W, H) * 0.003)))
 
 
+def removal_upscale(job):
+    """A removal made small (MiniMax H3 only removes reliably at about 2 MP: bigger, it copies Picture 1 and keeps the
+    person) is brought back to the size you picked, with the photo's own fine detail wherever nothing was removed."""
+    from PIL import Image, ImageOps
+    tw, th = [int(v) for v in job["hold_size"]]
+    first = job["images"][0]
+    path = output_path(first.get("subfolder") or "", first["filename"])
+    with Image.open(path) as im:
+        small = im.convert("RGB")
+    if small.width >= tw * 0.95:
+        return
+    with Image.open(os.path.join(INPUT, (job.get("source_images") or [""])[0].replace("/", os.sep))) as im:
+        src = ImageOps.exif_transpose(im).convert("RGB")
+    up = small.resize((tw, th), Image.LANCZOS)
+    ref = src if src.size == (tw, th) else src.resize((tw, th), Image.LANCZOS)
+    up = inpaint_detail_restore(ref, up, tw / float(small.width))
+    name = "removal_%s.png" % job["id"]
+    sub = (first.get("subfolder") or APP_OUT).replace("\\", "/")
+    up.save(os.path.join(OUTPUT, sub.replace("/", os.sep), name))
+    job["images"] = [{"filename": name, "subfolder": sub, "type": "output", "kind": "image"}] + job["images"][1:]
+    job["width"], job["height"] = tw, th
+
+
 def inpaint_finish(job):
     """Blend the edited close-up back into the original with a soft edge; replace the job's result."""
     from PIL import Image, ImageChops, ImageFilter, ImageOps
@@ -3714,8 +3737,19 @@ def submit_job(data):
     _clean_request(data)
     if data.get("prompt"):
         data["prompt"] = strip_lora_weights(data["prompt"])
+    # a removal ("remove the person ...") with LoRAs still selected: a body / character LoRA makes the model redraw
+    # the person (new hair, a new body) instead of removing them, and no LoRA helps a removal - leave them out
+    removal_note = ""
+    if (data.get("images") or []) and (data.get("loras") or []) and edit_intent(data.get("prompt") or "") == "remove":
+        removal_note = ("Your LoRAs were left out of this removal: they make the model redraw people instead of "
+                        "removing them.")
+        data["loras"] = []
     if str(data.get("mode") or "").strip().lower() in ("workflow", "wf"):
-        return submit_workflow_job(data)
+        job = submit_workflow_job(data)
+        if removal_note:
+            job["note"] = (removal_note + " " + (job.get("note") or "")).strip()
+            job["message"] = removal_note
+        return job
     mode = (data.get("mode") or "t2i").strip().lower()
     if mode in ("text-to-image", "txt2img", "t2i"):
         mode = "t2i"
@@ -3766,6 +3800,7 @@ def submit_job(data):
     orig_images = None
     prompt_user = prompt
     prompt_sent = prompt
+    hold_size, size_note = None, ""
     if mode == "t2i":
         images = []
         if auto_assist or camera:
@@ -3814,7 +3849,10 @@ def submit_job(data):
                                                   explicit=bool(data.get("inpaint_explicit")))
             inpaint["pre_id"] = pre_id
             images[0] = crop_rel
-            resolution = "picture1:%g" % round(max(1.5, min(4.0, inpaint["crop_mp"])), 1)
+            # MiniMax H3 only removes reliably at about 2 MP (bigger, it copies the picture and keeps what was asked
+            # to go); the paste-back restores the photo's detail afterwards
+            resolution = "picture1:%g" % round(max(1.5, min(2.0 if edit_intent(prompt_user) == "remove" else 4.0,
+                                                               inpaint["crop_mp"])), 1)
             intent = edit_intent(prompt_user)
             inpaint["intent"] = intent
             prompt_user = area_refs(prompt_user, inpaint.get("areas") or data.get("inpaint_areas"), inpaint_frame(inpaint), inpaint.get("marked"),
@@ -3825,6 +3863,20 @@ def submit_job(data):
                 prompt_user = (prompt_user.rstrip(" .") + ". Keep the framing, lighting, colours and edges of <Picture 1> "
                                "the same so the change blends in seamlessly.")
         input_size = picture_size(images[0])
+        if not inpaint and not ref_mode and edit_intent(prompt_user) == "remove":
+            # tested 2026-11-20: "Remove the person" removed them at 2 MP but left them in at 4 and 8 MP (H3 copies a
+            # big Picture 1 too closely). Make it at 2 MP; removal_upscale brings it back to this size with the
+            # photo's own detail.
+            try:
+                full = graphs.resolve_size(resolution, mode="edit", input_size=input_size)
+                fw = int(full.get("output_width") or full.get("width"))
+                fh = int(full.get("output_height") or full.get("height"))
+                if fw * fh > 2.3e6:
+                    hold_size, resolution = [fw, fh], "picture1:2"
+                    size_note = ("Removals are made at 2 MP (MiniMax H3 keeps the person at bigger sizes), then brought "
+                                 "back to %dx%d with the photo's own detail." % (fw, fh))
+            except Exception as e:
+                log.info("removal size: %s", e)
         try:
             size_spec = graphs.resolve_size(resolution, mode="edit", input_size=input_size)
             assist_w = size_spec.get("output_width") or size_spec.get("width")
@@ -3870,7 +3922,7 @@ def submit_job(data):
             except Exception as e:
                 log.warning("inpaint: couldn't lock the rest of the picture: %s", e)
     user_loras = [l for l in (data.get("loras") or []) if isinstance(l, dict) and l.get("name")]
-    model_notes = []
+    model_notes = [n for n in (removal_note, size_note) if n]
     if user_loras:
         WF.inject_loras(graph, user_loras, notes=model_notes)
     if isinstance(assist_info, dict):
@@ -3934,6 +3986,7 @@ def submit_job(data):
         "alias_warnings": alias_info.get("warnings") or [],
         "message": " ".join(model_notes) or "Waiting to start…",
         "note": " ".join(model_notes),
+        "hold_size": hold_size,
         "progress": 0,
         "progress_max": 0,
         "error": "",
@@ -4144,6 +4197,11 @@ def _wait_for_job(job):
                     except Exception:
                         log.exception("inpaint blend")
                         job["message"] = "Blending failed; showing the edited close-up."
+                if job["images"] and job.get("hold_size") and not job.get("inpaint"):
+                    try:
+                        removal_upscale(job)
+                    except Exception:
+                        log.exception("removal upscale")
                 if job["images"] and job.get("then_extend") and not job.get("_ext_pid"):
                     try:
                         pid = _start_ref_extend(job)

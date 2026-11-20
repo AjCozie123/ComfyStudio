@@ -2305,6 +2305,14 @@ def route_family(wid, card, graph, data):
     edit = next((c for c in sibs if not re.search(r"inpaint|outpaint", c.get("name") or "", re.I)), None)
     prompt = data.get("prompt") or ""
     target, note = None, ""
+    if data.get("inpaint_mask") and inp and edit and card.get("id") != inp.get("id") \
+            and edit_intent(prompt) == "change":
+        # changing what's already there (a new colour, material, style): the edit engine with the app's own cut-out,
+        # lock and paste-back keeps the original's shapes and detail; a fill / inpaint model redraws the whole area
+        # (tested 2026-11-20: Krea 2 Paint replaced a desk and ignored "make the fabric red")
+        target, note = None, "Painted area: a change to what's there, so it's made with %s (keeps the picture's own " \
+                             "shapes). Pick %s yourself to redraw the area instead." % (edit.get("name"), inp.get("name"))
+        return wid, card, graph, data, note
     if data.get("inpaint_mask") and inp:
         target, note = inp, "Painted area: made with %s." % inp.get("name")
     elif outp and _OUTPAINT_RX.search(prompt) and not data.get("inpaint_mask"):
@@ -2392,6 +2400,28 @@ def route_extended(wid, card, graph, data):
     note = ("One %s clip on this PC is at most %s s, so this was made as an extended video: %d clips of about %s s "
             "at %s, each continuing from the last." % (res, single.get(res, 0) or "under 5", n, clip, res))
     return long_id, lcard, lgraph, data, note
+
+
+def family_sampler_hints(card):
+    """steps / cfg / sampler / scheduler / denoise of the built-in engine of the same model family (used when an
+    uploaded workflow lost the connection to its own settings)."""
+    fam = str((card or {}).get("family") or "").lower().strip()
+    if not fam:
+        return {}
+    same = lambda f: bool(f) and (f.startswith(fam) or fam.startswith(f))       # "Krea" ~ "Krea 2"
+    cands = [c for c in WF.list_cards() if not str(c.get("id", "")).startswith("wf_")
+             and same(str(c.get("family") or "").lower().strip())]
+    cands.sort(key=lambda c: c.get("task") != (card or {}).get("task"))      # same task first (edit for an edit)
+    for c in cands:
+        try:
+            _c, g = WF.get(c["id"])
+        except Exception:
+            continue
+        for n in g.values():
+            if n.get("class_type") in ("KSampler", "KSamplerAdvanced"):
+                return {k: v for k, v in (n.get("inputs") or {}).items()
+                        if k in ("steps", "cfg", "sampler_name", "scheduler", "denoise") and not isinstance(v, list)}
+    return {}
 
 
 def submit_workflow_job(data):
@@ -2698,6 +2728,7 @@ def submit_workflow_job(data):
         except Exception as e:
             log.info("clip-by-clip long video skipped: %s", e)
             use_clips = False
+    WF.ensure_saved(g)        # a workflow that only previews its picture: save it, so there's a result to keep
     # sorted save folder: ComfyStudio/<engine>/<model>/<t2i|edit|video>/<workflow id>_00001_.png
     wf_model = graph_model(g)
     wf_prefix = out_dir(engine_label(card), wf_model, kind_label(card)) + "/" + _seg(card["id"], "workflow")
@@ -2744,6 +2775,10 @@ def submit_workflow_job(data):
                              "add-on (https://github.com/iljung1106/ComfyUI-Krea2-NAG) on the Workflows page." % ", ".join(nag_items))
     except Exception as e:
         log.info("NAG skipped: %s", e)
+    try:
+        WF.repair_dangling(g, object_info(), hints=family_sampler_hints(card), notes=notes)
+    except Exception as e:
+        log.info("dangling-link repair skipped: %s", e)
     try:
         problems = validate_graph(g, object_info(), input_root=INPUT)
     except Exception as e:
@@ -3125,6 +3160,7 @@ def inpaint_noise_mask(g, inpaint, pre_id):
             if "target_latent" in ins:
                 ins["target_latent"] = ["ip_noise", 0]
     log.info("inpaint: rewired %s to change only the painted area (%dx%d)", ",".join(first), tw, th)
+    inpaint["work_size"] = [int(tw), int(th)]    # the size the model really works at (the result may be scaled up)
     return True
 
 
@@ -3391,6 +3427,65 @@ def inpaint_align(orig, edited, mask):
     return out
 
 
+def _box_blur_axis(a, rad, axis):
+    """Mean over 2*rad+1 values along one axis (edges repeated), with a running sum."""
+    import numpy as np
+    if rad < 1:
+        return a
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (rad + 1, rad)
+    c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis, dtype=np.float64)
+    n = a.shape[axis]
+    hi = np.take(c, np.arange(2 * rad + 1, 2 * rad + 1 + n), axis=axis)
+    lo = np.take(c, np.arange(0, n), axis=axis)
+    return ((hi - lo) / (2 * rad + 1)).astype(np.float32)
+
+
+def _soft_blur(a, sigma):
+    """Gaussian-like blur of a float array (three box passes per axis; no scipy needed)."""
+    if sigma <= 0.3:
+        return a
+    rad = max(1, int(round(((12 * sigma * sigma / 3.0) + 1) ** 0.5 / 2)))
+    for _ in range(3):
+        a = _box_blur_axis(_box_blur_axis(a, rad, 0), rad, 1)
+    return a
+
+
+def inpaint_detail_restore(orig, edited, scale, mask=None):
+    """An edit made smaller than your cut-out (e.g. 1.5 MP for a 6 MP area of a phone photo) comes back soft when it's
+    stretched to size. Where the edited picture still has the SAME structure as the original (the same edges and
+    texture, maybe in a new colour), put the original's fine detail back; new things (a new object, a changed shape)
+    have a different structure there and are left exactly as the model made them. Only inside your area (+ margin)."""
+    if scale < 1.2:
+        return edited
+    import numpy as np
+    from PIL import Image, ImageFilter
+    W, H = edited.size
+    x0, y0, x1, y1 = 0, 0, W, H
+    if mask is not None:
+        bb = mask.point(lambda v: 255 if v > 20 else 0).getbbox()
+        if not bb:
+            return edited
+        g = int(max(W, H) * 0.05 + 8 * scale)
+        x0, y0, x1, y1 = max(0, bb[0] - g), max(0, bb[1] - g), min(W, bb[2] + g), min(H, bb[3] + g)
+    O = np.asarray(orig.crop((x0, y0, x1, y1)).convert("RGB"), dtype=np.float32)
+    E = np.asarray(edited.crop((x0, y0, x1, y1)).convert("RGB"), dtype=np.float32)
+    lum = lambda a: a[..., 0] * 0.299 + a[..., 1] * 0.587 + a[..., 2] * 0.114
+    OL, EL = lum(O), lum(E)
+    r = 0.6 * scale                               # detail finer than this is what the stretched edit lacks
+    hf_o, hf_e = OL - _soft_blur(OL, r), EL - _soft_blur(EL, r)
+    band = lambda L: _soft_blur(L, r) - _soft_blur(L, 4 * r)     # structure (a new colour / brightness still matches)
+    bo, be = band(OL), band(EL)
+    norm = _soft_blur(np.abs(bo), 2 * r) + _soft_blur(np.abs(be), 2 * r) + 3.0
+    d = _soft_blur(np.abs(bo - be), 1.5 * r) / norm
+    s = _soft_blur(np.clip(1.0 - (d - 0.12) / 0.25, 0.0, 1.0), r)
+    out = np.clip(E + (s * (hf_o - hf_e))[..., None], 0, 255).astype(np.uint8)
+    res = edited.copy()
+    res.paste(Image.fromarray(out), (x0, y0))
+    log.info("inpaint: restored fine detail (edit was made %.1fx smaller; %.0f%% of the area matched)", scale, 100 * s.mean())
+    return res
+
+
 def inpaint_tone_match(orig, edited, mask):
     """Edit models shift colour and contrast a little. Measure that in a band just outside your area (where the
     edit and the original should look the same) and correct the whole edit, so fabric, skin and ground match."""
@@ -3544,6 +3639,7 @@ def inpaint_finish(job):
     edited_path = output_path(first.get("subfolder") or "", first["filename"])
     cx0, cy0, cx1, cy1 = info["box"]
     with Image.open(edited_path) as im:
+        made_at = im.size                  # the size the model made it at (often smaller than the cut-out)
         edited = im.convert("RGB").resize((cx1 - cx0, cy1 - cy0), Image.LANCZOS)
     with Image.open(os.path.join(INPUT, info["source"].replace("/", os.sep))) as im:
         src = ImageOps.exif_transpose(im).convert("RGB")
@@ -3552,6 +3648,13 @@ def inpaint_finish(job):
     m0 = m.copy()                          # the painted area as drawn (the magenta outline ran along its edge)
     edited = inpaint_align(src.crop((cx0, cy0, cx1, cy1)), edited, m)
     edited = inpaint_tone_match(src.crop((cx0, cy0, cx1, cy1)), edited, m)
+    try:
+        ws = info.get("work_size") or made_at      # a workflow may scale its result up before saving: use the real one
+        ws = (min(ws[0], made_at[0]), min(ws[1], made_at[1]))
+        scale = max((cx1 - cx0) / float(ws[0] or 1), (cy1 - cy0) / float(ws[1] or 1))
+        edited = inpaint_detail_restore(src.crop((cx0, cy0, cx1, cy1)), edited, scale, m)
+    except Exception as e:
+        log.warning("inpaint: detail restore skipped: %s", e)
     m = inpaint_blend_mask(src.crop((cx0, cy0, cx1, cy1)), edited, m, info.get("intent"))
     if info.get("marked"):
         m = ImageChops.subtract(m, leftover_magenta(edited, src.crop((cx0, cy0, cx1, cy1)), outline_band(m0)))

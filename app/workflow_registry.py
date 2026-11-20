@@ -460,9 +460,68 @@ def simplify(g, oi):
                 continue
             keep.add(k)
             todo += [v[0] for v in (g[k].get("inputs") or {}).values() if _is_link(v)]
-        for k in [k for k in g if k not in keep]:
+        for k in [k for k, n in g.items() if k not in keep]:
             del g[k]
+    repair_dangling(g, oi)
+    ensure_saved(g)
     return g
+
+
+def ensure_saved(g):
+    """A workflow that only PREVIEWS its picture (Preview Image) makes nothing the app can keep: ComfyUI throws a
+    preview away. With no Save node at all, the preview becomes a Save Image. Returns the nodes changed."""
+    if any(str(n.get("class_type", "")).startswith(("Save", "VHS_VideoCombine")) for n in g.values()):
+        return []
+    changed = []
+    for k, n in g.items():
+        if n.get("class_type") == "PreviewImage" and _is_link((n.get("inputs") or {}).get("images")):
+            n["class_type"] = "SaveImage"
+            n["inputs"] = {"images": n["inputs"]["images"], "filename_prefix": "ComfyStudio/wf/preview"}
+            n.setdefault("_meta", {})["title"] = "Save Image"
+            changed.append(k)
+    return changed
+
+
+# Sampler settings to use when a link to them is lost; turbo / distilled edit models need few steps and cfg 1, and
+# ComfyUI's own defaults (20 steps, cfg 8) would burn their pictures
+_DANGLING_SAFE = {"steps": 20, "cfg": 4.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}
+
+
+def repair_dangling(g, oi, hints=None, notes=None):
+    """Inputs that point at a node which isn't in the graph (a converter dropped it: muted, bypassed, or a node type
+    that was missing when the workflow was read) would stop the whole workflow. Give each one a value instead:
+    hints (e.g. the same model family's built-in settings), else a safe sampler value, else ComfyUI's own default.
+    Returns [(node, input, value)] and adds a plain note for each."""
+    fixed = []
+    for nid, n in g.items():
+        ins = n.get("inputs") or {}
+        for a, v in list(ins.items()):
+            if not (_is_link(v) and str(v[0]) not in g):
+                continue
+            spec = None
+            schema = ((oi or {}).get(n.get("class_type")) or {}).get("input") or {}
+            for part in ("required", "optional"):
+                spec = spec or (schema.get(part) or {}).get(a)
+            default = None
+            if isinstance(spec, (list, tuple)) and spec:
+                opts = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+                if "default" in opts:
+                    default = opts["default"]
+                elif isinstance(spec[0], list) and spec[0]:
+                    default = spec[0][0]
+            val = (hints or {}).get(a, _DANGLING_SAFE.get(a, default))
+            if val is None:
+                del ins[a]
+                fixed.append((nid, a, None))
+                continue
+            ins[a] = val
+            fixed.append((nid, a, val))
+    if fixed and notes is not None:
+        notes.append("This workflow had lost a connection for %s, so Comfy Studio filled in %s. Change them with the "
+                     "workflow's knobs if the result looks off." % (
+                         ", ".join(sorted({a for _n, a, _v in fixed})),
+                         ", ".join("%s %s" % (a, v) for _n, a, v in fixed if v is not None)))
+    return fixed
 
 
 def app_mode_inputs(data):
@@ -2639,10 +2698,42 @@ def use_installed_models(graph, oi):
                 notes.append("LoRA %s isn't on this PC, so it was left out." % _base(v))
                 continue
             if choices:
-                ins[name] = choices[0]
+                # last resort: another model of the SAME family (a Krea 2 workflow can't run a FLUX.2 or Qwen model:
+                # it crashes or makes noise). The family comes from the missing name and the workflow's text encoder.
+                fam = _family_words(v, graph)
+                pick = choices[0]
+                if fam:
+                    same = [c for c in choices if any(f in c.lower() for f in fam)]
+                    if not same:
+                        notes.append("%s isn't on this PC, and you have no other %s model, so this can't run yet. "
+                                     "Download it (or pick one in Settings › Models)." % (_base(v), "/".join(sorted(fam))))
+                        continue            # leave it: the check before running then says exactly which file
+                    words = set(re.split(r"[^a-z0-9]+", _base(v).lower()))
+                    pick = max(same, key=lambda c: len(words & set(re.split(r"[^a-z0-9]+", _base(c).lower()))))
+                ins[name] = pick
                 notes.append("%s isn't on this PC, so your %s was used instead. Pick a different one in Settings › "
-                             "Models, or download the original." % (_base(v), _base(choices[0])))
+                             "Models, or download the original." % (_base(v), _base(pick)))
     return notes
+
+
+# words that name a model family in file names, and the text-encoder 'type' each family's workflows use
+_FAMILY_KEYS = ("krea", "flux", "klein", "qwen", "wan", "ltx", "hunyuan", "minimax", "moss", "sdxl", "sd3", "chroma",
+                "hidream", "lumina", "z_image", "zimage", "cosmos", "pony", "illustrious")
+_CLIP_TYPE_FAMILY = {"krea2": "krea", "flux2": "flux", "flux": "flux", "qwen_image": "qwen", "wan": "wan", "ltxv": "ltx",
+                     "hunyuan_video": "hunyuan", "hunyuan_image": "hunyuan", "lumina2": "lumina", "chroma": "chroma",
+                     "hidream": "hidream", "sd3": "sd3", "cosmos": "cosmos"}
+
+
+def _family_words(missing, graph):
+    """Family words for a missing model: from its file name, else from the workflow's text-encoder type."""
+    low = _base(missing).lower()
+    fam = {k for k in _FAMILY_KEYS if k in low}
+    if not fam:
+        for n in (graph or {}).values():
+            t = str((n.get("inputs") or {}).get("type") or "").lower() if "CLIPLoader" in str(n.get("class_type")) else ""
+            if t in _CLIP_TYPE_FAMILY:
+                fam.add(_CLIP_TYPE_FAMILY[t])
+    return fam
 
 
 def _base(name):

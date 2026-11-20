@@ -5,7 +5,8 @@ Every step checks its own result. When something can't be done, it stops and say
 and exactly what to do; nothing fails silently. A summary is saved to app\\data\\setup_report.txt.
 
 Steps: folder check, unblock downloaded files, Python packages, Windows' WebView2, find ComfyUI (running or on
-disk), shortcuts, start Comfy Studio and confirm it really opened.
+disk), shortcuts, start Comfy Studio and confirm it really opened, then (asking first) the ComfyUI node packs the
+engines use and the model files for the engines the user picks. Steps 8-9 go through the running app's own API.
 """
 from __future__ import annotations
 
@@ -15,7 +16,9 @@ import string
 import struct
 import subprocess
 import sys
+import textwrap
 import time
+import urllib.error
 import urllib.request
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # ...\ComfyStudio\app
@@ -221,8 +224,8 @@ def webview2():
 
 # ------------------------------------------------------------------ 5. ComfyUI
 def comfy_running():
-    for port in COMFY_PORTS:
-        url = "http://127.0.0.1:%d" % port
+    test = os.environ.get("COMFYSTUDIO_COMFY_URL")          # tests point setup at a stand-in ComfyUI
+    for url in ([test.rstrip("/")] if test else ["http://127.0.0.1:%d" % port for port in COMFY_PORTS]):
         try:
             with urllib.request.urlopen(url + "/system_stats", timeout=2) as r:
                 if "system" in json.loads(r.read().decode("utf-8", "replace") or "{}"):
@@ -437,8 +440,242 @@ def start_and_confirm(wait=60):
     stop("Comfy Studio did not start within %d seconds." % wait, fix)
 
 
+# ------------------------------------------------------------------ 8 + 9. node packs and models (through the app)
+def api(path, body=None, timeout=60):
+    """Call the Comfy Studio app that step 7 started: it does the real work, the same way its Workflows page does."""
+    req = urllib.request.Request(APP_URL.rstrip("/") + path, data=None if body is None else json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            d = json.loads(e.read().decode("utf-8", "replace") or "{}")
+        except Exception:
+            d = {}
+        d.setdefault("error", "error %d" % e.code)
+        return d
+
+
+def node_packs():
+    st = api("/api/nodes/required")
+    if st.get("error") and not st.get("packs"):
+        say("   Couldn't check the node packs (%s). In the app: Workflows > node packs." % st["error"])
+        return False
+    if not os.path.isdir(st.get("nodes_dir") or ""):
+        say("   ComfyUI's custom_nodes folder wasn't found, so no node packs were added.")
+        say("   Start ComfyUI, run Install Comfy Studio.bat again, and this step will add them.")
+        return False
+    missing = [p for p in st.get("packs") or [] if not p.get("installed")]
+    if not missing:
+        say("   All %d node packs Comfy Studio's engines use are already in ComfyUI." % len(st.get("packs") or []))
+        return False
+    say("   Comfy Studio's engines use %d ComfyUI node packs. Not in your ComfyUI yet:" % len(st["packs"]))
+    for p in missing:
+        say("     - %s%s" % (p["folder"], "  (comes with Comfy Studio)" if p.get("bundled") else "  (github.com/%s)" % p.get("repo", "")))
+    say("   They go into: %s" % st["nodes_dir"])
+    say("   Each is the exact version Comfy Studio was tested with. Their Python requirements are installed with")
+    say("   ComfyUI's own Python%s; ComfyUI's GPU libraries (torch etc.) are never touched." % ("" if st.get("comfy_python") else
+                                                                                         " (not found yet: see below)"))
+    if not ask("Add them now?"):
+        say("   Skipped. You can add them any time in the app: Workflows > node packs.")
+        return False
+    r = api("/api/nodes/required", {})
+    if not r.get("job"):
+        say("   Couldn't start: %s" % r.get("error"))
+        return False
+    last, shown = "", 0
+    while True:
+        time.sleep(2)
+        j = api("/api/nodes/job?id=" + r["job"])
+        log = j.get("log") or []
+        for line in log[shown:]:
+            for l in str(line).strip().splitlines()[-3:]:
+                if l.strip():
+                    say("       " + l.strip()[:150])
+        shown = len(log)
+        if j.get("message") and j["message"] != last and j.get("state") == "running":
+            last = j["message"]
+            say("   " + last)
+        if j.get("state") != "running":
+            break
+    say("   " + (j.get("message") or "Finished."))
+    bad_req = [i for i in api("/api/nodes/custom").get("installed") or [] if i.get("requirements_ok") is False]
+    if bad_req:
+        say("   Note: some requirements didn't install for: %s." % ", ".join(i["name"] for i in bad_req))
+        say("   Those nodes may not load. The log above says why; 4 - Troubleshooting.txt has the fixes.")
+    added = (j.get("total") or 0) - len(j.get("failed") or [])
+    if added:
+        say("")
+        say("   IMPORTANT: restart ComfyUI so it loads the new nodes (close ComfyUI completely, then start it again).")
+    return added > 0
+
+
+def _gb(n):
+    return "%.1f GB" % (n / 1e9) if n else "size unknown"
+
+
+def _head(url):
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "ComfyStudio"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return url, 200, int(r.headers.get("X-Linked-Size") or r.headers.get("Content-Length") or 0)
+    except urllib.error.HTTPError as e:
+        return url, e.code, 0
+    except Exception:
+        return url, 0, 0
+
+
+def wait_for_comfy_plan(nodes_added):
+    plan = api("/api/install/plan", timeout=120)
+    tries = 0
+    while not plan.get("items") and tries < 3:
+        tries += 1
+        say("   ComfyUI isn't running%s, so its model folders can't be read." % (" (or is still restarting)" if nodes_added else ""))
+        try:
+            a = input("   Start ComfyUI, wait until it has loaded, then press Enter. (Type S and Enter to skip.) ").strip().lower()
+        except EOFError:
+            a = "s"
+        if a.startswith("s"):
+            return None
+        plan = api("/api/install/plan", timeout=120)
+    return plan if plan.get("items") else None
+
+
+def models(nodes_added):
+    plan = wait_for_comfy_plan(nodes_added)
+    if not plan:
+        say("   Skipped. Any time later: open Comfy Studio > Workflows; each engine has a Download button.")
+        return
+    hw = plan.get("hardware") or {}
+    say("   This PC: %s, %s GB graphics memory, %s GB RAM." % (hw.get("gpu") or "GPU unknown", hw.get("vram_gb") or "?",
+                                                              hw.get("ram_gb") or "?"))
+    items = [i for i in plan["items"] if str(i.get("id", "")).startswith(BUILTIN_PREFIXES)]
+    ready = [i for i in items if not i["missing"]]
+    too_big = [i for i in items if i["missing"] and i.get("fit") == "no"]
+    offer = [i for i in items if i["missing"] and i.get("fit") != "no" and i.get("downloadable")]
+    if ready:
+        say("   Ready to use (all files already here): %d engine(s)." % len(ready))
+    if too_big:
+        say("   Not offered, too big for this PC: " + ", ".join(i["name"] for i in too_big))
+    if not offer:
+        say("   Nothing to download." if not too_big else "   Nothing else to download.")
+        return
+    urls = sorted({f["url"] for i in offer for f in i["files"] if not f["present"] and f.get("url")})
+    say("   Checking download sizes...")
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(8) as ex:
+        info = {u: (code, size) for u, code, size in ex.map(_head, urls)}
+    # one choice per model family: its engines share most files, so they're downloaded together
+    groups = {}
+    for i in offer:
+        fam = i.get("family") or i["name"].split(" · ")[0]
+        groups.setdefault(fam, []).append(i)
+    fams = list(groups)
+    say("")
+    say("   Models you can download (each family runs several engines; shared files come once):")
+    for n, fam in enumerate(fams, 1):
+        engs = groups[fam]
+        miss = {f["file"].lower(): f for i in engs for f in i["files"] if not f["present"] and f.get("url")}
+        size = sum(info.get(f["url"], (0, 0))[1] for f in miss.values())
+        gated = any(info.get(f["url"], (0, 0))[0] in (401, 403) for f in miss.values())
+        tasks = ", ".join(sorted({(e["name"].split(" · ", 1) + [""])[1] or e["name"] for e in engs}))
+        note = "  (heavy for this PC: slower)" if any(e.get("fit") == "heavy" for e in engs) else ""
+        note += "  (needs a free Hugging Face account)" if gated else ""
+        say("     %2d) %-22s %2d file(s), %8s%s" % (n, fam[:22], len(miss), _gb(size), note))
+        for k, line in enumerate(textwrap.wrap(tasks, 92)):
+            say("         %s %s" % ("for:" if k == 0 else "    ", line))
+    try:
+        a = input("\n   Type the numbers to download (e.g.  1 3 ), A for all, or just Enter to skip: ").strip().lower()
+    except EOFError:
+        a = ""
+    if not a:
+        say("   Skipped. Any time later: Comfy Studio > Workflows > Download.")
+        return
+    chosen = fams if a in ("a", "all") else [fams[int(x) - 1] for x in a.replace(",", " ").split()
+                                             if x.isdigit() and 1 <= int(x) <= len(fams)]
+    pick = [i for fam in dict.fromkeys(chosen) for i in groups[fam]]
+    if not pick:
+        say("   No valid numbers, so nothing was downloaded.")
+        return
+    files = {}
+    for i in pick:
+        for f in i["files"]:
+            if not f["present"] and f.get("url"):
+                files[f["file"].lower()] = f
+    total = sum(info.get(f["url"], (0, 0))[1] for f in files.values())
+    gated = [f for f in files.values() if info.get(f["url"], (0, 0))[0] in (401, 403)]
+    dirs = sorted({f.get("target_dir") or "" for f in files.values()} - {""})
+    free = None
+    try:
+        import shutil
+        free = shutil.disk_usage(dirs[0]).free if dirs else None
+    except Exception:
+        pass
+    say("")
+    say("   %d file(s), %s in total, into your ComfyUI model folders:" % (len(files), _gb(total)))
+    for f in files.values():
+        say("     - %s  ->  %s" % (f["file"], f.get("target_dir")))
+    if free is not None:
+        say("   Free space on that drive: %s." % _gb(free))
+        if total and total > free - 5e9:
+            say("   That's not enough room (Comfy Studio always keeps 5 GB free). Pick fewer engines, or free up space.")
+            return
+    if gated:
+        have_token = bool(json.load(open(os.path.join(DATA, "settings.json"), encoding="utf-8")).get("hf_token")) \
+            if os.path.isfile(os.path.join(DATA, "settings.json")) else False
+        if not have_token:
+            say("")
+            say("   %d of these file(s) need a free Hugging Face account, because their makers ask you to accept a licence:" % len(gated))
+            pages = sorted({"https://huggingface.co/" + "/".join(f["url"].split("huggingface.co/")[1].split("/")[:2]) for f in gated})
+            for p in pages:
+                say("     " + p)
+            say("   1) Open each page above, sign in, and press the button to agree.")
+            say("   2) Make a token at https://huggingface.co/settings/tokens (type: Read).")
+            try:
+                tok = input("   3) Paste the token here and press Enter (or just Enter to skip those files): ").strip()
+            except EOFError:
+                tok = ""
+            if tok:
+                r = api("/api/settings/hf_token", {"token": tok})
+                say("   Token saved on this PC." if r.get("ok") else "   " + str(r.get("error")))
+            else:
+                say("   Those file(s) will be skipped; the rest download normally.")
+    if not ask("Start downloading now?"):
+        say("   Nothing downloaded. Any time later: Comfy Studio > Workflows > Download.")
+        return
+    for i in pick:
+        r = api("/api/install/start", {"id": i["id"]})
+        if r.get("error") and "every file is already here" not in r["error"]:
+            say("   %s: %s" % (i["name"], r["error"]))
+    say("")
+    say("   Downloading. You can close this window: Comfy Studio keeps downloading in the background while it's open,")
+    say("   and shows progress on its Workflows page. A stopped download carries on where it left off.")
+    t0, errs_seen = time.time(), 0
+    while True:
+        st = api("/api/install/progress")
+        for e in (st.get("errors") or [])[errs_seen:]:
+            print("")
+            say("   Couldn't download %s: %s" % (e.get("file"), e.get("error")))
+        errs_seen = len(st.get("errors") or [])
+        a = st.get("active")
+        if not a and not st.get("queue"):
+            break
+        got, tot = (a or {}).get("got") or 0, (a or {}).get("total") or 0
+        pct = " %3d%%" % (100 * got // tot) if tot else ""
+        print("\r   %s%s  %s  (%d more after this)      " % (((a or {}).get("file") or "")[:52], pct, _gb(got),
+                                                          len(st.get("queue") or [])), end="", flush=True)
+        time.sleep(2)
+    print("")
+    done = [d for d in st.get("done") or [] if d.get("t", 0) >= t0 - 5]
+    say("   Finished: %d file(s) downloaded%s." % (len(done), ", %d problem(s) above" % errs_seen if errs_seen else ""))
+
+
+BUILTIN_PREFIXES = ("h3_", "klein9b_", "krea2_", "ltx23_", "moss_", "qwen21_", "qwen_edit")
+
+
 def main():
-    total = 7          # (the title is printed by Install Comfy Studio.bat)
+    total = 9          # (the title is printed by Install Comfy Studio.bat)
     step(1, total, "Checking the Comfy Studio folder");            check_folder()
     step(2, total, "Unblocking the downloaded files");             unblock()
     step(3, total, "Python packages");                              packages()
@@ -446,9 +683,11 @@ def main():
     step(5, total, "Finding ComfyUI");                              comfyui()
     step(6, total, "Shortcuts");                                    shortcuts()
     step(7, total, "Starting Comfy Studio");                        start_and_confirm()
+    step(8, total, "ComfyUI node packs");                           added = node_packs()
+    step(9, total, "Model files for the engines");                  models(added)
     say("")
     say(" Done! Next time open Comfy Studio from the desktop shortcut or Start Comfy Studio.bat.")
-    say(" In the app, open Workflows: each engine shows what it needs and downloads it for you.")
+    say(" Run Install Comfy Studio.bat again any time: it only adds what's missing.")
     save_report(True)
 
 

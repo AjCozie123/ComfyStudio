@@ -15,7 +15,7 @@ Step-by-step help for every part is in the **Help** folder (plain text files, op
 - **Python 3.12** (64-bit). Don't have it? The installer offers to add it for you.
 - Optional: [Git for Windows](https://git-scm.com/download/win), for easy updates and node packs.
 
-## Install (once, about 5 minutes)
+## Install (once: about 5 minutes, plus model downloads)
 1. **Download:** green **Code** button at the top of this page, then **Download ZIP**
    (or the zip from the latest **Release**).
 2. **Extract it. Don't skip this.** Right-click the zip, choose **Extract All...**, and pick a simple place like
@@ -33,10 +33,19 @@ The installer then does everything by itself, step by step, and says what it did
   browser);
 - **finds your ComfyUI**, running or installed, and asks which one if you have several;
 - adds **Comfy Studio** shortcuts to your Desktop and Start menu;
-- starts Comfy Studio and confirms it really opened.
+- starts Comfy Studio and confirms it really opened;
+- **ComfyUI node packs:** lists the custom nodes the engines use that your ComfyUI doesn't have yet, and asks
+  before adding them to ComfyUI's own `custom_nodes` folder (the exact versions Comfy Studio was tested with; their
+  Python parts go into ComfyUI's own Python, and ComfyUI's GPU libraries are never touched). Restart ComfyUI after.
+- **Model files:** lists the model families that fit your PC with their download sizes; type the numbers you want
+  (or press Enter to skip). Files go into ComfyUI's model folders, files you already have are never downloaded
+  twice, free space is checked first, and a stopped download carries on where it left off. ComfyUI must be
+  running for this step. FLUX.2 Klein 9B needs a free Hugging Face account (its makers ask you to accept their
+  licence); the installer explains how, or you can skip it.
 
-If anything goes wrong it **stops and says exactly what to do**, and saves a report in
-`app\data\setup_report.txt`. Running the installer again is always safe.
+Works with ComfyUI Desktop, Portable and manual installs. If anything goes wrong it **stops and says exactly what
+to do**, and saves a report in `app\data\setup_report.txt`. Running the installer again is always safe: it only adds
+what's still missing.
 
 ### With Git instead (easy updates)
 ```
@@ -63,6 +72,9 @@ shortcut). Everything else lives in the `app` folder.
 | Python not found | Let the installer add it (press **Y**), or install Python 3.12 from python.org and tick **Add python.exe to PATH**. |
 | App doesn't open | Run **Start Comfy Studio.bat**: it shows the reason. Then see **Help / 4 - Troubleshooting.txt**. |
 | "ComfyUI is offline" | Start ComfyUI and wait until it's ready. See **Help / 3 - ComfyUI.txt**. |
+| New nodes missing after install | Restart ComfyUI completely (close it, start it again). |
+| "needs a free Hugging Face account (401)" | Accept the model's licence on its Hugging Face page, make a Read token, press **Add Hugging Face token** on the Workflows page. |
+| A model download stopped | Press **Download** again (or rerun the installer): it carries on where it stopped. |
 
 ## Node packs, models and engines
 Open **Workflows**.

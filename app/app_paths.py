@@ -59,17 +59,28 @@ def detect(comfy_url=DEFAULT_COMFY_URL, timeout=3.0):
         return {}
     roots = [p for p in (fp.get("checkpoints") or fp.get("diffusion_models") or []) if isinstance(p, str)]
     model_dir = next((p for p in roots if os.path.basename(os.path.dirname(p)).lower() == "models"), roots[0] if roots else None)
-    if not model_dir:
+    # The first custom_nodes entry is always ComfyUI's own base folder; model folders can come first from an
+    # extra_model_paths.yaml (models shared with another app), which would point at the wrong folder.
+    nodes = [p for p in (fp.get("custom_nodes") or []) if isinstance(p, str)]
+    if nodes:
+        comfy_root = os.path.dirname(nodes[0])
+        mine = os.path.join(comfy_root, "models")
+        model_dir = next((p for p in roots if os.path.normcase(os.path.dirname(p)) == os.path.normcase(mine)), model_dir)
+    elif model_dir:
+        comfy_root = os.path.dirname(os.path.dirname(model_dir))
+    else:
         return {}
-    comfy_root = os.path.dirname(os.path.dirname(model_dir))
+    if not model_dir:
+        model_dir = os.path.join(comfy_root, "models", "checkpoints")
     out = {"comfy_root": comfy_root, "output_dir": os.path.join(comfy_root, "output"),
            "input_dir": os.path.join(comfy_root, "input"), "comfy_url": comfy_url}
-    # ComfyUI also registers <output>/checkpoints etc.: that gives the real output folder if it was moved
-    for p in roots:
-        parent = os.path.dirname(p)
-        if parent != os.path.dirname(model_dir) and os.path.basename(p).lower() == "checkpoints":
+    # ComfyUI also registers <output>/checkpoints etc. AFTER any shared model folders (extra_model_paths.yaml), so
+    # the last checkpoints entry gives the real output folder if it was moved; a shared '...\models' folder never does
+    ck = [p for p in (fp.get("checkpoints") or []) if isinstance(p, str)]
+    if ck and os.path.basename(ck[-1]).lower() == "checkpoints":
+        parent = os.path.dirname(ck[-1])
+        if os.path.normcase(parent) != os.path.normcase(os.path.dirname(model_dir)) and os.path.basename(parent).lower() != "models":
             out["output_dir"] = parent
-            break
     try:
         argv = (_get(comfy_url, "/system_stats", timeout).get("system") or {}).get("argv") or []
     except Exception:

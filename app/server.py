@@ -3,7 +3,7 @@
 Binds ONLY to 127.0.0.1 and this PC's own Tailscale address (if it has one). Never 0.0.0.0.
 Port 8198: 8197 is already taken as a lock socket by the AI Studio App keeper.
 Tailnet (non-loopback) clients need the PIN in data\\PIN.txt; a session cookie lasts 30 days.
-Talks to ComfyUI at 127.0.0.1:8188. Does not start or stop ComfyUI.
+Talks to the ComfyUI saved in data/settings.json (127.0.0.1:8188 by default). Does not start or stop ComfyUI.
 """
 from __future__ import annotations
 
@@ -44,6 +44,11 @@ SETTINGS = app_paths.resolve(DATA)
 COMFY = SETTINGS["comfy_url"].rstrip("/")
 _cu = urllib.parse.urlsplit(COMFY)
 COMFY_HOST, COMFY_PORT = (_cu.hostname or "127.0.0.1"), (_cu.port or 8188)
+# every module talks to the SAME ComfyUI (ComfyUI Desktop uses port 8000, others may differ)
+import validate_graphs as _VG  # noqa: E402
+_VG.COMFY = COMFY
+NM.COMFY = COMFY
+os.environ["COMFY_URL"] = COMFY             # read by comfy_convert when it is first used
 OUTPUT = SETTINGS["output_dir"]
 APP_OUT = "ComfyStudio"
 INPUT = SETTINGS["input_dir"]
@@ -1675,6 +1680,20 @@ def upscale_submit(data):
 COMFY_ROOT = SETTINGS["comfy_root"]
 NODES_DIR = os.path.join(COMFY_ROOT, "custom_nodes")
 COMFY_PY = CN.comfy_python(COMFY_ROOT)        # ComfyUI's own Python, for a node pack's requirements
+
+
+def comfy_py():
+    """ComfyUI's Python; when its folder has none (conda / system Python), the program serving ComfyUI right now."""
+    global COMFY_PY
+    if not COMFY_PY and time.time() - _comfy_py_tried[0] > 60:      # the process lookup is slow: once a minute
+        _comfy_py_tried[0] = time.time()
+        COMFY_PY = CN.comfy_python(COMFY_ROOT, COMFY_PORT if COMFY_HOST in ("127.0.0.1", "localhost") else None)
+    return COMFY_PY
+
+
+_comfy_py_tried = [0.0]
+
+
 COMFY_PORTABLE = os.path.dirname(COMFY_ROOT)
 LAUNCH_PS1 = os.path.join(COMFY_PORTABLE, "comfy_launch.ps1")
 PROFILE_NAMES = {"h3": "MiniMax H3 mode", "video": "low-VRAM video mode", "everyday": "everyday mode"}
@@ -4136,7 +4155,7 @@ def _worker():
         try:
             if not comfy_up():
                 job["status"] = "error"
-                job["error"] = "ComfyUI is not running at http://127.0.0.1:8188. Start it first, then try again."
+                job["error"] = "ComfyUI is not running at %s. Start it first, then try again." % COMFY
                 job["t_done"] = time.time()
                 continue
             # Queue behind a foreign job rather than interrupting it.
@@ -4824,9 +4843,9 @@ class H(BaseHTTPRequestHandler):
             except Exception:
                 have = set()
             return self.j({"packs": CN.required_status(HERE, NODES_DIR, have), "comfy_up": bool(have),
-                           "nodes_dir": NODES_DIR, "comfy_python": bool(COMFY_PY)})
+                           "nodes_dir": NODES_DIR, "comfy_python": bool(comfy_py())})
         if path == "/api/nodes/custom":
-            return self.j({"installed": CN.installed(DATA), "comfy_python": bool(COMFY_PY), "nodes_dir": NODES_DIR})
+            return self.j({"installed": CN.installed(DATA), "comfy_python": bool(comfy_py()), "nodes_dir": NODES_DIR})
         if path == "/api/nodes/status":
             return self.j(NM.queue_status())
         if path == "/api/update/state":
@@ -5148,7 +5167,7 @@ class H(BaseHTTPRequestHandler):
                 if not fname.lower().endswith(".zip"):
                     raise ValueError("Pick a .zip file with the node pack in it.")
                 os.makedirs(NODES_DIR, exist_ok=True)
-                return self.j({"job": CN.start_zip(raw, fname, DATA, NODES_DIR, COMFY_PY)})
+                return self.j({"job": CN.start_zip(raw, fname, DATA, NODES_DIR, comfy_py())})
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
         if path == "/api/upload":
@@ -5288,7 +5307,7 @@ class H(BaseHTTPRequestHandler):
                 return self.j({"error": "Nothing to download: " + ("every file is already here." if not it["missing"] else
                                                                   "the missing files have no official link; add them yourself.")}, 400)
             try:
-                INST.start(todo)
+                INST.start(todo, token=(app_paths.load(DATA).get("hf_token") or "").strip() or None)
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
             _inst_cache["t"] = 0
@@ -5390,14 +5409,14 @@ class H(BaseHTTPRequestHandler):
                     have = set(object_info(force=True))
                 except Exception:
                     have = set()
-                return self.j({"job": CN.start_required(HERE, DATA, NODES_DIR, COMFY_PY, have)})
+                return self.j({"job": CN.start_required(HERE, DATA, NODES_DIR, comfy_py(), have)})
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
         if path == "/api/nodes/github":
             try:
                 if not os.path.isdir(NODES_DIR):
                     raise ValueError("ComfyUI's custom_nodes folder wasn't found.")
-                return self.j({"job": CN.start_github(str(data.get("url") or ""), DATA, NODES_DIR, COMFY_PY)})
+                return self.j({"job": CN.start_github(str(data.get("url") or ""), DATA, NODES_DIR, comfy_py())})
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
         if path == "/api/nodes/remove":
@@ -5463,6 +5482,18 @@ class H(BaseHTTPRequestHandler):
             if lora_online_on():
                 LORA_WORKER.kick.set()
             return self.j(dict(LL.status(), on=lora_online_on()))
+        if path == "/api/settings/hf_token":
+            # the user's own Hugging Face token, only for licence-gated models; kept in data/settings.json on this PC
+            tok = str(data.get("token") or "").strip()
+            if tok and (not re.fullmatch(r"hf_[A-Za-z0-9]{20,120}", tok)):
+                return self.j({"error": "That doesn't look like a Hugging Face token (they start with hf_)."}, 400)
+            st = app_paths.load(DATA)
+            if tok:
+                st["hf_token"] = tok
+            else:
+                st.pop("hf_token", None)
+            app_paths.save(DATA, st)
+            return self.j({"ok": True, "saved": bool(tok)})
         if path == "/api/update/auto":
             st = app_paths.load(DATA)
             st["auto_critical"] = bool(data.get("on"))

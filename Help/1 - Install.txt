@@ -1,7 +1,8 @@
 ﻿COMFY STUDIO - HOW TO INSTALL
 =============================
 
-You do this once. It takes about 5 minutes (longer on a slow connection).
+You do this once. Setting up the app takes about 5 minutes. Downloading the AI model files
+(optional, step 10 below) takes longer: they are big (roughly 10-70 GB per model family).
 
 
 BEFORE YOU START
@@ -50,6 +51,23 @@ The installer then does everything by itself, and tells you at each step what it
       If it finds more than one, it asks which one you use.
    7. Adds a "Comfy Studio" shortcut to your Desktop and Start menu.
    8. Starts Comfy Studio and checks it really opened.
+   9. ComfyUI node packs: lists the add-ons ("custom nodes") Comfy Studio's engines use
+      that your ComfyUI doesn't have yet, and asks before adding them. They go into
+      ComfyUI's own custom_nodes folder, at the exact versions Comfy Studio was tested with.
+      Afterwards RESTART ComfyUI (close it completely and start it again).
+  10. Model files: lists the model families you can download (only ones that fit your
+      PC), with their sizes. Type the numbers you want, A for all, or just press Enter
+      to skip. Files go into ComfyUI's model folders (models\diffusion_models,
+      models\text_encoders, models\vae, models\loras ...). Files you already have,
+      in any sub-folder, are never downloaded again. It checks free disk space first.
+      Downloads keep going in the background while Comfy Studio is open, and a stopped
+      download carries on where it left off.
+      ComfyUI must be RUNNING for this step (it tells you if it isn't).
+
+      One family (FLUX.2 Klein 9B) needs a free Hugging Face account, because its
+      makers ask you to accept their licence. The installer shows the page to open,
+      and asks for a token (make one at https://huggingface.co/settings/tokens, type
+      Read). Skip it if you don't want that model; everything else still downloads.
 
 If anything goes wrong it STOPS and tells you in plain words what to do.
 (It also saves everything in app\data\setup_report.txt.)
@@ -60,4 +78,6 @@ STEP 3 - DONE
 Open Comfy Studio from the desktop shortcut or "Start Comfy Studio.bat".
 Next: "2 - Start and use.txt".
 
-Running the installer again is always safe: it re-checks and fixes things.
+Running the installer again is always safe: it re-checks, fixes things, and only
+adds node packs or model files that are still missing.
+You can also download models later: Comfy Studio > Workflows > Download on each engine.

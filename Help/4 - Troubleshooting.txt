@@ -61,7 +61,32 @@ Start ComfyUI and wait until it's ready. See "3 - ComfyUI.txt".
 
 An engine says it is missing files or node packs
 ------------------------------------------------
-Workflows page: "Install all" for node packs (then restart ComfyUI), "Download" for models.
+Run "Install Comfy Studio.bat" again (with ComfyUI running), or in the app's Workflows page:
+"Install all" for node packs (then restart ComfyUI), "Download" for models.
+
+
+New node packs don't show up / "ComfyUI has no node type ..."
+-------------------------------------------------------------
+Restart ComfyUI after node packs were added: close it COMPLETELY and start it again.
+If the installer said "some requirements didn't install", its log says why. Usually:
+- ComfyUI was busy using those files: close ComfyUI, run the installer again, start ComfyUI.
+- No internet / firewall blocking pypi.org.
+
+
+"This model needs a free Hugging Face account (401)"
+-----------------------------------------------------
+The model's makers ask you to accept their licence first (FLUX.2 Klein 9B does this).
+1. Open the page shown in the message, sign in (free account), press the button to agree.
+2. Make a token at https://huggingface.co/settings/tokens (type: Read).
+3. In Comfy Studio's Workflows page press "Add Hugging Face token" and paste it
+   (or run the installer again and paste it when asked). Then press Download again.
+The token is kept only on this PC (app\data\settings.json) and only sent to Hugging Face.
+
+
+A model download stopped (no internet, PC went to sleep, "incomplete")
+-----------------------------------------------------------------------
+Press Download again (or run the installer again): it carries on where it stopped.
+"Not enough free space": free up space on that drive (Comfy Studio always keeps 5 GB free).
 
 
 "Out of memory" while generating

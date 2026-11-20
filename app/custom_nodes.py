@@ -30,13 +30,57 @@ def parse_github(url):
     return m.group(1), m.group(2)
 
 
-def comfy_python(comfy_root):
-    """ComfyUI's own Python: portable (python_embeded), a venv, or None."""
+def comfy_python(comfy_root, comfy_port=None):
+    """ComfyUI's own Python: portable (python_embeded), a venv (ComfyUI Desktop keeps one as .venv), or, as a last
+    resort, the python.exe of the program that is serving ComfyUI on this PC right now (conda / system Python)."""
     base = os.path.dirname(comfy_root)
     for p in (os.path.join(base, "python_embeded", "python.exe"), os.path.join(comfy_root, "venv", "Scripts", "python.exe"),
-              os.path.join(comfy_root, ".venv", "Scripts", "python.exe"), os.path.join(base, ".venv", "Scripts", "python.exe")):
+              os.path.join(comfy_root, ".venv", "Scripts", "python.exe"), os.path.join(base, ".venv", "Scripts", "python.exe"),
+              os.path.join(base, "venv", "Scripts", "python.exe")):
         if os.path.isfile(p):
             return p
+    return _listener_python(comfy_port) if comfy_port else None
+
+
+def _listener_python(port):
+    """python.exe of the process listening on 127.0.0.1:<port> (ComfyUI itself), or None."""
+    if os.name != "nt":
+        return None
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                            "$c = Get-NetTCPConnection -State Listen -LocalPort %d -ErrorAction SilentlyContinue | Select-Object -First 1;"
+                            " if ($c) { (Get-Process -Id $c.OwningProcess).Path }" % int(port)],
+                           capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW)
+        exe = (r.stdout or "").strip().splitlines()[-1:] or [""]
+        exe = exe[0].strip()
+        return exe if exe.lower().endswith(("python.exe", "pythonw.exe")) and os.path.isfile(exe) else None
+    except Exception:
+        return None
+
+
+def _pip_cmd(py, log):
+    """How to run pip for ComfyUI's Python. ComfyUI Desktop's venv is made by 'uv' and may have no pip: then use
+    uv (shipped with the Desktop app) or add pip with ensurepip. None when nothing works."""
+    ok = lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=120, creationflags=NO_WINDOW).returncode == 0
+    try:
+        if ok([py, "-s", "-m", "pip", "--version"]):
+            return [py, "-s", "-m", "pip", "install", "--disable-pip-version-check"]
+        uv = shutil.which("uv")
+        if not uv:
+            la = os.environ.get("LOCALAPPDATA", "")
+            for d in ("ComfyUI", "@comfyorgcomfyui-electron", "comfyui-electron"):
+                cand = os.path.join(la, "Programs", d, "resources", "uv", "win", "uv.exe")
+                if os.path.isfile(cand):
+                    uv = cand
+                    break
+        if uv:
+            log.append("ComfyUI's Python has no pip; using uv instead.")
+            return [uv, "pip", "install", "--python", py]
+        log.append("ComfyUI's Python has no pip; adding it (ensurepip)...")
+        if ok([py, "-s", "-m", "ensurepip", "--upgrade"]) and ok([py, "-s", "-m", "pip", "--version"]):
+            return [py, "-s", "-m", "pip", "install", "--disable-pip-version-check"]
+    except Exception as e:
+        log.append("Couldn't run ComfyUI's Python: %s" % e)
     return None
 
 
@@ -85,11 +129,15 @@ def _pip_requirements(py, pack_dir, log):
     if not py:
         log.append("ComfyUI's Python wasn't found, so these weren't installed: " + ", ".join(keep[:8]))
         return False
+    pip = _pip_cmd(py, log)
+    if not pip:
+        log.append("pip couldn't be used with ComfyUI's Python, so these weren't installed: " + ", ".join(keep[:8]))
+        return False
     tmp = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
     tmp.write("\n".join(keep))
     tmp.close()
     try:
-        r = subprocess.run([py, "-s", "-m", "pip", "install", "--disable-pip-version-check", "-r", tmp.name],
+        r = subprocess.run(pip + ["-r", tmp.name],
                            capture_output=True, text=True, timeout=1200, creationflags=NO_WINDOW)
         log.append((r.stdout or "")[-1500:] + (r.stderr or "")[-1500:])
         return r.returncode == 0

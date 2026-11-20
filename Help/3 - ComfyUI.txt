@@ -31,6 +31,13 @@ HOW COMFY STUDIO FINDS IT
 - When ComfyUI is running, Comfy Studio also asks it where its folders are.
 - What it found is saved in app\data\settings.json.
 
+- ComfyUI Desktop, Portable and a manual (git) install all work. Node packs are added to
+  ComfyUI's own custom_nodes folder, and their Python parts are installed with ComfyUI's
+  own Python (Portable: python_embeded; Desktop: its .venv; manual: the Python that runs
+  ComfyUI). Comfy Studio never changes ComfyUI's GPU libraries (torch).
+- If your models live in a shared folder (extra_model_paths.yaml), Comfy Studio uses the
+  folders ComfyUI reports, so nothing is downloaded twice.
+
 Moved or reinstalled ComfyUI?  Start ComfyUI, then run "Install Comfy Studio.bat"
 again - it finds the new place.
 

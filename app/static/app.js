@@ -5113,6 +5113,7 @@ function bindShell() {
       bar.querySelector(".inst-text").textContent = err ? "Download stopped: " + err.file + " \u2014 " + err.error : "";
       bar.querySelector(".inst-fill").style.width = "0%";
       bar.querySelector(".inst-cancel").classList.add("hidden");
+      bar.querySelector(".inst-token").classList.toggle("hidden", !(err && /Hugging Face token/.test(err.error || "")));
       if (window.__instWasBusy) { window.__instWasBusy = false; renderList(); }
     }
     if (busy) window.__instWasBusy = true;
@@ -5138,8 +5139,16 @@ function bindShell() {
     const bar = document.createElement("div");
     bar.id = "inst-bar";
     bar.className = "inst-bar hidden";
-    bar.innerHTML = '<div class="inst-row"><span class="inst-text"></span><button type="button" class="chip-btn inst-cancel">Cancel</button></div><div class="inst-track"><div class="inst-fill"></div></div>';
+    bar.innerHTML = '<div class="inst-row"><span class="inst-text"></span><button type="button" class="chip-btn inst-token hidden">Add Hugging Face token</button><button type="button" class="chip-btn inst-cancel">Cancel</button></div><div class="inst-track"><div class="inst-fill"></div></div>';
     $("wf-list").parentNode.insertBefore(bar, $("wf-list"));
+    bar.querySelector(".inst-token").addEventListener("click", async () => {
+      const t = window.prompt("Paste your Hugging Face token (make one at huggingface.co/settings/tokens, type Read). It stays on this PC and is only sent to Hugging Face. Leave it empty to remove a saved one.", "");
+      if (t === null) return;
+      try {
+        const r = await api("/api/settings/hf_token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: t.trim() }) });
+        toast(r.saved ? "Token saved. Press Download on that engine again." : "Token removed");
+      } catch (e) { showError(e.message || "Couldn't save the token."); }
+    });
     bar.querySelector(".inst-cancel").addEventListener("click", async () => {
       try { await api("/api/install/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (e) {}
       pollInstall();

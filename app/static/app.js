@@ -2131,6 +2131,7 @@ function bind() {
     let psx = 0;
     previewStage.addEventListener("touchstart", (e) => { psx = e.changedTouches[0].clientX; }, { passive: true });
     previewStage.addEventListener("touchend", (e) => {
+      if (window.__zoomBusy && window.__zoomBusy(previewStage)) return;     // zoomed in: a swipe moves the picture
       const dx = e.changedTouches[0].clientX - psx;
       if (dx > 50) navPcPreview(-1);
       else if (dx < -50) navPcPreview(1);
@@ -2179,6 +2180,7 @@ function bind() {
   let sx = 0;
   $("viewer-stage").addEventListener("touchstart", (e) => { sx = e.changedTouches[0].clientX; }, { passive: true });
   $("viewer-stage").addEventListener("touchend", (e) => {
+    if (window.__zoomBusy && window.__zoomBusy($("viewer-stage"))) return;   // zoomed in: a swipe moves the picture
     const dx = e.changedTouches[0].clientX - sx;
     if (dx > 50) openViewer(state.viewerIndex - 1);
     else if (dx < -50) openViewer(state.viewerIndex + 1);
@@ -3858,6 +3860,10 @@ function bindShell() {
     }, { passive: true });
     card.addEventListener("touchmove", (e) => {
       if (!s) return;
+      if (e.touches.length > 1) {            /* two fingers = pinch zoom, never a swipe */
+        if (s.on) { card.classList.remove("swipe-dragging"); card.style.transform = ""; }
+        s = null; return;
+      }
       const dx = e.touches[0].clientX - s.x;
       s.dy = e.touches[0].clientY - s.y;
       if (!s.on) {
@@ -3897,9 +3903,10 @@ function bindShell() {
   swipeClose(document.querySelector("#confirm .sheet-card"), closeConfirm);
   swipeClose(document.querySelector("#copy-sheet .sheet-card"), closeCopySheet);
   swipeClose($("add-menu"), closeAddMenu);
-  swipeClose($("viewer-stage"), closeViewer, () => $("viewer-compare").classList.contains("hidden"));
-  swipeClose($("pc-preview-stage"), closePcPreview);
-  swipeClose(document.querySelector("#result-fs .viewer-stage"), closeResultFs);
+  const notZoomed = (el) => () => !(window.__zoomBusy && window.__zoomBusy(el));
+  swipeClose($("viewer-stage"), closeViewer, () => $("viewer-compare").classList.contains("hidden") && notZoomed($("viewer-stage"))());
+  swipeClose($("pc-preview-stage"), closePcPreview, notZoomed($("pc-preview-stage")));
+  swipeClose(document.querySelector("#result-fs .viewer-stage"), closeResultFs, notZoomed(document.querySelector("#result-fs .viewer-stage")));
 
   /* Tap the dark area around a full-screen image to close it (desktop + phone). */
   ["viewer-stage", "pc-preview-stage"].forEach((id) => {
@@ -9852,4 +9859,226 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   if (gear) gear.addEventListener("click", () => setTimeout(load, 50));
   if ($("engine-pill")) $("engine-pill").addEventListener("click", () => setTimeout(load, 50));
   load();
+})();
+
+/* ===== Zoom in full-screen pictures and compare v20261121m =====
+   Mouse wheel zooms toward the pointer, the − 100% + bar zooms from the middle (100% = fit to screen),
+   double-click zooms in / back out, keys + - 0. Once zoomed in, drag to look around; on a phone pinch
+   with two fingers. In compare both pictures always zoom and move together, and the white line
+   can still be dragged to compare. */
+(function () {
+  const MAX = 8;
+  const zooms = [];
+
+  function makeZoom(o) {
+    if (!o.stage || !o.barHost) return null;
+    let s = 1, tx = 0, ty = 0, pan = null, moved = false, pinch = null;
+    const bar = document.createElement("div");
+    bar.className = "zoom-bar";
+    bar.innerHTML = '<button type="button" data-z="out" aria-label="Zoom out" title="Zoom out (-)">−</button>' +
+      '<button type="button" data-z="fit" class="zoom-pct" aria-label="Fit to screen" title="Fit to screen (0)">100%</button>' +
+      '<button type="button" data-z="in" aria-label="Zoom in" title="Zoom in (+)">+</button>';
+    o.barHost.appendChild(bar);
+    const pct = bar.querySelector(".zoom-pct");
+
+    const all = () => (o.targets() || []).filter(Boolean);
+    const list = () => all().filter((el) => el.offsetParent !== null && !el.classList.contains("hidden") && el.tagName === "IMG" && el.getAttribute("src"));
+    const open = () => !o.layer.classList.contains("hidden");
+
+    function apply(anim) {
+      const t = s > 1.001 ? "translate(" + tx.toFixed(1) + "px, " + ty.toFixed(1) + "px) scale(" + s.toFixed(4) + ")" : "";
+      all().forEach((el) => { el.classList.toggle("zoom-anim", !!anim); el.style.transform = t; });
+      pct.textContent = Math.round(s * 100) + "%";
+      o.stage.classList.toggle("is-zoomed", s > 1.001);
+      bar.classList.toggle("hidden", !list().length);
+      if (o.onChange) o.onChange(s > 1.001);
+    }
+    /* the picture's untransformed centre and size (it scales around its own centre) */
+    function geom(el) {
+      const r = el.getBoundingClientRect();
+      return { cx: r.left + r.width / 2 - tx, cy: r.top + r.height / 2 - ty, w: r.width / s, h: r.height / s };
+    }
+    function clamp(g) {
+      if (s <= 1.001) { s = 1; tx = 0; ty = 0; return; }
+      const mx = g.w * (s - 1) / 2, my = g.h * (s - 1) / 2;
+      tx = Math.max(-mx, Math.min(mx, tx));
+      ty = Math.max(-my, Math.min(my, ty));
+    }
+    function pick(px, py) {
+      const els = list();
+      if (px != null) for (const e of els) {
+        const r = (e.parentElement || e).getBoundingClientRect();
+        if (px >= r.left && px <= r.right && py >= r.top && py <= r.bottom) return e;
+      }
+      return els[0];
+    }
+    /* zoom to ns keeping the point (px, py) on screen still */
+    function zoomAt(ns, px, py, anim) {
+      const el = pick(px, py);
+      if (!el) return;
+      ns = Math.max(1, Math.min(MAX, ns));
+      const g = geom(el);
+      if (px == null) { px = g.cx + tx; py = g.cy + ty; }
+      const k = ns / s;
+      tx = (px - g.cx) - k * (px - g.cx - tx);
+      ty = (py - g.cy) - k * (py - g.cy - ty);
+      s = ns;
+      clamp(g);
+      apply(anim);
+    }
+    function reset() { s = 1; tx = 0; ty = 0; pan = null; pinch = null; o.stage.classList.remove("is-panning"); apply(false); }
+    const hit = (e) => !e.target.closest("button, a, input, .zoom-bar") && (o.hit ? o.hit(e) : list().some((el) => el === e.target));
+
+    bar.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      e.stopPropagation();
+      if (!b) return;
+      if (b.dataset.z === "in") zoomAt(s * 1.5, null, null, true);
+      else if (b.dataset.z === "out") zoomAt(s / 1.5, null, null, true);
+      else zoomAt(1, null, null, true);
+    });
+    ["pointerdown", "dblclick", "touchstart"].forEach((ev) => bar.addEventListener(ev, (e) => e.stopPropagation(), { passive: true }));
+
+    o.stage.addEventListener("wheel", (e) => {
+      if (!open() || !list().length) return;
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+      const d = Math.max(-300, Math.min(300, e.deltaY * unit));
+      zoomAt(s * Math.exp(-d * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX, e.clientY, false);   // ctrlKey = touchpad pinch
+    }, { passive: false });
+
+    o.stage.addEventListener("dblclick", (e) => {
+      if (!open() || !hit(e)) return;
+      e.preventDefault(); e.stopPropagation();
+      zoomAt(s > 1.001 ? 1 : 2.5, e.clientX, e.clientY, true);
+    });
+
+    /* drag to move around (capture phase, so compare's own drag doesn't also run) */
+    o.stage.addEventListener("pointerdown", (e) => {
+      if (s <= 1.001 || pinch || (e.pointerType === "mouse" && e.button !== 0)) return;
+      if (e.target.closest("button, a, input, .zoom-bar")) return;
+      if (o.skipPan && o.skipPan(e)) return;
+      pan = { x: e.clientX, y: e.clientY, tx, ty };
+      moved = false;
+      try { o.stage.setPointerCapture(e.pointerId); } catch (err) {}
+      o.stage.classList.add("is-panning");
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+    o.stage.addEventListener("pointermove", (e) => {
+      if (!pan || pinch) return;
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+      const el = list()[0];
+      if (!el) return;
+      const g = geom(el);
+      tx = pan.tx + dx; ty = pan.ty + dy;
+      clamp(g);
+      apply(false);
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+    const endPan = () => {
+      if (!pan) return;
+      pan = null;
+      o.stage.classList.remove("is-panning");
+      setTimeout(() => { moved = false; }, 0);
+    };
+    o.stage.addEventListener("pointerup", endPan, true);
+    o.stage.addEventListener("pointercancel", endPan, true);
+    /* a drag that ends on the dark area must not count as "tap outside to close" */
+    o.stage.addEventListener("click", (e) => { if (moved) { moved = false; e.stopPropagation(); e.preventDefault(); } }, true);
+    o.stage.addEventListener("dragstart", (e) => { if (s > 1.001) e.preventDefault(); });
+
+    /* phone: two-finger pinch */
+    const two = (e) => {
+      const a = e.touches[0], b = e.touches[1];
+      return { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1, x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    };
+    o.stage.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 2 || !open() || !list().length) return;
+      pan = null;
+      const t = two(e);
+      pinch = { d0: t.d, s0: s, x: t.x, y: t.y, used: true };
+      o.stage.dataset.pinched = "1";
+    }, { passive: true });
+    o.stage.addEventListener("touchmove", (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const t = two(e);
+      zoomAt(pinch.s0 * t.d / pinch.d0, t.x, t.y, false);
+      const el = list()[0];
+      if (el && s > 1.001) { const g = geom(el); tx += t.x - pinch.x; ty += t.y - pinch.y; clamp(g); apply(false); }
+      pinch.x = t.x; pinch.y = t.y;
+    }, { passive: false });
+    o.stage.addEventListener("touchend", (e) => {
+      if (pinch && e.touches.length < 2) pinch = null;
+      if (!e.touches.length) setTimeout(() => { delete o.stage.dataset.pinched; }, 0);
+    });
+
+    /* back to fit when the layer closes or opens, or the picture changes */
+    new MutationObserver(() => reset()).observe(o.layer, { attributes: true, attributeFilter: ["class"] });
+    if (o.resetOnSrc) all().forEach((el) => new MutationObserver(() => reset()).observe(el, { attributes: true, attributeFilter: ["src"] }));
+
+    const api = { o, reset, open, list, zoomIn: () => zoomAt(s * 1.5, null, null, true), zoomOut: () => zoomAt(s / 1.5, null, null, true),
+      fit: () => zoomAt(1, null, null, true), zoomed: () => s > 1.001, refresh: () => apply(false) };
+    o.stage._zoom = api;
+    zooms.push(api);
+    apply(false);
+    return api;
+  }
+
+  /* true while a picture on this stage is zoomed in or being pinched (swipes then move it instead) */
+  window.__zoomBusy = (stage) => !!(stage && ((stage._zoom && stage._zoom.zoomed()) || stage.dataset.pinched));
+
+  /* library viewer */
+  const vz = makeZoom({ layer: $("viewer"), stage: $("viewer-stage"), barHost: $("viewer-stage"), targets: () => [$("viewer-img")] });
+  if (vz && typeof openViewer === "function") {
+    const base = openViewer;
+    openViewer = function (i) { base(i); vz.reset(); };
+    const vimg = $("viewer-img");
+    if (vimg) vimg.addEventListener("load", () => vz.refresh());
+  }
+  /* result full screen, and the PC picture preview */
+  const rfs = $("result-fs");
+  makeZoom({ layer: rfs, stage: rfs && rfs.querySelector(".viewer-stage"), barHost: rfs && rfs.querySelector(".viewer-stage"), targets: () => [$("result-fs-img")], resetOnSrc: true });
+  makeZoom({ layer: $("pc-preview"), stage: $("pc-preview-stage"), barHost: $("pc-preview-stage"), targets: () => [$("pc-preview-img")], resetOnSrc: true });
+
+  /* compare: slider (both layers) or side by side (both pictures) */
+  const box = $("cmp-box"), line = $("cmp-line"), hint = $("cmp-hint");
+  const slideOn = () => box && !box.classList.contains("hidden");
+  const cz = makeZoom({
+    layer: $("compare-fs"), stage: $("cmp-stage"), barHost: $("cmp-stage"),
+    targets: () => slideOn() ? [$("cmp-after"), $("cmp-before")] : [$("cmp-side-before"), $("cmp-side-after")],
+    hit: (e) => slideOn() ? box.contains(e.target) : !!e.target.closest("#cmp-side img"),
+    /* in the slider, grabbing near the white line still moves the line */
+    skipPan: (e) => {
+      if (!slideOn() || !line) return false;
+      const r = line.getBoundingClientRect();
+      return Math.abs(e.clientX - (r.left + r.width / 2)) < 26;
+    },
+    onChange: (z) => {
+      if (!hint) return;
+      if (slideOn()) hint.textContent = z ? "Drag to look around · drag the white line to compare" : "Drag anywhere on the image to compare · scroll to zoom";
+      else hint.textContent = z ? "Drag to look around · both pictures move together" : "Original on one side, result on the other · scroll to zoom";
+    },
+  });
+  if (cz) {
+    document.querySelectorAll("#cmp-modes button").forEach((b) => b.addEventListener("click", () => setTimeout(cz.reset, 0)));
+    ["cmp-after", "cmp-before", "cmp-side-before", "cmp-side-after"].forEach((id) => { const el = $(id); if (el) el.addEventListener("load", () => cz.refresh()); });
+  }
+  window.addEventListener("resize", () => zooms.forEach((z) => z.open() && z.reset()));
+
+  /* keys: + / - zoom, 0 fits (the top-most open view) */
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+    const order = [cz, vz].concat(zooms.filter((z) => z !== cz && z !== vz));
+    const z = order.find((x) => x && x.open() && x.list().length);
+    if (!z) return;
+    if (e.key === "+" || e.key === "=") z.zoomIn();
+    else if (e.key === "-" || e.key === "_") z.zoomOut();
+    else if (e.key === "0") z.fit();
+    else return;
+    e.preventDefault(); e.stopImmediatePropagation();
+  }, true);
 })();

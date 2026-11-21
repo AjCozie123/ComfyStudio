@@ -1711,3 +1711,25 @@ body.lib-selecting .masonry > .lib-item.is-sel:hover .thumb img { transform: sca
 .setup-msg { margin: 10px 0 0; font-size: 13px; line-height: 1.5; color: var(--text); }
 .setup-msg:empty { display: none; }
 @media (max-width: 520px) { .setup-steps li { grid-template-columns: 22px 1fr; } .setup-detail { grid-column: 2; } }
+
+/* ---------- Zoom in full-screen pictures and compare (v20261121m) ---------- */
+.viewer-stage { overflow: hidden; }
+.cmp-side figure { overflow: hidden; position: relative; }
+.cmp-side figcaption { position: relative; z-index: 1; }
+.zoom-bar {
+  position: absolute; left: 50%; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 4;
+  display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px;
+  background: rgba(20,20,22,.82); border: 1px solid rgba(255,255,255,.14); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0,0,0,.45); user-select: none; -webkit-user-select: none;
+}
+.zoom-bar button {
+  min-width: 36px; height: 34px; padding: 0 8px; border: 0; border-radius: 999px; background: transparent; color: #fff;
+  font: inherit; font-size: 20px; line-height: 1; display: grid; place-items: center; cursor: pointer;
+}
+.zoom-bar button:hover { background: rgba(255,255,255,.12); }
+.zoom-bar .zoom-pct { font-size: 12.5px; font-weight: 600; min-width: 58px; font-variant-numeric: tabular-nums; }
+.is-zoomed { touch-action: none; }
+.is-zoomed img, .cmp-stage.is-zoomed .cmp-box { cursor: grab; }
+.is-panning, .is-panning * { cursor: grabbing !important; }
+.zoom-anim { transition: transform .15s ease-out, filter .2s ease !important; }
+@media (max-width: 719px) { .zoom-bar { bottom: 10px; } }

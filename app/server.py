@@ -2717,7 +2717,9 @@ def submit_workflow_job(data):
     if verdict["fit"] == "no":
         alt = card.get("alternative") or ""
         raise NeedsAction(verdict["reason"] + (" Try %s instead." % alt if alt else ""), "hardware", alternative=alt)
-    if needs.get("profile") and hw.get("profile") and hw["profile"] != needs["profile"]:
+    # "ComfyUI modes" are this PC's own launcher (launch flags per mode). Without that launcher there is no mode to
+    # switch to, and the engines run fine on a normally started ComfyUI, so the check only applies where it can be met.
+    if (needs.get("profile") and hw.get("profile") and hw["profile"] != needs["profile"] and hw.get("can_switch")):
         raise NeedsAction("%s needs ComfyUI in %s, but it's running in %s." % (
             card.get("name") or "This workflow", PROFILE_NAMES.get(needs["profile"], needs["profile"]),
             PROFILE_NAMES.get(hw["profile"], hw["profile"])), "profile", profile=needs["profile"], can_switch=hw.get("can_switch"))
@@ -4959,6 +4961,24 @@ def install_index(force=False):
     return _inst_cache["fp"], _inst_cache["idx"]
 
 
+def _builtin_plan_item(idx, fp, hw, oi):
+    """The built-in MiniMax H3 image engine (new pictures + edits) as a plan item: the files its own graphs load."""
+    seen, nodes = {}, set()
+    for g in (build_main_graph("t2i", "x", "1024x1024", 1, 6, {}, [], None)[0],
+              build_main_graph("edit", "x", "1024x1024", 1, 6, {}, [INPUT_SUB + "/x.png"], (1024, 1024))[0]):
+        for f in INST.plan_for(g, idx, fp):
+            seen.setdefault(f["file"], f)
+        nodes |= {n.get("class_type") for n in g.values() if n.get("class_type") and oi and n.get("class_type") not in oi}
+    files = list(seen.values())
+    missing = [f for f in files if not f["present"]]
+    tgt = next((f["target_dir"] for f in missing if f.get("target_dir")), None) or COMFY_ROOT
+    return {"id": "builtin", "name": "MiniMax H3 (built-in)", "family": "MiniMax H3", "media": "image",
+            "fit": "ok", "fit_reason": "", "files": files, "missing": len(missing),
+            "downloadable": sum(1 for f in missing if f.get("url")),
+            "no_source": [f["file"] for f in missing if not f.get("url")], "missing_nodes": sorted(nodes),
+            "free_gb": INST.free_gb(tgt)}
+
+
 def install_plan(wid=None):
     """For each engine: fit for this PC, files present / missing (with official links), node packs, free space."""
     fp, idx = install_index()
@@ -4968,6 +4988,11 @@ def install_plan(wid=None):
     except Exception:
         oi = {}
     out = []
+    if not wid or wid == "builtin":
+        try:
+            out.append(_builtin_plan_item(idx, fp, hw, oi))
+        except Exception as e:
+            log.info("install plan (built-in): %s", e)
     for card in WF.list_cards():
         if wid and card.get("id") != wid:
             continue
@@ -4988,6 +5013,162 @@ def install_plan(wid=None):
             "free_gb": INST.free_gb(tgt),
         })
     return {"hardware": {k: hw.get(k) for k in ("gpu", "vram_gb", "ram_gb", "profile")}, "items": out}
+
+
+SETUP = {"id": None, "name": "", "state": "idle", "steps": [], "message": "", "t": 0}
+SETUP_STEPS = [("nodes", "Node packs"), ("models", "Model files"), ("restart", "Restart ComfyUI"), ("check", "Check it's ready")]
+
+
+def _setup_step(key, state, detail=""):
+    for st in SETUP["steps"]:
+        if st["key"] == key:
+            st.update(state=state, detail=detail)
+    SETUP["t"] = time.time()
+
+
+def _comfy_back(timeout=240):
+    """Wait for ComfyUI to answer again after a restart."""
+    t0 = time.time()
+    time.sleep(8)
+    while time.time() - t0 < timeout:
+        try:
+            object_info(force=True)
+            return True
+        except Exception:
+            time.sleep(5)
+    return False
+
+
+def _setup_run(wid):
+    """Everything an engine needs, in order, without more taps: the node packs Comfy Studio needs + any this engine
+    uses, its model files (official links), a ComfyUI restart only when nodes were added, then a final check."""
+    try:
+        plan = (install_plan(wid).get("items") or [None])[0]
+        if not plan:
+            raise ValueError("That engine wasn't found.")
+        if plan.get("fit") == "no":
+            raise ValueError("This engine is too big for this PC, so nothing was installed. " + (plan.get("fit_reason") or ""))
+        added_nodes, notes = False, []
+        # 1. node packs
+        _setup_step("nodes", "running", "Checking node packs\u2026")
+        try:
+            have = set(object_info(force=True))
+        except Exception:
+            raise ValueError("ComfyUI isn't answering. Start ComfyUI, then press Set up again.")
+        req = [p for p in CN.required_status(HERE, NODES_DIR, have) if not p["installed"]]
+        if req and os.path.isdir(NODES_DIR):
+            jid = CN.start_required(HERE, DATA, NODES_DIR, comfy_py(), have)
+            while CN.JOBS.get(jid, {}).get("state") == "running":
+                _setup_step("nodes", "running", CN.JOBS[jid].get("message") or "Installing node packs\u2026")
+                time.sleep(2)
+            job = CN.JOBS.get(jid) or {}
+            added_nodes = bool(job.get("done"))
+            if job.get("failed"):
+                notes.append("Some node packs didn't install: %s." % ", ".join(str(x) for x in job["failed"]))
+        engine_nodes = list(plan.get("missing_nodes") or [])
+        core_missing = []
+        if engine_nodes:
+            res = NM.resolve(engine_nodes)
+            packs = [pk["id"] for pk in (res.get("packs") or []) if pk.get("registry") and not pk.get("installed")]
+            core_missing = list(res.get("unknown") or [])
+            if packs:
+                if not NM.manager_available():
+                    notes.append("ComfyUI-Manager isn't available, so these node packs couldn't be added: %s." % ", ".join(packs))
+                else:
+                    r = NM.install(packs)
+                    for b in (r.get("blocked") or []):
+                        notes.append("%s: %s" % (b.get("id"), b.get("reason")))
+                    if r.get("queued"):
+                        t0 = time.time()
+                        while time.time() - t0 < 900:
+                            q = NM.queue_status() or {}
+                            busy = q.get("is_processing") or (q.get("total_count") or 0) > (q.get("done_count") or 0)
+                            _setup_step("nodes", "running", "Installing %s\u2026" % ", ".join(r["queued"]))
+                            if not busy:
+                                break
+                            time.sleep(3)
+                        added_nodes = True
+        _setup_step("nodes", "done", "Added" if added_nodes else "Nothing needed")
+        # 2. model files
+        todo = [f for f in plan["files"] if not f["present"] and f.get("url") and f.get("target_dir")]
+        if todo:
+            _setup_step("models", "running", "Starting downloads\u2026")
+            INST.start(todo, token=(app_paths.load(DATA).get("hf_token") or "").strip() or None)
+            _inst_cache["t"] = 0
+            time.sleep(1)
+            while True:
+                st = INST.status()
+                a = st.get("active") or {}
+                if not a and not (st.get("queue") or []):
+                    break
+                pct = int(100 * (a.get("got") or 0) / a["total"]) if a.get("total") else None
+                left = len(st.get("queue") or [])
+                _setup_step("models", "running", "%s%s%s" % (a.get("file") or "\u2026", " \u00b7 %d%%" % pct if pct is not None else "",
+                                                             " \u00b7 %d more after this" % left if left else ""))
+                time.sleep(2)
+            errs = INST.status().get("errors") or []
+            if errs:
+                e = errs[-1]
+                _setup_step("models", "error", "%s: %s" % (e.get("file"), e.get("error")))
+                raise ValueError("A download stopped: %s \u2014 %s" % (e.get("file"), e.get("error")))
+            _setup_step("models", "done", "%d file%s downloaded" % (len(todo), "" if len(todo) == 1 else "s"))
+        else:
+            _setup_step("models", "done", "All files already here" if not plan["missing"] else "Nothing downloadable")
+        # 3. restart ComfyUI so new node packs load
+        if added_nodes:
+            _setup_step("restart", "running", "Restarting ComfyUI (about a minute)\u2026")
+            try:
+                NM.reboot()
+            except Exception:
+                pass
+            if not _comfy_back():
+                _setup_step("restart", "error", "ComfyUI didn't come back")
+                raise ValueError("ComfyUI didn't come back after the restart. Start it again, then press Set up to finish.")
+            _setup_step("restart", "done", "Restarted")
+        else:
+            _setup_step("restart", "skipped", "Not needed")
+        # 4. check
+        _setup_step("check", "running", "Checking\u2026")
+        _inst_cache["t"] = 0
+        after = (install_plan(wid).get("items") or [{}])[0]
+        problems = []
+        if after.get("no_source"):
+            problems.append("These files have no official download, so add them yourself or pick other files in "
+                            "Settings: %s." % ", ".join(after["no_source"]))
+        elif after.get("missing"):
+            problems.append("%d file%s still missing." % (after["missing"], "" if after["missing"] == 1 else "s"))
+        if after.get("missing_nodes"):
+            still = after["missing_nodes"]
+            core = [n for n in still if n in core_missing] or still
+            problems.append("Your ComfyUI doesn't have %s. These come with ComfyUI itself, so update ComfyUI "
+                            "(ComfyUI Manager \u203a Update ComfyUI, or the update script in your ComfyUI folder), "
+                            "then press Set up again." % ", ".join(core[:6]))
+        problems += notes
+        if problems:
+            _setup_step("check", "error", "Not ready yet")
+            SETUP.update(state="needs", message=" ".join(problems))
+        else:
+            _setup_step("check", "done", "Ready")
+            SETUP.update(state="done", message="%s is set up and ready to use." % (plan.get("name") or "The engine"))
+    except Exception as e:
+        log.info("setup %s: %s", wid, e)
+        for st in SETUP["steps"]:
+            if st["state"] == "running":
+                st.update(state="error")
+        SETUP.update(state="error", message=str(e))
+    SETUP["t"] = time.time()
+
+
+def start_setup(wid):
+    if SETUP.get("state") == "running":
+        raise ValueError("Setup is already running for %s. Wait for it to finish." % (SETUP.get("name") or "another engine"))
+    name = next((i.get("name") for i in (install_plan(wid).get("items") or [])), None)
+    if not name:
+        raise ValueError("That engine wasn't found.")
+    SETUP.update(id=wid, name=name, state="running", message="",
+                 steps=[{"key": k, "label": l, "state": "waiting", "detail": ""} for k, l in SETUP_STEPS], t=time.time())
+    threading.Thread(target=_setup_run, args=(wid,), daemon=True).start()
+    return dict(SETUP)
 
 
 UPDATE_STATE = {"checked": 0, "status": None, "phase": "", "phase_until": 0}
@@ -5413,6 +5594,8 @@ class H(BaseHTTPRequestHandler):
                 return self.j({"error": "ComfyUI isn't answering, so the app can't check its model folders.", "items": []}, 503)
         if path == "/api/install/progress":
             return self.j(INST.status())
+        if path == "/api/setup/status":
+            return self.j(SETUP)
         if path == "/api/loras/index":
             # every LoRA with its folder, model family and trigger words (read from the file itself)
             try:
@@ -5994,6 +6177,11 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/install/cancel":
             INST.cancel()
             return self.j({"ok": True})
+        if path == "/api/setup/start":
+            try:
+                return self.j(start_setup(str(data.get("id") or "")))
+            except ValueError as e:
+                return self.j({"error": str(e)}, 400)
         if path == "/api/workflows/test":
             # Test run: the upload, saved as a hidden test entry, run once small through the normal Generate path
             try:

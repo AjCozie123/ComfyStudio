@@ -12,10 +12,10 @@ TEMPLATES = os.path.join(HERE, "templates")
 LCM_DETAIL = "lcm_detail"
 
 DEFAULTS = {
-    "unet_name": r"MiniMax\minimax_h3_image_pruned_w4a8.safetensors",
-    "clip_name": r"MiniMax\qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
+    "unet_name": "minimax_h3_image_pruned_int8_convrot.safetensors",
+    "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
     "clip_type": "minimax",
-    "vae_name": r"MiniMax\minimax_h3_image_vae_fp16.safetensors",
+    "vae_name": "minimax_h3_image_vae_fp16.safetensors",
     "pe_clip_name": "qwen3.5_9b_w4a8_gptq.safetensors",
     "sampler_name": "lcm_detail",   # SamplerLCM, noise 1.10 -> 0.90 (tested better than euler, 2026-11-11)
     "scheduler": "simple",

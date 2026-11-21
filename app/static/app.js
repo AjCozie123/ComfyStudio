@@ -5157,6 +5157,66 @@ function bindShell() {
     }
     if (busy) window.__instWasBusy = true;
   }
+  function setupNeeds(ip) {
+    const parts = [];
+    const n = (ip.missing_nodes || []).length;
+    if (n) parts.push(n + " node" + (n === 1 ? "" : "s"));
+    if (ip.missing) parts.push(ip.missing + " model file" + (ip.missing === 1 ? "" : "s"));
+    return parts.join(" and ") || "a few things";
+  }
+  window.__setupEngine = function (w, ip) {
+    const files = (ip.files || []).filter((f) => !f.present);
+    const dl = files.filter((f) => f.url), nolink = files.filter((f) => !f.url);
+    const lines = [];
+    lines.push("Comfy Studio will do this by itself, one step after another:");
+    lines.push("1. Install the node packs it needs" + ((ip.missing_nodes || []).length ? " (" + ip.missing_nodes.slice(0, 4).join(", ") + (ip.missing_nodes.length > 4 ? "\u2026" : "") + ")" : " (if any are missing)") + ".");
+    lines.push("2. Download " + (dl.length ? dl.length + " model file" + (dl.length === 1 ? "" : "s") + " from the official pages:\n" + dl.map((f) => "   \u2022 " + f.file).join("\n") : "nothing (the files are already here)") + ".");
+    lines.push("3. Restart ComfyUI if new node packs were added (about a minute).");
+    lines.push("4. Check the engine is ready.");
+    if (nolink.length) lines.push("\nThese have no official download, so add them yourself afterwards: " + nolink.map((f) => f.file).join(", ") + ".");
+    lines.push("\nModel files are often several GB each. Free space on that drive: " + (ip.free_gb != null ? ip.free_gb + " GB" : "unknown") + ".");
+    askConfirm({
+      title: "Set up " + (w.name || "this engine") + "?",
+      body: lines.join("\n"),
+      yes: "Set up",
+      onYes: async () => {
+        try {
+          await api("/api/setup/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: w.id }) });
+          pollSetup();
+        } catch (e) { showError(e.message || "Couldn't start the setup."); }
+      },
+    });
+  };
+  let setupTimer = null;
+  async function pollSetup() {
+    clearTimeout(setupTimer);
+    let st;
+    try { st = await api("/api/setup/status"); } catch (e) { setupTimer = setTimeout(pollSetup, 4000); return; }
+    let box = $("setup-bar");
+    if (!box && $("wf-list")) {
+      box = document.createElement("div");
+      box.id = "setup-bar";
+      box.className = "setup-bar hidden";
+      box.innerHTML = '<div class="setup-head"><b class="setup-title"></b><button type="button" class="icon-btn sm setup-x" aria-label="Hide">\u2715</button></div><ol class="setup-steps"></ol><p class="setup-msg"></p>';
+      $("wf-list").parentNode.insertBefore(box, $("wf-list"));
+      box.querySelector(".setup-x").addEventListener("click", () => box.classList.add("hidden"));
+    }
+    if (!box || !st || st.state === "idle") return;
+    box.classList.remove("hidden");
+    box.dataset.state = st.state;
+    box.querySelector(".setup-title").textContent = st.state === "running" ? "Setting up " + st.name + "\u2026"
+      : st.state === "done" ? st.name + " is ready" : st.state === "needs" ? st.name + " needs one more thing" : "Setup stopped";
+    const icon = { waiting: "\u25cb", running: "\u25d4", done: "\u2713", skipped: "\u2013", error: "\u2715" };
+    box.querySelector(".setup-steps").innerHTML = (st.steps || []).map((x) =>
+      '<li class="is-' + x.state + '"><span class="setup-ico">' + (icon[x.state] || "\u25cb") + '</span><span class="setup-label">' +
+      x.label + '</span><span class="setup-detail">' + String(x.detail || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]) + "</span></li>").join("");
+    box.querySelector(".setup-msg").textContent = st.message || "";
+    if (st.state === "running") { setupTimer = setTimeout(pollSetup, 1500); return; }
+    if (st.state === "done") toast(st.message || "Ready", 4000);
+    renderList();
+    if (typeof applyEngine === "function") applyEngine();
+  }
+  window.__pollSetup = pollSetup;
   function startInstall(w, ip) {
     const files = (ip.files || []).filter((f) => !f.present && f.url);
     askConfirm({
@@ -5198,6 +5258,7 @@ function bindShell() {
     await loadList();
     await loadInstallPlan();
     pollInstall();
+    if (!setupTimer) pollSetup();
     if (typeof window.renderHwBar === "function") window.renderHwBar();
     const box = $("wf-list");
     box.innerHTML = "";
@@ -5243,6 +5304,7 @@ function bindShell() {
     else if (w.fit === "heavy") { tag("Heavy for your PC", "warn"); }
     else if (w.fit === "no") { tag("Too heavy for your PC", "no"); }
     const ip = INSTALL[w.id];
+    if (ip && (ip.missing_nodes || []).length && !ip.missing) tag("Needs node packs", "warn");
     if (ip && ip.missing) {
       tag("Needs " + ip.missing + " file" + (ip.missing === 1 ? "" : "s"), "warn");
       const det = document.createElement("details");
@@ -5277,13 +5339,15 @@ function bindShell() {
     use.textContent = "Use";
     use.addEventListener("click", () => useWorkflow(w));
     actions.appendChild(use);
-    if (ip && ip.downloadable && ip.fit !== "no") {
-      const dl = document.createElement("button");
-      dl.type = "button";
-      dl.className = "chip-btn";
-      dl.textContent = "Download " + ip.downloadable + " file" + (ip.downloadable === 1 ? "" : "s");
-      dl.addEventListener("click", () => startInstall(w, ip));
-      actions.appendChild(dl);
+    if (needsSetup(ip) && ip.fit !== "no") {
+      const su = document.createElement("button");
+      su.type = "button";
+      su.className = "chip-btn primary wf-setup-btn";
+      su.textContent = "Set up";
+      su.title = "Installs everything this engine needs, one step after another";
+      su.addEventListener("click", () => window.__setupEngine(w, ip));
+      actions.insertBefore(su, actions.firstChild);
+      use.classList.remove("primary");
     }
     if (!w.builtinCard && w.source === "user") {
       const del = document.createElement("button");
@@ -5308,7 +5372,16 @@ function bindShell() {
     return el;
   }
 
-  function useWorkflow(w) {
+  function needsSetup(ip) { return !!(ip && ((ip.missing || 0) > 0 || (ip.missing_nodes || []).length)); }
+  window.__needsSetup = needsSetup;
+  function useWorkflow(w, force) {
+    const ip = INSTALL[w.id];
+    if (!force && needsSetup(ip) && ip.fit !== "no") {
+      askConfirm({ title: (w.name || "This engine") + " isn't set up yet",
+        body: "It still needs " + setupNeeds(ip) + ". Set it up now? Comfy Studio does every step by itself.",
+        yes: "Set up now", onYes: () => window.__setupEngine(w, ip) });
+      return;
+    }
     const task = w.builtinCard ? (state.mode === "edit" ? "edit" : "t2i") : w.task;
     if (w.builtinCard) { LS.set("cs.wf.t2i", "builtin"); LS.set("cs.wf.edit", "builtin"); }
     else LS.set("cs.wf." + task, w.id);

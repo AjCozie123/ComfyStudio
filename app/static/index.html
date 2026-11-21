@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261121g">
+  <link rel="stylesheet" href="/static/app.css?v=20261121i">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -199,108 +199,253 @@
     <div class="wf-head">
       <div>
         <h1>Guide</h1>
-        <p class="muted">What every pill above the prompt does, when to use it, and step-by-step recipes.</p>
+        <p class="muted">How to use Comfy Studio, step by step, in plain words. Tap a topic to jump to it.</p>
       </div>
     </div>
     <nav class="gd-jump" aria-label="Guide sections">
-      <a href="#gd-start">Quick start</a><a href="#gd-pills">Pills</a><a href="#gd-video">Video</a><a href="#gd-recipes">Recipes</a><a href="#gd-pc">Your PC</a>
+      <a href="#gd-start">Start here</a><a href="#gd-screen">The screen</a><a href="#gd-box">Prompt box</a><a href="#gd-pics">Adding pictures</a><a href="#gd-pills">The pills</a><a href="#gd-video">Video</a><a href="#gd-settings">Settings</a><a href="#gd-result">After it's made</a><a href="#gd-library">Library</a><a href="#gd-paint">Inpaint</a><a href="#gd-workflows">Workflows</a><a href="#gd-updates">Updates</a><a href="#gd-recipes">Recipes</a><a href="#gd-pc">Your PC</a><a href="#gd-help">Problems</a>
     </nav>
 
     <section class="gd-sec" id="gd-start">
-      <h2>Quick start</h2>
+      <h2>Start here</h2>
+      <p class="gd-lead">Comfy Studio makes and edits pictures and videos on your own PC, using ComfyUI behind the scenes. You type what you want; the app does the rest.</p>
       <ol class="gd-steps">
-        <li><b>Pick Image or Video</b> at the bottom left of the prompt box.</li>
-        <li><b>Add pictures</b> with <span class="gd-k">+</span> to edit one or use them as references. No pictures = a brand new picture.</li>
-        <li><b>Type what you want</b> in plain words, then check the pills above the box. The Auto settings are fine to start with.</li>
-        <li><b>Send</b> with the arrow. The result opens on the stage; tap <b>Edit this</b> to keep working on it.</li>
+        <li><b>Check it's ready.</b> Top right should say <span class="gd-k">ComfyUI connected</span> with a green dot. If it says offline, press <b>Start</b> next to it and wait a minute.</li>
+        <li><b>New picture?</b> Just type what you want in the box at the bottom and press <b>Enter</b> (or the round arrow).</li>
+        <li><b>Change a photo?</b> Press <span class="gd-k">+</span> at the bottom left, pick your photo, then type the change, e.g. "make her jacket red".</li>
+        <li><b>Your result</b> appears on screen. Press <b>Edit this</b> to keep changing it, or find it later in <b>Library</b>.</li>
       </ol>
+      <p class="gd-tip">You don't need to touch any settings to start. Everything is set to <b>Auto</b>, which picks good settings for you.</p>
+    </section>
+
+    <section class="gd-sec" id="gd-screen">
+      <h2>The screen at a glance</h2>
+      <div class="gd-grid">
+        <article class="gd-card"><span class="gd-pill">Create · Library · Guide · Workflows</span>
+          <p><b>The tabs at the top.</b> <b>Create</b> is where you make things. <b>Library</b> holds everything you've made. <b>Guide</b> is this page. <b>Workflows</b> is where you add or switch the AI models (engines).</p></article>
+        <article class="gd-card"><span class="gd-pill"><i class="gd-dot"></i>ComfyUI connected</span>
+          <p><b>The status light (top right).</b> Green = ready. Red = ComfyUI isn't running: press <b>Start</b> beside it. "Generating" shows progress while something is being made.</p></article>
+        <article class="gd-card"><span class="gd-pill gd-red">Stop</span>
+          <p><b>Stop</b> (top right, while making something) cancels what's running. <b>Console</b> shows the technical log if you ever need help.</p></article>
+        <article class="gd-card"><span class="gd-pill">Recent</span>
+          <p><b>Recent</b> on the Create page shows your latest pictures. Tap one to open it. <b>See all</b> opens the Library.</p></article>
+      </div>
+    </section>
+
+    <section class="gd-sec" id="gd-box">
+      <h2>The prompt box (bottom of the screen)</h2>
+      <p class="gd-lead">This is where you type and send. From left to right:</p>
+      <div class="gd-table">
+        <div><span class="gd-k">+</span><p><b>Add pictures.</b> Opens a panel to attach photos: from your Library, <b>From my PC</b> (browse your drives and folders), or <b>Upload</b> (from a phone). See <a href="#gd-pics">Adding pictures</a>.</p></div>
+        <div><span class="gd-k">Image | Video</span><p><b>What to make.</b> Image for pictures, Video for clips.</p></div>
+        <div><span class="gd-k">Create | Edit</span><p><b>New or change.</b> Create makes something new from your words. Edit changes the picture you attached. It switches to Edit by itself when you add a picture.</p></div>
+        <div><span class="gd-k">Text ▾</span><p><b>Video type</b> (only in Video): from text, from a picture, from references, or a long video.</p></div>
+        <div><span class="gd-k">Clear</span><p><b>Empties the prompt box.</b> Changed your mind? <b>Undo</b> brings it back.</p></div>
+        <div><span class="gd-k">⚙ sliders</span><p><b>Settings</b>: the engine, Auto or Manual, and the finer controls. See <a href="#gd-settings">Settings</a>.</p></div>
+        <div><span class="gd-k">↑</span><p><b>Send.</b> Starts making it. You can send more while one is running; they wait in a queue.</p></div>
+      </div>
+      <ul class="gd-list">
+        <li><b>Enter</b> sends. <b>Shift + Enter</b> starts a new line (on a phone, use the send arrow).</li>
+        <li>Write in normal sentences: "a woman reading in a sunny café, 35mm photo". The more you describe, the closer it gets.</li>
+        <li>When you attach pictures, call them <b>&lt;Picture 1&gt;</b>, <b>&lt;Picture 2&gt;</b>… Type <span class="gd-k">@</span> in the box to pick one from a list.</li>
+        <li><b>Will also send</b> (a small chip under the box) shows notes the app adds for you. Tap it to read them.</li>
+      </ul>
+    </section>
+
+    <section class="gd-sec" id="gd-pics">
+      <h2>Adding pictures</h2>
+      <ol class="gd-steps">
+        <li>Press <span class="gd-k">+</span> at the bottom left of the prompt box.</li>
+        <li>Choose where the picture is:
+          <ul class="gd-list">
+            <li><b>Library</b>: something you've already made here.</li>
+            <li><b>From my PC</b>: browse your PC's drives and folders. <b>Recent</b> shows new files, <b>Browse</b> lets you open folders (<b>Up</b> goes back a folder), <b>Search</b> finds by name. Tick pictures, then press <b>Add</b>.</li>
+            <li><b>Upload</b>: pick a file from the device you're on (handy on a phone).</li>
+          </ul></li>
+        <li>The pictures appear as small squares above your text. <b>Picture 1</b> (the first) is the one being changed. Others are extra: a person, an outfit, a background…</li>
+      </ol>
+      <ul class="gd-list">
+        <li><b>Shortcuts:</b> drag a picture from your PC onto the prompt box, or copy it and press <b>Ctrl + V</b> in the box.</li>
+        <li><b>Remove one:</b> the small ✕ on its square. <b>Clear</b> removes them all.</li>
+        <li>Adding a picture switches to <b>Edit</b> by itself (or to <b>Image to video</b> in Video).</li>
+      </ul>
     </section>
 
     <section class="gd-sec" id="gd-pills">
-      <h2>The pills</h2>
-      <p class="gd-lead">A pill only shows when the engine you're using supports it, so the row changes between Create, Edit and Video.</p>
+      <h2>The pills (the row of buttons above the prompt box)</h2>
+      <p class="gd-lead">Each pill is one setting. Tap it to open its choices; tap outside to close. Only the pills that suit what you're doing are shown, so the row changes between Create, Edit and Video.</p>
+      <div class="gd-howto">
+        <p><b>Seeing all the pills:</b> the row is wider than the screen. <b>On a PC:</b> roll the <b>mouse wheel</b> while pointing at the row, or <b>click and drag</b> it sideways. <b>On a phone:</b> <b>swipe</b> the row left or right. A soft fade at the edge means there are more pills that way.</p>
+      </div>
       <div class="gd-grid">
         <article class="gd-card"><span class="gd-pill"><i class="gd-dot"></i>MiniMax H3 <em>Auto</em></span>
-          <p><b>Engine.</b> The model and workflow that makes the picture. <b>Auto</b> picks the right one for what you're doing (new picture, edit, video).</p>
-          <p class="gd-use">Switch to <b>Manual</b> to force a model, e.g. Krea 2 for a different look. Add more engines on the Workflows page.</p></article>
+          <p><b>Engine.</b> Which AI model makes it. <b>Auto</b> picks the right one for what you're doing.</p>
+          <p class="gd-use">Leave it on Auto. To choose yourself, open Settings (⚙) and pick a model.</p></article>
         <article class="gd-card"><span class="gd-pill"><strong>1:1</strong> 4 MP</span>
-          <p><b>Size.</b> Shape and megapixels. More MP = more detail, but slower.</p>
-          <p class="gd-use">When editing, pick <b>Match Picture 1 › Original</b> for removals and small fixes so only what you asked changes. Then <b>Upscale</b> if you need it bigger.</p></article>
+          <p><b>Size.</b> The shape (square, tall, wide) and how detailed (MP = megapixels).</p>
+          <p class="gd-use">For edits, pick <b>Match Picture 1 › Original</b> to keep your photo's size. Big sizes on small photos are handled for you (made at the photo's size, then enlarged).</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Mode</small> Edit Picture 1</span>
-          <p><b>Mode.</b> <b>Edit Picture 1</b> changes Picture 1 and keeps the rest. <b>Reference</b> makes a new scene and treats every picture as a reference.</p>
-          <p class="gd-use">Reference: a character in a new place, or a character sheet. Edit: changes to one photo.</p></article>
+          <p><b>Mode</b> (Edit only). <b>Edit Picture 1</b> changes your photo. <b>Reference</b> makes a brand-new scene using your pictures as examples.</p>
+          <p class="gd-use">Edit = "change this photo". Reference = "same person, new place".</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Enhance</small> Off</span>
-          <p><b>Prompt Enhancer.</b> Rewrites your prompt with more detail before sending. <b>Fast</b> is light; <b>Quality</b> is slower and richer.</p>
-          <p class="gd-use">Good for short prompts on new pictures. Keep it <b>Off</b> for exact edits, where your own words matter most.</p></article>
+          <p><b>Enhance.</b> Rewrites your words into a fuller description first. <b>Fast</b> is quick, <b>Quality</b> is richer but slower.</p>
+          <p class="gd-use">Good for short ideas. Keep <b>Off</b> when your exact words matter.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Camera</small> Any</span>
-          <p><b>Camera.</b> Angle, shot size, lens, focus and framing; one choice per group.</p>
-          <p class="gd-use">In <b>Edit</b> it re-shoots Picture 1 from the new viewpoint. In <b>Video</b> it adds motion: push-in, pan, tilt, orbit, tracking, handheld.</p></article>
+          <p><b>Camera.</b> Tap tiles for angle (from above, from below), how close, lens and focus. In Video it also has movement: pan, zoom, push-in, handheld.</p>
+          <p class="gd-use">One choice per group. <b>Clear</b> removes them.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Roles</small> Auto</span>
-          <p><b>Picture roles.</b> Says what each picture is for: base, person, outfit, background or object.</p>
-          <p class="gd-use">Auto is usually right. Set it yourself when the model mixes up who or what comes from which picture.</p></article>
+          <p><b>Roles</b> (2+ pictures). What each picture is for: the main photo, a person, an outfit, a background, an object.</p>
+          <p class="gd-use">Auto usually works. Set it if the result mixes things up.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Inpaint</small> Paint</span>
-          <p><b>Inpaint.</b> Paint the area that may change. Everything outside it stays exactly as it was.</p>
-          <p class="gd-use">Fix hands, swap an object, or place someone from Picture 2. Paint a little <b>bigger</b> than the thing so it fits whole, head and feet included.</p></article>
+          <p><b>Inpaint.</b> Paint over the part to change; everything else stays exactly the same.</p>
+          <p class="gd-use">See <a href="#gd-paint">Inpaint</a> for the painting tools.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Mark</small> Area</span>
-          <p><b>Mark.</b> Outline areas you can name in the prompt ("area 1") without limiting what changes.</p>
-          <p class="gd-use">Point at one of several similar things: "make area 1 red".</p></article>
+          <p><b>Mark.</b> Draw a box to point at something, so your words can say "the area" without limiting what changes.</p>
+          <p class="gd-use">Drag a box, then <b>Insert</b>.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>LoRA</small> None</span>
-          <p><b>LoRA.</b> Add-ons for a style, character or concept. <b>Auto</b> picks matching ones from your LoRA folder by reading your prompt, and adds their trigger words.</p>
-          <p class="gd-use">Strength 0.6 to 1.0 is a good range; up to 6 at once. Tap a LoRA to see or fix its trigger words.</p></article>
+          <p><b>LoRA.</b> Add-ons for a style, a character or a look. <b>Auto-pick</b> chooses matching ones from your prompt and adds their trigger words for you.</p>
+          <p class="gd-use">Type a name and press <b>Add</b>. Strength 0.6–1.0 is a good start. Tap a LoRA to see its trigger words.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Seed</small> Random</span>
-          <p><b>Seed.</b> <b>Random</b> gives a new variation each time. A fixed number repeats the same result for the same prompt.</p>
-          <p class="gd-use">Like a result? Tap <b>Use last image's seed</b>, then change one word at a time to fine-tune it.</p></article>
+          <p><b>Seed.</b> Random gives a new version every time. A fixed number repeats the same result.</p>
+          <p class="gd-use">Love one? <b>Use last image's seed</b>, then change one word at a time.</p></article>
         <article class="gd-card"><span class="gd-pill gd-round">?</span>
-          <p><b>Help.</b> Short tips for what is on screen right now.</p>
-          <p class="gd-use">The sliders button next to Clear holds the engine settings (Auto or Manual, steps, models).</p></article>
+          <p><b>Help.</b> Short tips for what's on screen right now.</p></article>
       </div>
     </section>
 
     <section class="gd-sec" id="gd-video">
-      <h2>Video</h2>
+      <h2>Making videos</h2>
+      <ol class="gd-steps">
+        <li>Switch the prompt box to <b>Video</b>.</li>
+        <li>Pick the video type with the <b>Text ▾</b> button: from words, from a picture (your picture is the first frame), from references, or a long video. Adding a picture picks "from a picture" for you.</li>
+        <li>Set <b>size</b> and <b>Length</b> in the pills, describe the movement, and send.</li>
+      </ol>
       <div class="gd-grid">
         <article class="gd-card"><span class="gd-pill"><strong>16:9</strong> 720p</span>
-          <p><b>Video size.</b> Shape and resolution. Sizes your graphics card can't make show greyed out with the memory they need (e.g. 1080p, 16 GB+).</p>
-          <p class="gd-use">480p is quick for tests, 720p for keepers. For 1080p on a smaller card, make it at 720p and use <b>Upscale</b> on the finished video.</p></article>
+          <p><b>Video size.</b> Shape and sharpness. Greyed-out sizes (e.g. "1080p · 16 GB+") need a bigger graphics card.</p>
+          <p class="gd-use">480p for quick tests, 720p for keepers.</p></article>
         <article class="gd-card"><span class="gd-pill"><small>Length</small> 5s</span>
-          <p><b>Length.</b> Type any number of seconds. Longer videos are made of short clips joined with no visible cut.</p>
-          <p class="gd-use"><b>Clip length</b> left empty = Auto, what fits your PC. Set it shorter for more control per clip or to save memory.</p></article>
-        <article class="gd-card"><span class="gd-pill"><small>Shots</small> 1, 2, 3</span>
-          <p><b>Shots.</b> Write <i>Shot 1: … Shot 2: …</i> in the prompt and each shot becomes its own clip, in order.</p>
-          <p class="gd-use">Give a shot its own length with <i>Shot 2 (3s):</i>. Up to 7 clips per video.</p></article>
-        <article class="gd-card"><span class="gd-pill"><small>Task</small> Image to video</span>
-          <p><b>Video task.</b> Text to video (no picture), Image to video (your picture is the first frame), References (people or things to include) and Long.</p>
-          <p class="gd-use">Adding a picture in Video switches to Image to video by itself.</p></article>
+          <p><b>Length.</b> Type the seconds and press <b>Set</b>. Long videos are joined from short clips with no visible cut.</p>
+          <p class="gd-use"><b>Clip length</b>: leave empty (Auto) unless you want control over each piece.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Shots</small></span>
+          <p><b>Shots.</b> Write <i>Shot 1: … Shot 2: …</i> and each shot becomes its own clip, in order.</p></article>
+        <article class="gd-card"><span class="gd-pill">Upscale</span>
+          <p><b>Upscale</b> (on a finished video) makes it bigger and sharper with what your PC can run.</p></article>
       </div>
     </section>
 
+    <section class="gd-sec" id="gd-settings">
+      <h2>Settings: Auto or Manual, and where things are</h2>
+      <p class="gd-lead">Open Settings with the <span class="gd-k">⚙ sliders</span> button at the bottom right of the prompt box (left of the send arrow).</p>
+      <div class="gd-table">
+        <div><span class="gd-k">Model family / Workflow</span><p><b>Pick the engine.</b> Choose a model family (e.g. MiniMax H3, Krea 2), then a workflow. Add more on the Workflows page.</p></div>
+        <div><span class="gd-k">Auto | Manual</span><p><b>Auto</b> (recommended): steps and other technical values follow the model, and the helper lines are chosen for each request. <b>Manual</b>: you set Steps, CFG, Sampler and Scheduler yourself, and tick which helpers to use.</p></div>
+        <div><span class="gd-k">Keep clothing / Keep quality</span><p><b>Helpers.</b> Keep the person's clothes unless you ask about clothes; keep the photo's look in edits. They step aside by themselves when your request changes that very thing.</p></div>
+        <div><span class="gd-k">Auto understanding</span><p>Adds clear notes about which picture is which (in Mode). Under Settings you can add your own words for it.</p></div>
+        <div><span class="gd-k">Prompt Enhancer instructions</span><p>For advanced users: what the Enhance pill tells the rewriter.</p></div>
+        <div><span class="gd-k">Models</span><p>Which model files the engine uses (only change these if you know you need to).</p></div>
+        <div><span class="gd-k">Updates · Restore defaults</span><p><b>Check for updates</b> / <b>Update now</b>. <b>Restore defaults</b> puts every setting back to how it started (your pictures are kept).</p></div>
+      </div>
+    </section>
+
+    <section class="gd-sec" id="gd-result">
+      <h2>After a picture is made</h2>
+      <p class="gd-lead">It opens big on screen, with a list of your edits on the left (or along the bottom on a phone). Tap any to see it.</p>
+      <div class="gd-table">
+        <div><span class="gd-k">Edit this</span><p>Use this result as the new Picture 1 and keep changing it.</p></div>
+        <div><span class="gd-k">Inpaint</span><p>Paint a part of this result to change just that.</p></div>
+        <div><span class="gd-k">Compare</span><p>Slide between before and after.</p></div>
+        <div><span class="gd-k">Details</span><p>The exact prompt sent, settings and seed. <b>Reuse</b> loads them back into the box.</p></div>
+        <div><span class="gd-k">Save</span><p>Downloads it (on a phone). On the PC it's already saved in your folder.</p></div>
+        <div><span class="gd-k">✕</span><p>Hides the big view. Nothing is deleted.</p></div>
+      </div>
+    </section>
+
+    <section class="gd-sec" id="gd-library">
+      <h2>Library</h2>
+      <ul class="gd-list">
+        <li><b>Filters:</b> All / Created / Edited, All / Images / Videos, ★ Favourites, and one engine.</li>
+        <li><b>Open a picture:</b> tap it. Use ‹ › (or swipe) for the next one. Buttons: Edit this, Inpaint, Compare, Copy prompt, Reuse settings, Favourite, Delete.</li>
+        <li><b>Pick several:</b> press <b>Select</b> (or press and hold a picture). Tick the ones you want, then <b>Select all</b>, <b>★ Favourite</b>, <b>Show in folder</b> or <b>Delete</b>. ✕ stops selecting.</li>
+        <li><b>Delete all</b> deletes everything shown (it asks first). Deleted files go to the <b>Recycle Bin</b>, so you can get them back.</li>
+        <li><b>Open folder</b> (on the PC) opens the folder where everything is saved.</li>
+      </ul>
+    </section>
+
+    <section class="gd-sec" id="gd-paint">
+      <h2>Inpaint: painting what to change</h2>
+      <ol class="gd-steps">
+        <li>Attach your photo, then tap the <b>Inpaint</b> pill (or <b>Inpaint</b> on a result).</li>
+        <li><b>Brush</b>: paint over what should change. <b>Box</b>: drag a rectangle. <b>Erase</b>: take paint away. <b>Size</b> sets the brush size.</li>
+        <li>Paint a little <b>bigger</b> than the thing, so whatever goes there fits whole (head and feet included).</li>
+        <li><b>+ Area</b> starts a separate area; you can refer to "area 1", "area 2" in your words. ↶ Undo / ↷ Redo, Invert, Clear help fix mistakes.</li>
+        <li>Press <b>Done</b>, type what should happen there, and send. Only the painted part changes.</li>
+      </ol>
+    </section>
+
+    <section class="gd-sec" id="gd-workflows">
+      <h2>Workflows (engines)</h2>
+      <ul class="gd-list">
+        <li>Each card is an engine: a model that makes pictures or videos. <b>Use</b> switches to it.</li>
+        <li>"Needs N files" means the model files aren't on your PC yet: <b>Download</b> fetches them from the official source (only when you tap it).</li>
+        <li><b>+ Upload workflow</b> adds your own ComfyUI workflow. The app works out where your prompt goes and can make a short <b>Test run</b>.</li>
+        <li><b>App</b> section: updates, and the switch "Install important fixes automatically".</li>
+      </ul>
+    </section>
+
+    <section class="gd-sec" id="gd-updates">
+      <h2>Updates</h2>
+      <p class="gd-lead">Comfy Studio checks for updates about a minute after you open it, then every 12 hours. A banner at the top tells you what's happening:</p>
+      <div class="gd-table">
+        <div><span class="gd-k">Important update · automatic</span><p>An important fix is ready. It waits until nothing is generating: let your picture finish, or press <b>Stop and install now</b>.</p></div>
+        <div><span class="gd-k">Installing in 15 s</span><p>A short countdown, then the app restarts by itself and the page reloads.</p></div>
+        <div><span class="gd-k">Important update</span><p>If you turned off automatic fixes: press <b>Install now</b> or <b>Later</b>.</p></div>
+        <div><span class="gd-k">Minor update</span><p>Install whenever it suits you: <b>Install</b> or <b>Later</b>.</p></div>
+        <div><span class="gd-k">Updated</span><p>Shown once after an update, with <b>What's new</b>.</p></div>
+      </div>
+      <p class="gd-tip">Updates never touch your pictures, PIN or settings, and a failed update undoes itself.</p>
+    </section>
+
     <section class="gd-sec" id="gd-recipes">
-      <h2>Recipes</h2>
+      <h2>Recipes: how to do common things</h2>
       <div class="gd-recipes">
         <details class="gd-rec" open><summary>Make a new picture</summary><ol>
-          <li>Image, no pictures attached.</li><li>Pick a <b>Size</b> (shape and MP).</li><li>Short idea? Set <b>Enhance</b> to Fast.</li><li>Send. Use <b>Seed</b> to re-roll or to keep a look.</li></ol></details>
+          <li>Image, no pictures attached.</li><li>Pick a <b>Size</b>.</li><li>Short idea? Set <b>Enhance</b> to Fast.</li><li>Type and press Enter.</li></ol></details>
         <details class="gd-rec"><summary>Remove or fix one small thing</summary><ol>
-          <li>Add the photo (it becomes Picture 1, Mode: Edit Picture 1).</li><li>Size: <b>Match Picture 1 › Original</b>.</li><li><b>Inpaint</b>: paint over the thing.</li><li>Prompt: "remove the cup" or "fix her hand".</li></ol></details>
+          <li>Press <b>+</b> and add your photo.</li><li><b>Inpaint</b>: paint over the thing.</li><li>Type "remove the cup" or "fix her hand" and send.</li></ol></details>
+        <details class="gd-rec"><summary>Change clothes, colours or hair</summary><ol>
+          <li>Add your photo.</li><li>Type the change: "make her dress black", "give him short hair".</li><li>Only that changes; the rest is kept.</li></ol></details>
         <details class="gd-rec"><summary>Put a person from another photo into yours</summary><ol>
-          <li>Picture 1 = the scene, Picture 2 = the person.</li><li><b>Inpaint</b>: paint where they should go, a bit larger than their whole body.</li><li>Prompt: "The woman from &lt;Picture 2&gt; is sitting on the sofa in &lt;Picture 1&gt;".</li><li>Cut off at the edge? Paint the area bigger and send again.</li></ol></details>
-        <details class="gd-rec"><summary>Change clothes using a clothing photo</summary><ol>
-          <li>Picture 1 = the person, Picture 2 = the outfit.</li><li><b>Roles</b>: set Picture 2 to Outfit if Auto gets it wrong.</li><li>Prompt: "She wears the dress from &lt;Picture 2&gt;".</li></ol></details>
-        <details class="gd-rec"><summary>Same character, new scene</summary><ol>
-          <li>Add the character's picture(s).</li><li><b>Mode</b>: Reference.</li><li>Describe the new scene and pose.</li></ol></details>
-        <details class="gd-rec"><summary>The same photo from another angle</summary><ol>
-          <li>Add the photo, Mode: Edit Picture 1.</li><li><b>Camera</b>: pick an Angle or a Move (e.g. Orbit left 45°).</li><li>The prompt can be short: "same scene".</li></ol></details>
+          <li>Picture 1 = the scene, Picture 2 = the person.</li><li><b>Inpaint</b>: paint where they go, a bit larger than their whole body.</li><li>"The woman from &lt;Picture 2&gt; is sitting on the sofa in &lt;Picture 1&gt;".</li></ol></details>
+        <details class="gd-rec"><summary>Give someone the face and hair from another photo</summary><ol>
+          <li>Picture 1 = the body/scene, Picture 2 = the face.</li><li>"She has the face and hair of &lt;Picture 2&gt;".</li><li>If her head isn't in Picture 1 yet ("reveal her face"), the app does it in two steps for a natural result.</li></ol></details>
+        <details class="gd-rec"><summary>Same person, new scene</summary><ol>
+          <li>Add their picture(s). <b>Mode</b>: Reference.</li><li>Describe the new place and pose.</li></ol></details>
+        <details class="gd-rec"><summary>See the photo from another angle</summary><ol>
+          <li>Add the photo. <b>Camera</b>: pick an angle or a move.</li><li>Type "same scene" and send.</li></ol></details>
         <details class="gd-rec"><summary>Turn a picture into a video</summary><ol>
-          <li>Switch to <b>Video</b> and add the picture (Image to video).</li><li><b>Length</b> 5 s at 720p.</li><li><b>Camera</b>: a move such as Move closer (slow push-in).</li><li>Describe the motion: "she turns and smiles, hair moving in the wind".</li></ol></details>
-        <details class="gd-rec"><summary>A longer video that tells a story</summary><ol>
-          <li>Video, then write <i>Shot 1: … Shot 2: … Shot 3: …</i>.</li><li>Length fills in by itself, one clip per shot.</li><li>Keep each shot to one clear action.</li></ol></details>
+          <li>Switch to <b>Video</b> and add the picture.</li><li>Length 5 s, 720p, a Camera move.</li><li>Describe the motion: "she turns and smiles".</li></ol></details>
+        <details class="gd-rec"><summary>A longer video with scenes</summary><ol>
+          <li>Video, then write <i>Shot 1: … Shot 2: …</i>.</li><li>Length fills in by itself.</li></ol></details>
         <details class="gd-rec"><summary>Use a LoRA for a style or character</summary><ol>
-          <li>Tap <b>LoRA</b>, turn on Auto or add one by name.</li><li>Strength around 0.8.</li><li>Trigger words go in by themselves; you'll see them in the LoRA panel.</li></ol></details>
+          <li>Tap <b>LoRA</b>; turn on Auto-pick or add one by name.</li><li>Strength around 0.8.</li></ol></details>
       </div>
     </section>
 
     <section class="gd-sec" id="gd-pc">
       <h2>Your PC</h2>
       <div class="gd-pc" id="gd-pc-box"><p class="muted">Checking this PC…</p></div>
+    </section>
+
+    <section class="gd-sec" id="gd-help">
+      <h2>When something goes wrong</h2>
+      <div class="gd-table">
+        <div><span class="gd-k">ComfyUI offline</span><p>Press <b>Start</b> at the top right and wait a minute. If it stays red, restart ComfyUI yourself.</p></div>
+        <div><span class="gd-k">It changed too much</span><p>Use <b>Inpaint</b> to limit the change, or set Size to <b>Match Picture 1 › Original</b>.</p></div>
+        <div><span class="gd-k">It ignored my words</span><p>Say it more simply and specifically ("make the left cup red"). Turn <b>Enhance</b> off for exact edits.</p></div>
+        <div><span class="gd-k">Out of memory / very slow</span><p>Use a smaller Size or video resolution, or a shorter video.</p></div>
+        <div><span class="gd-k">Something looks stuck</span><p><b>Stop</b> at the top cancels it. <b>Console</b> shows what's happening.</p></div>
+      </div>
     </section>
   </main>
 
@@ -1100,6 +1245,6 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261115b"></script>
-  <script src="/static/app.js?v=20261121g"></script>
+  <script src="/static/app.js?v=20261121i"></script>
 </body>
 </html>

@@ -9808,3 +9808,48 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   const base = setView;
   setView = function (v) { if (v !== "library" && on) setOn(false); return base.apply(this, arguments); };
 })();
+
+
+/* ===== ComfyUI memory: Auto / Manual start style v20261121 =====
+   Auto: ComfyUI runs as it was started; a job that runs out of graphics memory makes Comfy Studio restart ComfyUI a
+   step lighter and run the job again. Manual: Normal / Low memory / Lowest memory, chosen here, never changed by the
+   app. Only possible where Comfy Studio can restart ComfyUI itself (portable ComfyUI on this PC, or the PC Launcher). */
+(function () {
+  const g = $("mem-group");
+  if (!g) return;
+  let st = null;
+  const NOTES = {
+    auto: "Auto: nothing to do. If something runs out of graphics memory, Comfy Studio restarts ComfyUI in a memory-saving way and makes it again by itself.",
+    manual: "Manual: pick how ComfyUI uses memory. Low memory fits bigger models on smaller graphics cards but is a little slower.",
+  };
+  function paint() {
+    if (!st) return;
+    document.querySelectorAll("#mem-mode button").forEach((b) => b.classList.toggle("is-on", b.dataset.mem === st.mode));
+    document.querySelectorAll("#mem-style button").forEach((b) => b.classList.toggle("is-on", b.dataset.style === st.style));
+    $("mem-manual").classList.toggle("hidden", st.mode !== "manual");
+    $("mem-note").textContent = NOTES[st.mode] + (st.can_restart ? "" :
+      " (Comfy Studio can't restart this ComfyUI by itself, so it can only tell you when memory runs out.)");
+    $("mem-active").textContent = "Running now: " + ((st.names || {})[st.active] || "Normal");
+    $("mem-apply").disabled = !st.can_restart;
+  }
+  async function load() {
+    try { st = await api("/api/comfy/memory"); paint(); } catch (e) {}
+  }
+  async function save(body, quiet) {
+    try {
+      const r = await api("/api/comfy/memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!quiet) toast(r.message || "Saved");
+      await load();
+    } catch (e) { showError(e.message || "Couldn't save that."); }
+  }
+  document.querySelectorAll("#mem-mode button").forEach((b) => b.addEventListener("click", () => save({ mode: b.dataset.mem }, true)));
+  document.querySelectorAll("#mem-style button").forEach((b) => b.addEventListener("click", () => save({ style: b.dataset.style }, true)));
+  $("mem-apply").addEventListener("click", () => {
+    askConfirm({ title: "Restart ComfyUI?", body: "ComfyUI restarts in " + ((st.names || {})[st.style] || "this") + " mode. It takes about a minute; nothing in your library changes.",
+      yes: "Restart", onYes: () => save({ apply: true }) });
+  });
+  const gear = $("settings-gear");
+  if (gear) gear.addEventListener("click", () => setTimeout(load, 50));
+  if ($("engine-pill")) $("engine-pill").addEventListener("click", () => setTimeout(load, 50));
+  load();
+})();

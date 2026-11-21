@@ -35,6 +35,7 @@ import nodes_manager as NM
 import updater as UPD
 import specs as SP
 import edit_types as ET
+import comfy_memory as CM
 from validate_graphs import fetch_object_info, validate_graph, _combo_values
 
 PORT = int(os.environ.get("H3STUDIO_PORT", "8198"))
@@ -1964,6 +1965,7 @@ def hardware():
     out["ram_gb"] = round((sysinfo.get("ram_total") or 0) / 1024 ** 3, 1)
     argv = " ".join(sysinfo.get("argv") or [])
     out["profile"] = "h3" if "--preview-method none" in argv else ("video" if "--lowvram" in argv else "everyday")
+    _remember_comfy_start(sysinfo.get("argv") or [], bool(sysinfo.get("embedded_python")))
     if out["vram_gb"] and {k: _hw_last.get(k) for k in out} != out:
         _hw_last.clear()
         _hw_last.update(out)
@@ -2059,7 +2061,11 @@ def start_comfy(profile="everyday"):
         bat = next((os.path.join(COMFY_PORTABLE, b) for b in ("run_nvidia_gpu.bat", "run_comfyui.bat", "run_cpu.bat")
                     if os.path.isfile(os.path.join(COMFY_PORTABLE, b))), None)
         py = os.path.join(COMFY_PORTABLE, "python_embeded", "python.exe")
-        if os.path.isfile(py) and os.path.isfile(os.path.join(COMFY_ROOT, "main.py")):
+        saved = app_paths.load(DATA).get("comfy_argv")
+        style = comfy_manual_style() if comfy_start_mode() == "manual" else (COMFY_STYLE.get("active") or "normal")
+        if os.path.isfile(py) and os.path.isfile(os.path.join(COMFY_ROOT, "main.py")) and saved:
+            cmd = CM.start_command(saved, style, py, COMFY_ROOT)      # the options it was last started with
+        elif os.path.isfile(py) and os.path.isfile(os.path.join(COMFY_ROOT, "main.py")):
             cmd = [py, "-s", os.path.join(COMFY_ROOT, "main.py"), "--windows-standalone-build", "--disable-auto-launch"]
         elif bat:
             cmd = ["cmd", "/c", bat]
@@ -2069,6 +2075,134 @@ def start_comfy(profile="everyday"):
     _comfy_start["t"] = time.time()
     log.info("starting ComfyUI: %s", " ".join(cmd[:6]))
     return "Starting ComfyUI. This takes about a minute."
+
+
+COMFY_STYLE = {"active": None, "argv": None, "embedded": None, "busy": False, "note": ""}
+
+
+def _remember_comfy_start(argv, embedded):
+    if not argv:
+        return
+    COMFY_STYLE["argv"], COMFY_STYLE["embedded"] = list(argv), embedded
+    if COMFY_STYLE["active"] is None:
+        COMFY_STYLE["active"] = CM.style_of(argv)
+    try:
+        st = app_paths.load(DATA)
+        if st.get("comfy_argv") != list(argv) or st.get("comfy_embedded") != embedded:
+            st["comfy_argv"], st["comfy_embedded"] = list(argv), embedded
+            app_paths.save(DATA, st)
+    except Exception:
+        pass
+
+
+def comfy_start_mode():
+    """'auto' (default: lighter start + retry when a job runs out of memory) or 'manual' (the user's own style)."""
+    return "manual" if app_paths.load(DATA).get("comfy_start") == "manual" else "auto"
+
+
+def comfy_manual_style():
+    v = app_paths.load(DATA).get("comfy_style")
+    return v if v in CM.STYLES else "normal"
+
+
+def _comfy_local():
+    import urllib.parse
+    return (urllib.parse.urlsplit(COMFY).hostname or "") in ("127.0.0.1", "localhost", "::1")
+
+
+def comfy_restart_how():
+    """How Comfy Studio can restart ComfyUI in another style here: 'launcher', 'portable' or '' (it can't)."""
+    if not _comfy_local():
+        return ""
+    if os.path.isfile(LAUNCH_PS1):
+        return "launcher"
+    st = app_paths.load(DATA)
+    argv = COMFY_STYLE.get("argv") or st.get("comfy_argv")
+    embedded = COMFY_STYLE.get("embedded") if COMFY_STYLE.get("embedded") is not None else st.get("comfy_embedded")
+    py = os.path.join(COMFY_PORTABLE, "python_embeded", "python.exe")
+    if argv and embedded and os.path.isfile(py) and os.path.isfile(os.path.join(COMFY_ROOT, "main.py")):
+        return "portable"
+    return ""
+
+
+def restart_comfy_style(style, wait=True):
+    """Restart ComfyUI in a start style, keeping the user's own options. -> True when it is answering again."""
+    how = comfy_restart_how()
+    if not how:
+        raise ValueError("Comfy Studio can't restart this ComfyUI itself (it only can for the portable ComfyUI on "
+                         "this PC). Start ComfyUI with --lowvram yourself to save memory.")
+    import subprocess
+    if how == "launcher":
+        prof = CM.LAUNCHER_PROFILE[style]
+        if comfy_up():
+            switch_comfy_profile(prof)
+        else:
+            start_comfy(prof)
+    else:
+        st = app_paths.load(DATA)
+        argv = COMFY_STYLE.get("argv") or st.get("comfy_argv")
+        py = os.path.join(COMFY_PORTABLE, "python_embeded", "python.exe")
+        cmd = CM.start_command(argv, style, py, COMFY_ROOT)
+        if comfy_up():
+            stop_comfy(force=True)
+            for _ in range(30):
+                if not comfy_up():
+                    break
+                time.sleep(1)
+            time.sleep(2)
+        subprocess.Popen(cmd, cwd=COMFY_PORTABLE, creationflags=0x08000000 | 0x00000200, env=_quiet_env())
+        _comfy_start["t"] = time.time()
+        log.info("restarted ComfyUI in %s style: %s", style, " ".join(cmd[3:]))
+    COMFY_STYLE["active"] = style
+    _oi.update(t=0)
+    return _comfy_back(240) if wait else True
+
+
+def _maybe_memory_retry(job, text):
+    """Auto: a job that ran out of graphics memory (or ComfyUI fell over during it) is run again after ComfyUI is
+    restarted one style lighter. -> True when a retry was started (the job isn't failed)."""
+    if job.get("test_run") or comfy_start_mode() != "auto" or not CM.is_memory_failure(text):
+        return False
+    if job.get("_mem_tries", 0) >= 2 or COMFY_STYLE.get("busy"):
+        return False
+    cur = COMFY_STYLE.get("active") or CM.style_of(COMFY_STYLE.get("argv") or [])
+    nxt = CM.next_style(cur)
+    if not nxt or not comfy_restart_how():
+        return False
+    job["_mem_tries"] = job.get("_mem_tries", 0) + 1
+    job["status"] = "queued"
+    job["message"] = ("Ran out of graphics memory. Restarting ComfyUI in %s mode, then trying again "
+                      "(about a minute)\u2026" % CM.STYLE_NAMES[nxt].lower())
+    COMFY_STYLE["busy"] = True
+
+    def work():
+        try:
+            t0 = time.time()
+            while time.time() - t0 < 1800:       # never restart under another job
+                others = [j for j in jobs.values() if j is not job and j.get("status") == "running"]
+                if not others:
+                    break
+                time.sleep(5)
+            ok = restart_comfy_style(nxt, wait=True)
+            if not ok:
+                raise ValueError("ComfyUI didn't come back after the restart.")
+            for k in ("prompt_id", "node"):
+                job.pop(k, None)
+            job.update(progress=0, progress_max=0, error="", status="queued",
+                       message="Trying again with ComfyUI in %s mode\u2026" % CM.STYLE_NAMES[nxt].lower())
+            job["note"] = ((job.get("note") or "") + " It ran out of graphics memory, so ComfyUI was restarted in %s "
+                           "mode and it was made again." % CM.STYLE_NAMES[nxt].lower()).strip()
+            with q_cv:
+                job_q.append(job["id"])
+                q_cv.notify()
+        except Exception as e:
+            job.update(status="error", error="It ran out of graphics memory, and restarting ComfyUI in a lighter "
+                       "mode didn't work: %s" % e, t_done=time.time())
+        finally:
+            COMFY_STYLE["busy"] = False
+    threading.Thread(target=work, daemon=True).start()
+    log.info("job %s ran out of memory: retrying in %s style", job.get("id"), nxt)
+    return True
 
 
 def stop_comfy(force=False):
@@ -4709,6 +4843,8 @@ def _wait_for_job(job):
                     gallery_add(rec)
                 job["t_done"] = time.time()
                 return
+            if _maybe_memory_retry(job, ev.get("error") or ""):
+                return
             job["status"] = "error"
             job["error"] = ev.get("error") or "ComfyUI stopped the run."
             low = (job["error"] or "").lower()
@@ -4729,6 +4865,8 @@ def _wait_for_job(job):
                 job["message"] = "Generating… %d / %d" % (job["progress"], job["progress_max"])
         gone = _prompt_lost(pid, lost)
         if gone and not done_events.get(pid):
+            if _maybe_memory_retry(job, gone):
+                return
             job["status"] = "error"
             job["error"] = gone
             job["t_done"] = time.time()
@@ -5599,6 +5737,11 @@ class H(BaseHTTPRequestHandler):
             return self.j(INST.status())
         if path == "/api/setup/status":
             return self.j(SETUP)
+        if path == "/api/comfy/memory":
+            return self.j({"mode": comfy_start_mode(), "style": comfy_manual_style(),
+                           "active": COMFY_STYLE.get("active") or CM.style_of(COMFY_STYLE.get("argv") or []),
+                           "can_restart": bool(comfy_restart_how()), "how": comfy_restart_how(),
+                           "busy": bool(COMFY_STYLE.get("busy")), "names": CM.STYLE_NAMES})
         if path == "/api/loras/index":
             # every LoRA with its folder, model family and trigger words (read from the file itself)
             try:
@@ -6180,6 +6323,24 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/install/cancel":
             INST.cancel()
             return self.j({"ok": True})
+        if path == "/api/comfy/memory":
+            st = app_paths.load(DATA)
+            if data.get("mode") in ("auto", "manual"):
+                st["comfy_start"] = data["mode"]
+            if data.get("style") in CM.STYLES:
+                st["comfy_style"] = data["style"]
+            app_paths.save(DATA, st)
+            msg = "Saved."
+            if data.get("apply"):
+                if _active_job_count() or (comfy_queue() or {}).get("queue_running"):
+                    return self.j({"error": "Something is generating. Let it finish, then press Restart again."}, 409)
+                style = comfy_manual_style()
+                try:
+                    restart_comfy_style(style, wait=False)
+                except ValueError as e:
+                    return self.j({"error": str(e)}, 400)
+                msg = "Restarting ComfyUI in %s mode. This takes about a minute." % CM.STYLE_NAMES[style].lower()
+            return self.j({"ok": True, "message": msg, "mode": comfy_start_mode(), "style": comfy_manual_style()})
         if path == "/api/setup/start":
             try:
                 return self.j(start_setup(str(data.get("id") or "")))

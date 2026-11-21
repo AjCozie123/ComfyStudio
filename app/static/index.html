@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261121j">
+  <link rel="stylesheet" href="/static/app.css?v=20261121k">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -344,6 +344,7 @@
         <div><span class="gd-k">Auto understanding</span><p>Adds clear notes about which picture is which (in Mode). Under Settings you can add your own words for it.</p></div>
         <div><span class="gd-k">Prompt Enhancer instructions</span><p>For advanced users: what the Enhance pill tells the rewriter.</p></div>
         <div><span class="gd-k">Models</span><p>Which model files the engine uses (only change these if you know you need to).</p></div>
+        <div><span class="gd-k">ComfyUI memory</span><p><b>Auto</b> (recommended): if a picture or video runs out of graphics memory, Comfy Studio restarts ComfyUI in a memory-saving way and makes it again by itself. <b>Manual</b>: choose Normal, Low memory or Lowest memory yourself (slower, but fits bigger models on smaller cards).</p></div>
         <div><span class="gd-k">Updates · Restore defaults</span><p><b>Check for updates</b> / <b>Update now</b>. <b>Restore defaults</b> puts every setting back to how it started (your pictures are kept).</p></div>
       </div>
     </section>
@@ -443,7 +444,7 @@
         <div><span class="gd-k">ComfyUI offline</span><p>Press <b>Start</b> at the top right and wait a minute. If it stays red, restart ComfyUI yourself.</p></div>
         <div><span class="gd-k">It changed too much</span><p>Use <b>Inpaint</b> to limit the change, or set Size to <b>Match Picture 1 › Original</b>.</p></div>
         <div><span class="gd-k">It ignored my words</span><p>Say it more simply and specifically ("make the left cup red"). Turn <b>Enhance</b> off for exact edits.</p></div>
-        <div><span class="gd-k">Out of memory / very slow</span><p>Use a smaller Size or video resolution, or a shorter video.</p></div>
+        <div><span class="gd-k">Out of memory / very slow</span><p>With ComfyUI memory on <b>Auto</b> (Settings), Comfy Studio restarts ComfyUI in a memory-saving way and tries again by itself. Otherwise use a smaller Size or video resolution, or a shorter video.</p></div>
         <div><span class="gd-k">Something looks stuck</span><p><b>Stop</b> at the top cancels it. <b>Console</b> shows what's happening.</p></div>
       </div>
     </section>
@@ -935,6 +936,25 @@
       <p class="pop-label">Models in this workflow</p>
       <div class="field-grid one" id="wf-models"></div>
     </div>
+    <div class="settings-group" id="mem-group">
+      <p class="pop-label">ComfyUI memory</p>
+      <div class="seg seg-wide" id="mem-mode" role="radiogroup" aria-label="ComfyUI memory">
+        <button type="button" data-mem="auto" role="radio">Auto</button>
+        <button type="button" data-mem="manual" role="radio">Manual</button>
+      </div>
+      <p class="pop-note" id="mem-note"></p>
+      <div id="mem-manual" class="hidden">
+        <div class="seg seg-wide" id="mem-style" role="radiogroup" aria-label="Start style">
+          <button type="button" data-style="normal" role="radio">Normal</button>
+          <button type="button" data-style="lowmem" role="radio">Low memory</button>
+          <button type="button" data-style="lowest" role="radio">Lowest memory</button>
+        </div>
+        <div class="row-between">
+          <span class="pop-note" id="mem-active"></span>
+          <button type="button" class="chip-btn" id="mem-apply">Restart ComfyUI this way</button>
+        </div>
+      </div>
+    </div>
     <div class="settings-group">
       <p class="pop-label">App</p>
       <div class="row-between">
@@ -1245,6 +1265,6 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261115b"></script>
-  <script src="/static/app.js?v=20261121j"></script>
+  <script src="/static/app.js?v=20261121k"></script>
 </body>
 </html>

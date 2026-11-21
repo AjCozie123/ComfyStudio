@@ -2064,7 +2064,10 @@ def start_comfy(profile="everyday"):
         saved = app_paths.load(DATA).get("comfy_argv")
         style = comfy_manual_style() if comfy_start_mode() == "manual" else (COMFY_STYLE.get("active") or "normal")
         if os.path.isfile(py) and os.path.isfile(os.path.join(COMFY_ROOT, "main.py")) and saved:
-            cmd = CM.start_command(saved, style, py, COMFY_ROOT)      # the options it was last started with
+            cmd = CM.start_command(saved, style, py, COMFY_ROOT)      # the user's own start options
+            _launch_comfy(cmd)
+            log.info("starting ComfyUI (%s style): %s", style, " ".join(cmd[3:]))
+            return "Starting ComfyUI. This takes about a minute."
         elif os.path.isfile(py) and os.path.isfile(os.path.join(COMFY_ROOT, "main.py")):
             cmd = [py, "-s", os.path.join(COMFY_ROOT, "main.py"), "--windows-standalone-build", "--disable-auto-launch"]
         elif bat:
@@ -2081,16 +2084,39 @@ COMFY_STYLE = {"active": None, "argv": None, "embedded": None, "busy": False, "n
 
 
 def _remember_comfy_start(argv, embedded):
+    """The options ComfyUI was started with. Only a start the USER did (their own .bat, launcher, ...) becomes the
+    baseline every restart is built from; a start Comfy Studio did itself never replaces it, so Normal always gives
+    back exactly the user's own setup."""
     if not argv:
         return
     COMFY_STYLE["argv"], COMFY_STYLE["embedded"] = list(argv), embedded
-    if COMFY_STYLE["active"] is None:
-        COMFY_STYLE["active"] = CM.style_of(argv)
     try:
         st = app_paths.load(DATA)
-        if st.get("comfy_argv") != list(argv) or st.get("comfy_embedded") != embedded:
-            st["comfy_argv"], st["comfy_embedded"] = list(argv), embedded
-            app_paths.save(DATA, st)
+        ours = st.get("comfy_ours_argv")
+        if list(argv) != ours:
+            COMFY_STYLE["active"] = CM.style_of(argv)     # the user's own start: read its style from its options
+            if st.get("comfy_argv") != list(argv) or st.get("comfy_embedded") != embedded or ours:
+                st["comfy_argv"], st["comfy_embedded"] = list(argv), embedded
+                st.pop("comfy_ours_argv", None)          # the user started it themselves again
+                app_paths.save(DATA, st)
+        elif COMFY_STYLE["active"] is None:
+            COMFY_STYLE["active"] = CM.style_of(argv)
+    except Exception:
+        pass
+
+
+def _launch_comfy(cmd):
+    """Start ComfyUI in its own minimised console window (like the user's .bat), and remember it was us."""
+    import subprocess
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 7                                   # SW_SHOWMINNOACTIVE: minimised, doesn't take focus
+    subprocess.Popen(cmd, cwd=COMFY_PORTABLE, creationflags=0x00000010 | 0x00000200, startupinfo=si)
+    _comfy_start["t"] = time.time()
+    try:
+        st = app_paths.load(DATA)
+        st["comfy_ours_argv"] = cmd[2:]                  # how ComfyUI will report its own start: [main.py, options]
+        app_paths.save(DATA, st)
     except Exception:
         pass
 
@@ -2150,8 +2176,7 @@ def restart_comfy_style(style, wait=True):
                     break
                 time.sleep(1)
             time.sleep(2)
-        subprocess.Popen(cmd, cwd=COMFY_PORTABLE, creationflags=0x08000000 | 0x00000200, env=_quiet_env())
-        _comfy_start["t"] = time.time()
+        _launch_comfy(cmd)
         log.info("restarted ComfyUI in %s style: %s", style, " ".join(cmd[3:]))
     COMFY_STYLE["active"] = style
     _oi.update(t=0)

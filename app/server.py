@@ -5174,7 +5174,10 @@ def start_setup(wid):
 UPDATE_STATE = {"checked": 0, "status": None, "phase": "", "phase_until": 0}
 # phase: "" | "waiting" (an important update is ready, something is generating) | "installing" (a short countdown so
 # every open window can warn you) | "restarting"
-UPDATE_GRACE = 15          # seconds of warning before an automatic install starts
+UPDATE_GRACE = 60          # seconds of warning before an automatic install starts (an open page asks every minute)
+# how often an open app looks for a new release on GitHub (well within GitHub's 60 requests an hour per PC);
+# COMFYSTUDIO_UPDATE_EVERY (seconds) shortens it for testing
+UPDATE_EVERY = max(60, int(os.environ.get("COMFYSTUDIO_UPDATE_EVERY") or 3600))
 
 
 def auto_critical_on():
@@ -5280,7 +5283,7 @@ def _update_loop():
         except Exception as e:
             log.info("update check: %s", e)
             _set_phase("")
-        time.sleep(12 * 3600)
+        time.sleep(UPDATE_EVERY)
 
 
 def _pc_media(q):

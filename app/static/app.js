@@ -8483,7 +8483,7 @@ function bindShell() {
     if (st.error && st.behind) {
       show("error", "Update", "The update to " + ver + " couldn't install by itself (" + st.error + "). You can try Install now.",
         { notes: st.notes_url, install: "Install now", later: "Later" });
-      schedule(10 * 60000);
+      schedule(60000);
       return;
     }
     if (st.critical && st.behind) {
@@ -8498,7 +8498,7 @@ function bindShell() {
         show("important", "Important update", "Important update " + ver + " is available. It installs in a few seconds and keeps your library and settings.",
           { notes: st.notes_url, install: "Install now", later: "Later" });
       } else hide();
-      schedule(10 * 60000);
+      schedule(60000);
       return;
     }
     if (st.behind) {
@@ -8506,12 +8506,13 @@ function bindShell() {
         show("minor", "Minor update", "Update " + ver + " is available. Install it whenever it suits you.",
           { notes: st.notes_url, install: "Install", later: "Later" });
       } else hide();
-      schedule(30 * 60000);
+      schedule(60000);
       return;
     }
     if (b.dataset.kind !== "done") hide();
     // the server's first check runs about a minute after it starts: ask again soon until it has run
-    schedule(st.checked ? 30 * 60000 : 5000);
+    // an open app learns about a new release within the hour; asking every minute catches its notice
+    schedule(st.checked ? 60000 : 5000);
   }
 
   async function install(stop) {

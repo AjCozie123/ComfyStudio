@@ -1745,35 +1745,56 @@ async function refreshLibrary() {
     }
     state.library = state.libEngine ? all.filter((it) => engineOf(it) === state.libEngine) : all;
     const box = $("lib-grid");
-    box.innerHTML = "";
     if (!state.library.length) {
       box.innerHTML = '<p class="muted">' + (state.libMedia === "video" ? "No videos here yet. Make one in Video mode and it will show up here."
         : state.libMedia === "image" ? "No images here yet." : "Nothing in the library yet. Generate an image and it will show up here.") + '</p>';
       return;
     }
+    // Tiles are kept between refreshes (no flash, scroll stays put) and each one knows its picture's shape before
+    // the thumbnail arrives, so the grid doesn't jump while it fills in.
+    const old = new Map();
+    [...box.children].forEach((c) => { if (c.dataset && c.dataset.id) old.set(c.dataset.id, c); });
+    const frag = document.createDocumentFragment();
     state.library.forEach((it, i) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "lib-item";
-      b.title = it.prompt || it.filename;
-      const thumb = document.createElement("span");
-      thumb.className = "thumb";
-      const img = document.createElement("img");
-      img.loading = "lazy";
-      img.decoding = "async";
-      img.alt = it.prompt || "Result";
-      img.src = it.thumb;
-      thumb.appendChild(img);
-      b.appendChild(thumb);
-      if (it.fav) {
-        const s = document.createElement("span");
-        s.className = "star";
-        s.textContent = "\u2605";
-        b.appendChild(s);
+      let b = old.get(it.id);
+      if (!b) {
+        b = document.createElement("button");
+        b.type = "button";
+        b.className = "lib-item";
+        b.dataset.id = it.id;
+        const thumb = document.createElement("span");
+        thumb.className = "thumb";
+        if (it.width > 0 && it.height > 0) thumb.style.aspectRatio = it.width + " / " + it.height;
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.decoding = "async";
+        img.alt = it.prompt_user || it.prompt || "Result";
+        img.addEventListener("load", () => img.classList.add("is-in"), { once: true });
+        img.addEventListener("error", () => img.classList.add("is-in"), { once: true });
+        img.src = it.thumb;
+        if (img.complete) img.classList.add("is-in");
+        thumb.appendChild(img);
+        b.appendChild(thumb);
+        b.addEventListener("click", (e) => {
+          if (window.__libSel && window.__libSel.click(b, e)) return;   // selecting: a tap ticks it instead
+          openViewer(Number(b.dataset.idx) || 0);
+        });
+        if (window.__libSel) window.__libSel.bindHold(b);
       }
-      b.addEventListener("click", () => openViewer(i));
-      box.appendChild(b);
+      b.dataset.idx = String(i);
+      b.title = it.prompt_user || it.prompt || it.filename || "";
+      let star = b.querySelector(".star");
+      if (it.fav && !star) {
+        star = document.createElement("span");
+        star.className = "star";
+        star.textContent = "★";
+        b.appendChild(star);
+      } else if (!it.fav && star) star.remove();
+      if (window.__libSel) window.__libSel.mark(b);
+      frag.appendChild(b);
     });
+    box.replaceChildren(frag);
+    if (window.__libSel) window.__libSel.sync();
   } catch (e) {
     $("lib-grid").innerHTML = '<p class="error">' + e.message + "</p>";
   }
@@ -1918,12 +1939,28 @@ function openViewer(index) {
   renderReuse("viewer-reuse-box", "viewer-reuse-actions", it);
   $("viewer-ba").classList.toggle("hidden", !it.has_before);
   $("viewer-edit").classList.toggle("hidden", false);
-  const url = it.url + "&t=" + Date.now();
+  // the picture is cached (each library item is its own file): the thumbnail shows at once, the full picture
+  // replaces it when it arrives, and the pictures either side are fetched in the background for quick swiping
+  const url = it.url + "&v=" + Math.round(it.t || 0);
+  const vimg = $("viewer-img");
   $("viewer-compare").classList.add("hidden");
-  $("viewer-img").classList.remove("hidden");
-  $("viewer-img").src = url;
-  $("viewer-after").src = url;
+  vimg.classList.remove("hidden");
+  const want = state.viewerIndex;
+  const full = it.media === "video" ? null : new Image();   // a video plays in its own player (never fetched as a picture)
+  if (full) { full.decoding = "async"; full.src = url; }
+  if (!full) { vimg.removeAttribute("src"); vimg.classList.remove("is-low"); }
+  else if (full.complete && full.naturalWidth) { vimg.src = url; vimg.classList.remove("is-low"); }
+  else {
+    if (it.thumb && it.media !== "video") { vimg.src = it.thumb; vimg.classList.add("is-low"); }
+    const done = () => { if (state.viewerIndex === want && !$("viewer").classList.contains("hidden")) { vimg.src = url; vimg.classList.remove("is-low"); } };
+    if (full.decode) full.decode().then(done, done); else full.onload = done;
+  }
+  if (full) $("viewer-after").src = url;
   if (it.has_before) $("viewer-before").src = it.before_url;
+  [1, -1].forEach((d) => {
+    const n = state.library[(state.viewerIndex + d + state.library.length) % state.library.length];
+    if (n && n !== it && n.media !== "video") { const p = new Image(); p.decoding = "async"; p.src = n.url + "&v=" + Math.round(n.t || 0); }
+  });
 }
 
 function closeViewer() { $("viewer").classList.add("hidden"); }
@@ -1952,7 +1989,7 @@ async function toggleFav() {
 
 const CONFIRM_DELETE = {
   title: "Delete this image?",
-  body: "It will be removed from the library and from the Comfy Studio output folder only. Nothing else on the PC is touched.",
+  body: "It moves to the Recycle Bin (you can restore it from there) and leaves the library. Only Comfy Studio's own output folder is touched.",
   yes: "Delete",
 };
 
@@ -2512,7 +2549,7 @@ function bindExtras() {
 
 
 /* Auto understanding + Camera helper (dev/live integration). */
-const CAMERA_CATALOG = {"categories":[{"id":"angle","label":"Angle","options":[{"id":"eye_level","label":"Eye level","phrase":"eye-level camera"},{"id":"low_angle","label":"Low angle","phrase":"low angle, looking up at the subject"},{"id":"worms_eye","label":"Worm's-eye view","phrase":"worm's-eye view, looking straight up"},{"id":"high_angle","label":"High angle","phrase":"high angle, looking down at the subject"},{"id":"birds_eye","label":"Bird's-eye / top-down","phrase":"bird's-eye, top-down view"},{"id":"overhead_flat_lay","label":"Overhead flat lay","phrase":"overhead flat-lay, camera looking straight down"},{"id":"dutch","label":"Dutch / tilted","phrase":"dutch angle, camera tilted in the frame"},{"id":"ots","label":"Over-the-shoulder","phrase":"over-the-shoulder shot"},{"id":"pov","label":"POV / first-person","phrase":"point-of-view, first-person shot"},{"id":"profile_left","label":"Side profile (left)","phrase":"side-profile view from the subject's left"},{"id":"profile_right","label":"Side profile (right)","phrase":"side-profile view from the subject's right"},{"id":"three_quarter","label":"Three-quarter view","phrase":"three-quarter view"},{"id":"back_view","label":"Back view","phrase":"back view of the subject"},{"id":"from_behind","label":"From behind","phrase":"from behind the subject"}]},{"id":"shot","label":"Shot size","options":[{"id":"ecu","label":"Extreme close-up","phrase":"extreme close-up"},{"id":"cu","label":"Close-up","phrase":"close-up"},{"id":"mcu","label":"Medium close-up","phrase":"medium close-up"},{"id":"medium","label":"Medium","phrase":"medium shot"},{"id":"cowboy","label":"Cowboy","phrase":"cowboy shot, framed mid-thigh up"},{"id":"full","label":"Full body","phrase":"full-body shot"},{"id":"wide","label":"Wide","phrase":"wide shot"},{"id":"ews","label":"Extreme wide / establishing","phrase":"extreme wide, establishing shot"}]},{"id":"move","label":"Camera move / position","options":[{"id":"orbit_left_45","label":"Orbit left 45\u00b0","phrase":"camera orbited 45 degrees to the left of the original viewpoint"},{"id":"orbit_right_45","label":"Orbit right 45\u00b0","phrase":"camera orbited 45 degrees to the right of the original viewpoint"},{"id":"orbit_left_90","label":"Orbit left 90\u00b0","phrase":"camera orbited 90 degrees to the left of the original viewpoint"},{"id":"orbit_right_90","label":"Orbit right 90\u00b0","phrase":"camera orbited 90 degrees to the right of the original viewpoint"},{"id":"rotate_front","label":"Rotate to front","phrase":"camera rotated around to a front view"},{"id":"rotate_back","label":"Rotate to back","phrase":"camera rotated around to a back view"},{"id":"closer","label":"Move closer","phrase":"camera moved closer to the subject"},{"id":"further","label":"Move further","phrase":"camera moved further from the subject"},{"id":"raise","label":"Raise camera","phrase":"camera raised higher"},{"id":"lower","label":"Lower camera","phrase":"camera lowered"},{"id":"aerial","label":"Aerial / drone","phrase":"aerial, drone-like viewpoint"}]},{"id":"lens","label":"Lens","options":[{"id":"14mm","label":"Ultra-wide 14mm","phrase":"ultra-wide 14mm-equivalent look, very broad field of view"},{"id":"24mm","label":"24mm","phrase":"24mm-equivalent wide-lens look, broad field of view and natural verticals"},{"id":"35mm","label":"35mm","phrase":"35mm-equivalent look"},{"id":"50mm","label":"50mm","phrase":"50mm-equivalent natural field of view"},{"id":"85mm","label":"85mm portrait","phrase":"85mm-equivalent portrait look, narrower field of view and gently compressed background"},{"id":"200mm","label":"Telephoto 200mm","phrase":"telephoto 200mm-equivalent look, tight field of view and compressed perspective"},{"id":"fisheye","label":"Fisheye","phrase":"fisheye look with strong barrel distortion"},{"id":"macro","label":"Macro","phrase":"macro, extreme close detail"},{"id":"tilt_shift","label":"Tilt-shift","phrase":"tilt-shift look"}]},{"id":"focus","label":"Focus / depth","options":[{"id":"shallow","label":"Shallow DOF bokeh","phrase":"shallow depth of field with soft bokeh"},{"id":"deep","label":"Deep focus","phrase":"deep focus, sharp from foreground to background"}]},{"id":"style","label":"Style framing","options":[{"id":"symmetrical","label":"Symmetrical centered","phrase":"symmetrical, subject centered in the frame"},{"id":"thirds","label":"Rule of thirds","phrase":"rule-of-thirds framing"},{"id":"selfie","label":"Selfie","phrase":"handheld selfie framing"},{"id":"mirror_selfie","label":"Mirror selfie","phrase":"mirror-selfie framing"},{"id":"cctv","label":"CCTV","phrase":"CCTV / security-camera framing, slightly high and wide"},{"id":"gopro","label":"GoPro","phrase":"GoPro-style wide action framing"}]}]};
+const CAMERA_CATALOG = {"categories":[{"id":"angle","label":"Angle","options":[{"id":"eye_level","label":"Eye level","phrase":"eye-level camera"},{"id":"low_angle","label":"Low angle","phrase":"low angle, looking up at the subject"},{"id":"worms_eye","label":"Worm's-eye view","phrase":"worm's-eye view, looking straight up"},{"id":"high_angle","label":"High angle","phrase":"high angle, looking down at the subject"},{"id":"birds_eye","label":"Bird's-eye / top-down","phrase":"bird's-eye, top-down view"},{"id":"overhead_flat_lay","label":"Overhead flat lay","phrase":"overhead flat-lay, camera looking straight down"},{"id":"dutch","label":"Dutch / tilted","phrase":"dutch angle, camera tilted in the frame"},{"id":"ots","label":"Over-the-shoulder","phrase":"over-the-shoulder shot"},{"id":"pov","label":"POV / first-person","phrase":"point-of-view, first-person shot"},{"id":"profile_left","label":"Side profile (left)","phrase":"side-profile view from the subject's left"},{"id":"profile_right","label":"Side profile (right)","phrase":"side-profile view from the subject's right"},{"id":"three_quarter","label":"Three-quarter view","phrase":"three-quarter view"},{"id":"back_view","label":"Back view","phrase":"back view of the subject"},{"id":"from_behind","label":"From behind","phrase":"from behind the subject"}]},{"id":"shot","label":"Shot size","options":[{"id":"ecu","label":"Extreme close-up","phrase":"extreme close-up"},{"id":"cu","label":"Close-up","phrase":"close-up"},{"id":"mcu","label":"Medium close-up","phrase":"medium close-up"},{"id":"medium","label":"Medium","phrase":"medium shot"},{"id":"cowboy","label":"Cowboy","phrase":"cowboy shot, framed mid-thigh up"},{"id":"full","label":"Full body","phrase":"full-body shot"},{"id":"wide","label":"Wide","phrase":"wide shot"},{"id":"ews","label":"Extreme wide / establishing","phrase":"extreme wide, establishing shot"}]},{"id":"move","label":"Camera move / position","options":[{"id":"orbit_left_45","label":"Orbit left 45°","phrase":"camera orbited 45 degrees to the left of the original viewpoint","vphrase":"the camera slowly orbits 45 degrees to the left around the subject"},{"id":"orbit_right_45","label":"Orbit right 45°","phrase":"camera orbited 45 degrees to the right of the original viewpoint","vphrase":"the camera slowly orbits 45 degrees to the right around the subject"},{"id":"orbit_left_90","label":"Orbit left 90°","phrase":"camera orbited 90 degrees to the left of the original viewpoint","vphrase":"the camera orbits 90 degrees to the left around the subject"},{"id":"orbit_right_90","label":"Orbit right 90°","phrase":"camera orbited 90 degrees to the right of the original viewpoint","vphrase":"the camera orbits 90 degrees to the right around the subject"},{"id":"rotate_front","label":"Rotate to front","phrase":"camera rotated around to a front view","vphrase":"the camera circles around to a front view"},{"id":"rotate_back","label":"Rotate to back","phrase":"camera rotated around to a back view","vphrase":"the camera circles around to a back view"},{"id":"closer","label":"Move closer","phrase":"camera moved closer to the subject","vphrase":"slow push-in, the camera moves closer to the subject"},{"id":"further","label":"Move further","phrase":"camera moved further from the subject","vphrase":"slow pull-back, the camera moves away from the subject"},{"id":"raise","label":"Raise camera","phrase":"camera raised higher","vphrase":"the camera cranes up"},{"id":"lower","label":"Lower camera","phrase":"camera lowered","vphrase":"the camera cranes down"},{"id":"aerial","label":"Aerial / drone","phrase":"aerial, drone-like viewpoint","vphrase":"aerial drone shot gliding over the scene"},{"id":"static","label":"Locked-off (still)","video":true,"phrase":"locked-off static camera, no camera movement"},{"id":"pan_left","label":"Pan left","video":true,"phrase":"the camera pans slowly to the left"},{"id":"pan_right","label":"Pan right","video":true,"phrase":"the camera pans slowly to the right"},{"id":"tilt_up","label":"Tilt up","video":true,"phrase":"the camera tilts slowly upward"},{"id":"tilt_down","label":"Tilt down","video":true,"phrase":"the camera tilts slowly downward"},{"id":"tracking","label":"Tracking","video":true,"phrase":"tracking shot, the camera follows the subject as they move"},{"id":"handheld","label":"Handheld","video":true,"phrase":"handheld camera with natural slight shake"},{"id":"zoom_in","label":"Zoom in","video":true,"phrase":"slow smooth zoom in"},{"id":"zoom_out","label":"Zoom out","video":true,"phrase":"slow smooth zoom out"}]},{"id":"lens","label":"Lens","options":[{"id":"14mm","label":"Ultra-wide 14mm","phrase":"ultra-wide 14mm-equivalent look, very broad field of view"},{"id":"24mm","label":"24mm","phrase":"24mm-equivalent wide-lens look, broad field of view and natural verticals"},{"id":"35mm","label":"35mm","phrase":"35mm-equivalent look"},{"id":"50mm","label":"50mm","phrase":"50mm-equivalent natural field of view"},{"id":"85mm","label":"85mm portrait","phrase":"85mm-equivalent portrait look, narrower field of view and gently compressed background"},{"id":"200mm","label":"Telephoto 200mm","phrase":"telephoto 200mm-equivalent look, tight field of view and compressed perspective"},{"id":"fisheye","label":"Fisheye","phrase":"fisheye look with strong barrel distortion"},{"id":"macro","label":"Macro","phrase":"macro, extreme close detail"},{"id":"tilt_shift","label":"Tilt-shift","phrase":"tilt-shift look"}]},{"id":"focus","label":"Focus / depth","options":[{"id":"shallow","label":"Shallow DOF bokeh","phrase":"shallow depth of field with soft bokeh"},{"id":"deep","label":"Deep focus","phrase":"deep focus, sharp from foreground to background"}]},{"id":"style","label":"Style framing","options":[{"id":"symmetrical","label":"Symmetrical centered","phrase":"symmetrical, subject centered in the frame"},{"id":"thirds","label":"Rule of thirds","phrase":"rule-of-thirds framing"},{"id":"selfie","label":"Selfie","phrase":"handheld selfie framing"},{"id":"mirror_selfie","label":"Mirror selfie","phrase":"mirror-selfie framing"},{"id":"cctv","label":"CCTV","phrase":"CCTV / security-camera framing, slightly high and wide"},{"id":"gopro","label":"GoPro","phrase":"GoPro-style wide action framing"}]}]};
 
 function syncRoles() {
   if (!state.roles) state.roles = [];
@@ -2586,7 +2623,7 @@ function renderCameraChips() {
     const id = sel[cat.id];
     if (!id) return;
     const opt = (cat.options || []).find((o) => o.id === id);
-    if (!opt) return;
+    if (!opt || (opt.video && state.media !== "video")) return;
     count++;
     const chip = document.createElement("span");
     chip.className = "camera-chip";
@@ -2646,6 +2683,7 @@ function renderCameraSheet() {
     const tiles = document.createElement("div");
     tiles.className = "camera-tiles";
     (cat.options || []).forEach((opt) => {
+      if (opt.video && state.media !== "video") return;   // pans, tilts and zooms only make sense in a video
       const b = document.createElement("button");
       b.type = "button";
       b.className = "camera-tile" + (sel[cat.id] === opt.id ? " is-on" : "");
@@ -4119,6 +4157,7 @@ function bindShell() {
     closeAddMenu();
     if (state.media === "video") setVideoMode(state.images.length && !["r2v", "v2v", "long"].includes(state.vmode) ? "i2v" : state.vmode);
     else { setMode(state.images.length ? "edit" : "t2i"); syncMediaChrome(); }
+    if (typeof renderCameraChips === "function") renderCameraChips();   // video-only moves show only in Video
   }
   window.setMedia = setMedia;
   window.setVideoMode = setVideoMode;
@@ -5875,6 +5914,23 @@ function bindShell() {
       rebuildSeg("vres-seg", res, state.video.res, (v) => v, (v) => {
         state.video.res = v; LS.set("cs.v.res", v); window.syncVideoPills && window.syncVideoPills(); lengthNote(c);
       });
+      // sizes this engine can make on a bigger graphics card (e.g. 1080p on 16 GB+): shown, but not pickable here
+      Object.keys(c.locked || {}).forEach((r) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "is-locked";
+        b.setAttribute("aria-disabled", "true");
+        b.innerHTML = r + '<small>' + c.locked[r] + ' GB+</small>';
+        b.title = r + " needs a graphics card with " + c.locked[r] + " GB or more";
+        b.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const hw = window.__hw || {};
+          $("vres-note").textContent = r + " needs a graphics card with " + c.locked[r] + " GB or more" +
+            (hw.vram_gb ? " (this PC has " + hw.vram_gb + " GB)" : "") + ". It unlocks by itself on a PC that has one. "
+            + "Here, make it at " + res[res.length - 1] + " and use Upscale on the finished video to reach 1080p.";
+        });
+        $("vres-seg").appendChild(b);
+      });
       lengthNote(c);
     } else {
       lengthNote(null);
@@ -6429,8 +6485,9 @@ function bindShell() {
   window.__manualLoras = () => load().map((l) => l.name);
 
   async function ensureOptions() {
-    if (options) return options;
-    try { options = (await api("/api/loras")).items || []; } catch (e) { options = []; }
+    if (options && options.length) return options;
+    // an empty answer (ComfyUI still starting) is not kept, so the next tap asks again
+    try { options = (await api("/api/loras")).items || []; } catch (e) { options = options || []; }
     return options;
   }
 
@@ -6501,11 +6558,14 @@ function bindShell() {
     $("lora-search").value = "";
   }
 
-  $("lora-pill").addEventListener("click", async (e) => {
-    await ensureOptions();
-    if (window.__ensureLoraIndex) await window.__ensureLoraIndex();   // sliders' ranges for the rows
+  // Opens at once with what is already loaded; the LoRA list (about 500 KB, slow over a phone's connection) loads
+  // behind it and the panel fills in. Waiting for it first made a tap look dead, and a second tap closed the panel.
+  $("lora-pill").addEventListener("click", (e) => {
     render();
     showPop("lora-pop", e.currentTarget);
+    if ($("lora-pop").hidden) return;   // that tap closed it
+    Promise.all([ensureOptions(), window.__ensureLoraIndex ? window.__ensureLoraIndex() : null])
+      .then(() => { if (!$("lora-pop").hidden) render(); }, () => {});   // sliders' ranges for the rows
   });
   $("lora-add-btn").addEventListener("click", addFromSearch);
   $("lora-search").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addFromSearch(); } });
@@ -6676,7 +6736,10 @@ function bindShell() {
       const one = c.single[res] || 0, ext = c.extend[res] || 0;
       const clip = window.__clipFor ? window.__clipFor(c) : ((c.clip_by_res || {})[res] || c.clip_seconds || 5);
       const nClips = Math.max(1, Math.round(len / clip)), perClip = Math.round(len / nClips * 10) / 10;
-      if (one && len <= one) t = "At " + res + " this is one clip (up to " + one + " s in one clip on this PC).";
+      const split = userClip() > 0 && len > userClip() + 0.05 && ext;   // Clip length shorter than the video
+      if (one && len <= one && !split) t = "At " + res + " this is one clip (up to " + one + " s in one clip on this PC).";
+      else if (split && one && len <= one) t = "At " + res + " " + len + " s is made as " + nClips + " clips of about " + perClip +
+        " s (your Clip length), each continuing from the last. Leave Clip length empty for one " + len + " s clip.";
       else if (ext) t = (one ? "At " + res + " one clip is at most " + one + " s, so " + len + " s" : "At " + res + " " + len + " s") +
         " is made as an extended video: " + nClips + " clips of about " + perClip + " s at " + res +
         ", each continuing from the last. Up to " + ext + " s.";
@@ -6686,7 +6749,7 @@ function bindShell() {
         if (len > one && bigExt) t += " For longer, pick " + bigExt + " (made as an extended video, up to " + c.extend[bigExt] +
           " s) and use Upscale on the finished video to reach " + res + " or 1080p.";
       }
-      const extended = !(one && len <= one) && ext;
+      const extended = (!(one && len <= one) || split) && ext;
       t += extended && (c.extend_tested || []).indexOf(res) < 0 ? " (estimated for this PC)" : " (" + basis + ")";
     } else {
       t = Object.keys(lim).map((r) => r + ": up to " + lim[r] + " s").join(" · ") + " (" + basis + ").";
@@ -7390,6 +7453,8 @@ function bindShell() {
     if (h > H) { h = H; w = H * ar; }
     frame.style.width = Math.max(40, Math.floor(w)) + "px";
     frame.style.height = Math.max(40, Math.floor(h)) + "px";
+    // the caption sits exactly over the picture: same width, same left and right edges (min. room for a few words)
+    if (top) top.style.width = Math.min(W, Math.max(280, Math.floor(w))) + "px";
   }
 
   function render() {
@@ -8449,8 +8514,24 @@ function bindShell() {
   let LOADED = 0, ONLINE = null;
   // fetched again when it came back empty (ComfyUI was still starting) and every 10 minutes (trigger words found
   // online arrive in the background)
-  async function ensureIndex(force) {
-    if (INDEX && INDEX.length && !force && Date.now() - LOADED < 10 * 60 * 1000) return INDEX;
+  // One fetch at a time (a tap used to start two). A stale list is returned at once and refreshed behind it.
+  let FETCHING = null;
+  function ensureIndex(force) {
+    if (INDEX && INDEX.length && !force) {
+      if (Date.now() - LOADED >= 10 * 60 * 1000 && !FETCHING) fetchIndex();
+      return Promise.resolve(INDEX);
+    }
+    return fetchIndex(force);
+  }
+  function fetchIndex(fresh) {
+    // a forced load (after saving trigger words) waits for any load already running, then fetches again
+    if (FETCHING && !fresh) return FETCHING;
+    const p = (FETCHING || Promise.resolve()).then(loadIndex);
+    FETCHING = p.finally(() => { if (FETCHING === q) FETCHING = null; });
+    const q = FETCHING;
+    return q;
+  }
+  async function loadIndex() {
     try {
       const d = await api("/api/loras/index");
       INDEX = d.items || []; FAMMAP = d.engine_family || {}; GENERIC = new Set(d.generic || []); ONLINE = d.online || null;
@@ -8539,6 +8620,8 @@ function bindShell() {
   // the index entry of one LoRA (sliders carry their range and what + / - do), for the hand-added rows
   window.__loraItem = (name) => (INDEX || []).find((x) => x.name === name) || null;
   window.__ensureLoraIndex = ensureIndex;
+  // load the LoRA list while the app is idle, so the first tap on LoRA opens with everything ready
+  (window.requestIdleCallback || ((f) => setTimeout(f, 2500)))(() => { ensureIndex().catch(() => {}); }, { timeout: 6000 });
   function engineFam() {
     const a = window.__wfActive && window.__wfActive();
     if (!a) return state.media === "video" ? null : "minimax_h3";
@@ -8568,6 +8651,7 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     box.classList.toggle("hidden", !isOn());
     if (!isOn()) return;
     if (!engineFam()) { box.innerHTML = '<p class="pop-note">This engine\u2019s model family isn\u2019t known, so nothing is auto-picked.</p>'; return; }
+    if (!(INDEX && INDEX.length) && FETCHING) { box.innerHTML = '<p class="pop-note">Loading your LoRAs\u2026</p>'; return; }
     if (!list.length) { box.innerHTML = '<p class="pop-note">Nothing in your prompt matches a ' + esc(FAM_LABEL[engineFam()] || "") + " LoRA yet.</p>"; return; }
     box.innerHTML = '<p class="pop-label">Auto-picked from your prompt</p>';
     list.forEach((a) => {
@@ -8631,7 +8715,7 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     window.__syncLoraPill && window.__syncLoraPill();
     toast($("lora-auto").checked ? "LoRAs are picked from your prompt (for this engine's model)" : "Auto LoRAs off");
   });
-  $("lora-pill").addEventListener("click", async () => { $("lora-auto").checked = isOn(); await ensureIndex(); renderAuto(); });
+  $("lora-pill").addEventListener("click", async () => { $("lora-auto").checked = isOn(); const w = ensureIndex(); renderAuto(); await w; renderAuto(); });
   let pt = 0;
   $("prompt").addEventListener("input", () => {
     if (!isOn()) return;
@@ -9119,12 +9203,14 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     if (state.mode === "edit" && img && img.width && img.height && info && info.width && info.height) {
       const ratio = (info.width * info.height) / (img.width * img.height);
       if (ratio >= 3) {
-        show = true;
+        show = false;   // the yellow banner under the prompt is gone (it took up the chat); the size panel still says it
         const inMp = Math.max(0.1, Math.round(img.width * img.height / 1e5) / 10);
         txt.textContent = "Picture 1 is " + inMp + " MP and this edit would be " + (Math.round(info.width * info.height / 1e5) / 10)
           + " MP (" + Math.round(ratio) + "\u00d7 the pixels), so the model redraws most of it. For removals and small changes use Original, then Upscale.";
         const out = $("p1-output");
-        if (out && out.textContent.indexOf("\u00d7 Picture 1") < 0) out.textContent += " \u2014 " + Math.round(ratio) + "\u00d7 Picture 1's pixels.";
+        // the server makes such an edit at Picture 1's own scale (only your change happens), then upscales it
+        if (out && out.textContent.indexOf("\u00d7 Picture 1") < 0) out.textContent += " \u2014 " + Math.round(ratio) +
+          "\u00d7 Picture 1's pixels, so it's made at Picture 1's scale and upscaled to this size.";
       }
     }
     note.classList.toggle("hidden", !show);
@@ -9341,3 +9427,199 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   setInterval(sweep, 1000);
 })();
 /* ===== end media guard ===== */
+
+
+/* ===== Guide page v20261121 =====
+   A how-to for the pills and common jobs, between Library and Workflows. "Your PC" is filled from this PC's hardware
+   and the engine in use, so the numbers are real for whoever opens it. */
+(function () {
+  const page = $("view-guide");
+  if (!page) return;
+  const base = setView;
+  setView = function (view) {
+    const r = base.apply(this, arguments);       // hides the other pages, marks the nav button
+    const on = view === "guide";
+    page.classList.toggle("hidden", !on);
+    document.body.classList.toggle("view-guide", on);
+    if (on) { document.body.classList.remove("view-create"); fillPc(); }
+    return r;
+  };
+  page.querySelectorAll(".gd-jump a").forEach((a) => a.addEventListener("click", (e) => {
+    const t = document.querySelector(a.getAttribute("href"));
+    if (!t) return;
+    e.preventDefault();
+    t.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  const esc = (t) => String(t == null ? "" : t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  async function fillPc() {
+    const box = $("gd-pc-box");
+    let hw = window.__hw || {};
+    if (!hw.vram_gb) { try { hw = Object.assign({}, hw, await api("/api/hardware")); } catch (e) {} }
+    const rows = [];
+    if (hw.gpu || hw.vram_gb) rows.push(["Graphics card", esc(hw.gpu || "GPU") + (hw.vram_gb ? " · " + esc(hw.vram_gb) + " GB" : "")]);
+    if (hw.ram_gb) rows.push(["Memory", esc(hw.ram_gb) + " GB"]);
+    if (hw.image_mp_max) rows.push(["Pictures", "up to " + esc(hw.image_mp_max) + " MP" + (hw.image_mp_tested ? " (" + esc(hw.image_mp_tested) + " MP tested)" : "")]);
+    const a = window.__wfActive && window.__wfActive();
+    const c = a && a.card;
+    if (c && c.media === "video" && c.limits) {
+      rows.push(["Video (" + esc(c.name || c.family || "engine") + ")",
+        Object.keys(c.limits).map((r) => esc(r) + " up to " + esc(c.limits[r]) + " s").join(" · ")]);
+      const lk = Object.keys(c.locked || {});
+      if (lk.length) rows.push(["Needs a bigger card", lk.map((r) => esc(r) + " (" + esc(c.locked[r]) + " GB+)").join(" · ")]);
+    } else {
+      rows.push(["Video", "Switch to Video on Create to see the sizes and lengths this PC can make."]);
+    }
+    box.innerHTML = rows.length
+      ? '<dl class="gd-dl">' + rows.map((r) => "<dt>" + r[0] + "</dt><dd>" + r[1] + "</dd>").join("") + "</dl>"
+        + '<p class="gd-use">Numbers come from this PC. A bigger graphics card unlocks bigger sizes and longer clips by itself.</p>'
+      : '<p class="muted">Couldn\u2019t read this PC\u2019s hardware. Is ComfyUI running?</p>';
+  }
+})();
+
+
+/* ===== Library: select, select all, press-and-hold, bulk delete / favourite, open folder v20261121 =====
+   Select (or press and hold a picture) starts picking. Deleted files go to the Recycle Bin. "Open folder" and
+   "Show in folder" open File Explorer, so they only show on the PC itself. */
+(function () {
+  const grid = $("lib-grid"), bar = $("lib-selbar");
+  if (!grid || !bar) return;
+  const sel = new Set();
+  let on = false, held = null;
+  function shown() { return (state.library || []).map((it) => it.id); }
+  function setOn(v) {
+    on = !!v;
+    if (!on) sel.clear();
+    document.body.classList.toggle("lib-selecting", on);
+    $("lib-select").classList.toggle("is-on", on);
+    $("lib-select").setAttribute("aria-pressed", on ? "true" : "false");
+    sync();
+  }
+  function mark(b) { b.classList.toggle("is-sel", sel.has(b.dataset.id)); }
+  function sync() {
+    // anything no longer listed (filtered out, deleted) is no longer selected
+    const ids = new Set(shown());
+    [...sel].forEach((id) => { if (!ids.has(id)) sel.delete(id); });
+    grid.querySelectorAll(".lib-item").forEach(mark);
+    bar.classList.toggle("hidden", !on);
+    const n = sel.size;
+    $("lib-selcount").textContent = n ? n + " selected" : "Tap pictures to select";
+    const all = ids.size > 0 && n === ids.size;
+    $("lib-selall").textContent = all ? "Select none" : "Select all";
+    ["lib-selfav", "lib-seldel"].forEach((id) => { $(id).disabled = !n; });
+    $("lib-selshow").disabled = n !== 1;
+    const items = (state.library || []).filter((it) => sel.has(it.id));
+    $("lib-selfav").textContent = items.length && items.every((it) => it.fav) ? "☆ Unfavourite" : "★ Favourite";
+  }
+  function toggle(b) {
+    const id = b.dataset.id;
+    if (sel.has(id)) sel.delete(id); else sel.add(id);
+    sync();
+  }
+  // press and hold (phone or mouse) on a picture: start selecting with it ticked
+  function bindHold(b) {
+    let t = null, x = 0, y = 0;
+    const cancel = () => { clearTimeout(t); t = null; };
+    b.addEventListener("pointerdown", (e) => {
+      if (e.button > 0) return;
+      x = e.clientX; y = e.clientY;
+      cancel();
+      t = setTimeout(() => {
+        t = null;
+        held = b;                       // the click that follows the hold must not untick it again
+        if (!on) setOn(true);
+        sel.add(b.dataset.id); sync();
+        if (navigator.vibrate) try { navigator.vibrate(15); } catch (er) {}
+      }, 480);
+    });
+    b.addEventListener("pointermove", (e) => { if (t && Math.hypot(e.clientX - x, e.clientY - y) > 10) cancel(); });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => b.addEventListener(ev, cancel));
+    b.addEventListener("contextmenu", (e) => { if (on || held) e.preventDefault(); });
+  }
+  function click(b, e) {
+    if (held === b) { held = null; e.preventDefault(); return true; }
+    held = null;
+    if (!on) return false;
+    e.preventDefault();
+    toggle(b);
+    return true;
+  }
+  window.__libSel = { click, bindHold, mark, sync, off: () => setOn(false) };
+
+  $("lib-select").addEventListener("click", () => setOn(!on));
+  $("lib-selx").addEventListener("click", () => setOn(false));
+  $("lib-selall").addEventListener("click", () => {
+    const ids = shown();
+    if (sel.size === ids.length) sel.clear(); else ids.forEach((id) => sel.add(id));
+    sync();
+  });
+  $("lib-selfav").addEventListener("click", async () => {
+    const items = (state.library || []).filter((it) => sel.has(it.id));
+    const fav = !items.every((it) => it.fav);
+    try {
+      const r = await api("/api/favourite-many", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [...sel], fav }) });
+      toast((fav ? "Favourited " : "Unfavourited ") + r.count);
+      await refreshLibrary();
+    } catch (e) { showError(e.message || "Couldn't save that."); }
+  });
+  $("lib-seldel").addEventListener("click", () => {
+    const n = sel.size;
+    if (!n) return;
+    askConfirm({
+      title: "Delete " + n + (n === 1 ? " item?" : " items?"),
+      body: (n === 1 ? "It moves" : "They move") + " to the Recycle Bin (you can restore " + (n === 1 ? "it" : "them") +
+        " from there) and leave the library. Only Comfy Studio's own output folder is touched.",
+      yes: "Delete " + n,
+      onYes: async () => {
+        closeConfirm();
+        try {
+          const r = await api("/api/delete-many", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: [...sel] }) });
+          toast("Moved " + r.deleted + " to the Recycle Bin");
+          if (r.error) showError(r.error);
+        } catch (e) { showError(e.message || "Couldn't delete those."); }
+        setOn(false);
+        await refreshLibrary();
+      },
+    });
+  });
+  async function openFolder(id) {
+    try {
+      const r = await api("/api/open-folder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(id ? { id } : {}) });
+      toast("Opened " + r.path, 3200);
+    } catch (e) { showError(e.message || "Couldn't open the folder."); }
+  }
+  $("lib-folder").addEventListener("click", () => openFolder(null));
+  // Delete all: everything the Library is showing right now (the filters count), only after "Are you sure?"
+  $("lib-delall").addEventListener("click", () => {
+    const ids = shown();
+    if (!ids.length) { toast("Nothing to delete here"); return; }
+    const n = ids.length;
+    const filtered = state.libMode !== "all" || state.libFav || state.libEngine || (state.libMedia && state.libMedia !== "all");
+    askConfirm({
+      title: "Are you sure?",
+      body: "This deletes all " + n + (n === 1 ? " item" : " items") + (filtered ? " shown with the current filters" : " in your library") +
+        ". They move to the Recycle Bin (you can restore them from there). Only Comfy Studio's own output folder is touched.",
+      yes: "Delete all " + n,
+      onYes: async () => {
+        closeConfirm();
+        try {
+          const r = await api("/api/delete-many", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+          toast("Moved " + r.deleted + " to the Recycle Bin", 3200);
+          if (r.error) showError(r.error);
+        } catch (e) { showError(e.message || "Couldn't delete those."); }
+        setOn(false);
+        await refreshLibrary();
+      },
+    });
+  });
+  $("lib-selshow").addEventListener("click", () => { if (sel.size === 1) openFolder([...sel][0]); });
+  document.addEventListener("keydown", (e) => {
+    if (!on || state.view !== "library") return;
+    if (e.key === "Escape") { setOn(false); e.preventDefault(); }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) {
+      e.preventDefault(); shown().forEach((id) => sel.add(id)); sync();
+    }
+  });
+  // leaving the Library stops selecting
+  const base = setView;
+  setView = function (v) { if (v !== "library" && on) setOn(false); return base.apply(this, arguments); };
+})();

@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261115g">
+  <link rel="stylesheet" href="/static/app.css?v=20261121c">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -47,6 +47,9 @@
     <nav class="views topnav" aria-label="App section">
       <button type="button" class="is-on" data-view="create">Create</button>
       <button type="button" data-view="library">Library</button>
+      <button type="button" data-view="guide" title="Guide: how to use the pills" aria-label="Guide">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg><span class="nav-label">Guide</span>
+      </button>
       <button type="button" data-view="workflows" title="Workflows" aria-label="Workflows">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3.5" width="7" height="6" rx="1.6"/><rect x="14" y="14.5" width="7" height="6" rx="1.6"/><rect x="14" y="3.5" width="7" height="6" rx="1.6"/><path d="M10 6.5h4M17.5 9.5v5"/></svg><span class="nav-label">Workflows</span>
       </button>
@@ -188,6 +191,117 @@
     </details>
   </main>
 
+
+  <!-- ============ Guide view ============ -->
+  <main id="view-guide" class="page guide-page hidden">
+    <div class="wf-head">
+      <div>
+        <h1>Guide</h1>
+        <p class="muted">What every pill above the prompt does, when to use it, and step-by-step recipes.</p>
+      </div>
+    </div>
+    <nav class="gd-jump" aria-label="Guide sections">
+      <a href="#gd-start">Quick start</a><a href="#gd-pills">Pills</a><a href="#gd-video">Video</a><a href="#gd-recipes">Recipes</a><a href="#gd-pc">Your PC</a>
+    </nav>
+
+    <section class="gd-sec" id="gd-start">
+      <h2>Quick start</h2>
+      <ol class="gd-steps">
+        <li><b>Pick Image or Video</b> at the bottom left of the prompt box.</li>
+        <li><b>Add pictures</b> with <span class="gd-k">+</span> to edit one or use them as references. No pictures = a brand new picture.</li>
+        <li><b>Type what you want</b> in plain words, then check the pills above the box. The Auto settings are fine to start with.</li>
+        <li><b>Send</b> with the arrow. The result opens on the stage; tap <b>Edit this</b> to keep working on it.</li>
+      </ol>
+    </section>
+
+    <section class="gd-sec" id="gd-pills">
+      <h2>The pills</h2>
+      <p class="gd-lead">A pill only shows when the engine you're using supports it, so the row changes between Create, Edit and Video.</p>
+      <div class="gd-grid">
+        <article class="gd-card"><span class="gd-pill"><i class="gd-dot"></i>MiniMax H3 <em>Auto</em></span>
+          <p><b>Engine.</b> The model and workflow that makes the picture. <b>Auto</b> picks the right one for what you're doing (new picture, edit, video).</p>
+          <p class="gd-use">Switch to <b>Manual</b> to force a model, e.g. Krea 2 for a different look. Add more engines on the Workflows page.</p></article>
+        <article class="gd-card"><span class="gd-pill"><strong>1:1</strong> 4 MP</span>
+          <p><b>Size.</b> Shape and megapixels. More MP = more detail, but slower.</p>
+          <p class="gd-use">When editing, pick <b>Match Picture 1 › Original</b> for removals and small fixes so only what you asked changes. Then <b>Upscale</b> if you need it bigger.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Mode</small> Edit Picture 1</span>
+          <p><b>Mode.</b> <b>Edit Picture 1</b> changes Picture 1 and keeps the rest. <b>Reference</b> makes a new scene and treats every picture as a reference.</p>
+          <p class="gd-use">Reference: a character in a new place, or a character sheet. Edit: changes to one photo.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Enhance</small> Off</span>
+          <p><b>Prompt Enhancer.</b> Rewrites your prompt with more detail before sending. <b>Fast</b> is light; <b>Quality</b> is slower and richer.</p>
+          <p class="gd-use">Good for short prompts on new pictures. Keep it <b>Off</b> for exact edits, where your own words matter most.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Camera</small> Any</span>
+          <p><b>Camera.</b> Angle, shot size, lens, focus and framing; one choice per group.</p>
+          <p class="gd-use">In <b>Edit</b> it re-shoots Picture 1 from the new viewpoint. In <b>Video</b> it adds motion: push-in, pan, tilt, orbit, tracking, handheld.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Roles</small> Auto</span>
+          <p><b>Picture roles.</b> Says what each picture is for: base, person, outfit, background or object.</p>
+          <p class="gd-use">Auto is usually right. Set it yourself when the model mixes up who or what comes from which picture.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Inpaint</small> Paint</span>
+          <p><b>Inpaint.</b> Paint the area that may change. Everything outside it stays exactly as it was.</p>
+          <p class="gd-use">Fix hands, swap an object, or place someone from Picture 2. Paint a little <b>bigger</b> than the thing so it fits whole, head and feet included.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Mark</small> Area</span>
+          <p><b>Mark.</b> Outline areas you can name in the prompt ("area 1") without limiting what changes.</p>
+          <p class="gd-use">Point at one of several similar things: "make area 1 red".</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>LoRA</small> None</span>
+          <p><b>LoRA.</b> Add-ons for a style, character or concept. <b>Auto</b> picks matching ones from your LoRA folder by reading your prompt, and adds their trigger words.</p>
+          <p class="gd-use">Strength 0.6 to 1.0 is a good range; up to 6 at once. Tap a LoRA to see or fix its trigger words.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Seed</small> Random</span>
+          <p><b>Seed.</b> <b>Random</b> gives a new variation each time. A fixed number repeats the same result for the same prompt.</p>
+          <p class="gd-use">Like a result? Tap <b>Use last image's seed</b>, then change one word at a time to fine-tune it.</p></article>
+        <article class="gd-card"><span class="gd-pill gd-round">?</span>
+          <p><b>Help.</b> Short tips for what is on screen right now.</p>
+          <p class="gd-use">The sliders button next to Clear holds the engine settings (Auto or Manual, steps, models).</p></article>
+      </div>
+    </section>
+
+    <section class="gd-sec" id="gd-video">
+      <h2>Video</h2>
+      <div class="gd-grid">
+        <article class="gd-card"><span class="gd-pill"><strong>16:9</strong> 720p</span>
+          <p><b>Video size.</b> Shape and resolution. Sizes your graphics card can't make show greyed out with the memory they need (e.g. 1080p, 16 GB+).</p>
+          <p class="gd-use">480p is quick for tests, 720p for keepers. For 1080p on a smaller card, make it at 720p and use <b>Upscale</b> on the finished video.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Length</small> 5s</span>
+          <p><b>Length.</b> Type any number of seconds. Longer videos are made of short clips joined with no visible cut.</p>
+          <p class="gd-use"><b>Clip length</b> left empty = Auto, what fits your PC. Set it shorter for more control per clip or to save memory.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Shots</small> 1, 2, 3</span>
+          <p><b>Shots.</b> Write <i>Shot 1: … Shot 2: …</i> in the prompt and each shot becomes its own clip, in order.</p>
+          <p class="gd-use">Give a shot its own length with <i>Shot 2 (3s):</i>. Up to 7 clips per video.</p></article>
+        <article class="gd-card"><span class="gd-pill"><small>Task</small> Image to video</span>
+          <p><b>Video task.</b> Text to video (no picture), Image to video (your picture is the first frame), References (people or things to include) and Long.</p>
+          <p class="gd-use">Adding a picture in Video switches to Image to video by itself.</p></article>
+      </div>
+    </section>
+
+    <section class="gd-sec" id="gd-recipes">
+      <h2>Recipes</h2>
+      <div class="gd-recipes">
+        <details class="gd-rec" open><summary>Make a new picture</summary><ol>
+          <li>Image, no pictures attached.</li><li>Pick a <b>Size</b> (shape and MP).</li><li>Short idea? Set <b>Enhance</b> to Fast.</li><li>Send. Use <b>Seed</b> to re-roll or to keep a look.</li></ol></details>
+        <details class="gd-rec"><summary>Remove or fix one small thing</summary><ol>
+          <li>Add the photo (it becomes Picture 1, Mode: Edit Picture 1).</li><li>Size: <b>Match Picture 1 › Original</b>.</li><li><b>Inpaint</b>: paint over the thing.</li><li>Prompt: "remove the cup" or "fix her hand".</li></ol></details>
+        <details class="gd-rec"><summary>Put a person from another photo into yours</summary><ol>
+          <li>Picture 1 = the scene, Picture 2 = the person.</li><li><b>Inpaint</b>: paint where they should go, a bit larger than their whole body.</li><li>Prompt: "The woman from &lt;Picture 2&gt; is sitting on the sofa in &lt;Picture 1&gt;".</li><li>Cut off at the edge? Paint the area bigger and send again.</li></ol></details>
+        <details class="gd-rec"><summary>Change clothes using a clothing photo</summary><ol>
+          <li>Picture 1 = the person, Picture 2 = the outfit.</li><li><b>Roles</b>: set Picture 2 to Outfit if Auto gets it wrong.</li><li>Prompt: "She wears the dress from &lt;Picture 2&gt;".</li></ol></details>
+        <details class="gd-rec"><summary>Same character, new scene</summary><ol>
+          <li>Add the character's picture(s).</li><li><b>Mode</b>: Reference.</li><li>Describe the new scene and pose.</li></ol></details>
+        <details class="gd-rec"><summary>The same photo from another angle</summary><ol>
+          <li>Add the photo, Mode: Edit Picture 1.</li><li><b>Camera</b>: pick an Angle or a Move (e.g. Orbit left 45°).</li><li>The prompt can be short: "same scene".</li></ol></details>
+        <details class="gd-rec"><summary>Turn a picture into a video</summary><ol>
+          <li>Switch to <b>Video</b> and add the picture (Image to video).</li><li><b>Length</b> 5 s at 720p.</li><li><b>Camera</b>: a move such as Move closer (slow push-in).</li><li>Describe the motion: "she turns and smiles, hair moving in the wind".</li></ol></details>
+        <details class="gd-rec"><summary>A longer video that tells a story</summary><ol>
+          <li>Video, then write <i>Shot 1: … Shot 2: … Shot 3: …</i>.</li><li>Length fills in by itself, one clip per shot.</li><li>Keep each shot to one clear action.</li></ol></details>
+        <details class="gd-rec"><summary>Use a LoRA for a style or character</summary><ol>
+          <li>Tap <b>LoRA</b>, turn on Auto or add one by name.</li><li>Strength around 0.8.</li><li>Trigger words go in by themselves; you'll see them in the LoRA panel.</li></ol></details>
+      </div>
+    </section>
+
+    <section class="gd-sec" id="gd-pc">
+      <h2>Your PC</h2>
+      <div class="gd-pc" id="gd-pc-box"><p class="muted">Checking this PC…</p></div>
+    </section>
+  </main>
+
   <main id="view-library" class="page library-page hidden">
     <div class="lib-toolbar">
       <div class="seg" id="lib-modes" role="tablist" aria-label="Library filter">
@@ -202,6 +316,26 @@
       </div>
       <label class="pill toggle-pill fav-filter"><input type="checkbox" id="lib-fav"><span>★ Favourites</span></label>
       <select id="lib-engine" class="lib-engine hidden" aria-label="Show one engine"></select>
+      <span class="lib-tools">
+        <button type="button" class="pill lib-tool" id="lib-select" aria-pressed="false" title="Pick pictures to delete or favourite (or press and hold one)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.2l2.4 2.4 4.6-5"/></svg><span>Select</span>
+        </button>
+        <button type="button" class="pill lib-tool lib-tool-danger" id="lib-delall" title="Delete everything shown (asks first)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 7h15M9.5 7V5.2c0-.7.5-1.2 1.2-1.2h2.6c.7 0 1.2.5 1.2 1.2V7M6.5 7l.9 11.6c.1 1 .9 1.9 2 1.9h5.2c1.1 0 1.9-.8 2-1.9L17.5 7M10 11v5.5M14 11v5.5"/></svg><span>Delete all</span>
+        </button>
+        <button type="button" class="pill lib-tool host-only" id="lib-folder" title="Open the folder where your pictures and videos are saved">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg><span>Open folder</span>
+        </button>
+      </span>
+    </div>
+    <div id="lib-selbar" class="lib-selbar hidden" role="toolbar" aria-label="Selected pictures">
+      <span class="lib-selcount" id="lib-selcount">0 selected</span>
+      <button type="button" class="chip-btn" id="lib-selall">Select all</button>
+      <span class="lib-selgap"></span>
+      <button type="button" class="chip-btn" id="lib-selfav">★ Favourite</button>
+      <button type="button" class="chip-btn host-only" id="lib-selshow">Show in folder</button>
+      <button type="button" class="chip-btn danger" id="lib-seldel">Delete</button>
+      <button type="button" class="icon-btn sm" id="lib-selx" aria-label="Stop selecting">✕</button>
     </div>
     <div id="lib-grid" class="lib-grid masonry">
       <p class="muted" id="lib-empty">Nothing in the library yet. Generate an image and it will show up here.</p>
@@ -964,6 +1098,6 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261115b"></script>
-  <script src="/static/app.js?v=20261120a"></script>
+  <script src="/static/app.js?v=20261121d"></script>
 </body>
 </html>

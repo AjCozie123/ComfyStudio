@@ -48,17 +48,27 @@ CATEGORIES = [
         "id": "move",
         "label": "Camera move / position",
         "options": [
-            {"id": "orbit_left_45", "label": "Orbit left 45°", "phrase": "camera orbited 45 degrees to the left of the original viewpoint"},
-            {"id": "orbit_right_45", "label": "Orbit right 45°", "phrase": "camera orbited 45 degrees to the right of the original viewpoint"},
-            {"id": "orbit_left_90", "label": "Orbit left 90°", "phrase": "camera orbited 90 degrees to the left of the original viewpoint"},
-            {"id": "orbit_right_90", "label": "Orbit right 90°", "phrase": "camera orbited 90 degrees to the right of the original viewpoint"},
-            {"id": "rotate_front", "label": "Rotate to front", "phrase": "camera rotated around to a front view"},
-            {"id": "rotate_back", "label": "Rotate to back", "phrase": "camera rotated around to a back view"},
-            {"id": "closer", "label": "Move closer", "phrase": "camera moved closer to the subject"},
-            {"id": "further", "label": "Move further", "phrase": "camera moved further from the subject"},
-            {"id": "raise", "label": "Raise camera", "phrase": "camera raised higher"},
-            {"id": "lower", "label": "Lower camera", "phrase": "camera lowered"},
-            {"id": "aerial", "label": "Aerial / drone", "phrase": "aerial, drone-like viewpoint"},
+            {"id": "orbit_left_45", "label": "Orbit left 45°", "phrase": "camera orbited 45 degrees to the left of the original viewpoint", "vphrase": "the camera slowly orbits 45 degrees to the left around the subject"},
+            {"id": "orbit_right_45", "label": "Orbit right 45°", "phrase": "camera orbited 45 degrees to the right of the original viewpoint", "vphrase": "the camera slowly orbits 45 degrees to the right around the subject"},
+            {"id": "orbit_left_90", "label": "Orbit left 90°", "phrase": "camera orbited 90 degrees to the left of the original viewpoint", "vphrase": "the camera orbits 90 degrees to the left around the subject"},
+            {"id": "orbit_right_90", "label": "Orbit right 90°", "phrase": "camera orbited 90 degrees to the right of the original viewpoint", "vphrase": "the camera orbits 90 degrees to the right around the subject"},
+            {"id": "rotate_front", "label": "Rotate to front", "phrase": "camera rotated around to a front view", "vphrase": "the camera circles around to a front view"},
+            {"id": "rotate_back", "label": "Rotate to back", "phrase": "camera rotated around to a back view", "vphrase": "the camera circles around to a back view"},
+            {"id": "closer", "label": "Move closer", "phrase": "camera moved closer to the subject", "vphrase": "slow push-in, the camera moves closer to the subject"},
+            {"id": "further", "label": "Move further", "phrase": "camera moved further from the subject", "vphrase": "slow pull-back, the camera moves away from the subject"},
+            {"id": "raise", "label": "Raise camera", "phrase": "camera raised higher", "vphrase": "the camera cranes up"},
+            {"id": "lower", "label": "Lower camera", "phrase": "camera lowered", "vphrase": "the camera cranes down"},
+            {"id": "aerial", "label": "Aerial / drone", "phrase": "aerial, drone-like viewpoint", "vphrase": "aerial drone shot gliding over the scene"},
+            # video only: moves that need time to happen
+            {"id": "static", "label": "Locked-off (still)", "video": True, "phrase": "locked-off static camera, no camera movement"},
+            {"id": "pan_left", "label": "Pan left", "video": True, "phrase": "the camera pans slowly to the left"},
+            {"id": "pan_right", "label": "Pan right", "video": True, "phrase": "the camera pans slowly to the right"},
+            {"id": "tilt_up", "label": "Tilt up", "video": True, "phrase": "the camera tilts slowly upward"},
+            {"id": "tilt_down", "label": "Tilt down", "video": True, "phrase": "the camera tilts slowly downward"},
+            {"id": "tracking", "label": "Tracking", "video": True, "phrase": "tracking shot, the camera follows the subject as they move"},
+            {"id": "handheld", "label": "Handheld", "video": True, "phrase": "handheld camera with natural slight shake"},
+            {"id": "zoom_in", "label": "Zoom in", "video": True, "phrase": "slow smooth zoom in"},
+            {"id": "zoom_out", "label": "Zoom out", "video": True, "phrase": "slow smooth zoom out"},
         ],
     },
     {
@@ -147,8 +157,14 @@ def chips(selections) -> list:
     return out
 
 
-def details_text(selections) -> str:
-    parts = [c["phrase"] for c in chips(selections)]
+def details_text(selections, mode: str = "t2i") -> str:
+    video = (mode or "").lower() == "video"
+    parts = []
+    for c in chips(selections):
+        opt = _OPT[(c["category"], c["id"])]
+        if opt.get("video") and not video:
+            continue                          # a pan or a zoom means nothing in a still picture
+        parts.append(opt.get("vphrase") or opt["phrase"] if video else opt["phrase"])
     if not parts:
         return ""
     if len(parts) == 1:
@@ -158,10 +174,13 @@ def details_text(selections) -> str:
 
 def camera_block(selections, mode: str = "t2i") -> str:
     """Standalone camera instruction appended to the user/assist prompt."""
-    details = details_text(selections)
+    mode = (mode or "t2i").strip().lower()
+    details = details_text(selections, mode)
     if not details:
         return ""
-    mode = (mode or "t2i").strip().lower()
+    if mode == "video":
+        # a video moves through time: the camera notes describe the shot and its motion, never a re-shoot of a still
+        return "Camera: %s." % details
     if mode in ("edit", "image-edit", "image_edit"):
         return (
             "Re-shoot the same scene of <Picture 1> from this new viewpoint, "

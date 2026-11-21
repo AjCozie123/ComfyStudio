@@ -844,7 +844,50 @@ _TRANSFER = re.compile(
     r"\b(?:transfer|move|bring|take|copy|carry|drop|put|place|insert|add)\w* " + _WHO + r" (?:from|in|out of) " + _PIC
     + r"|\b(?:transfer|move|bring|copy|carry)\w* (?:him|her|them|it)? ?(?:into|to|onto|over to|in) (?:the )?(?:scene|photo|picture|room|background|" + _PIC + r")"
     + r"|\b(?:into|onto) (?:the scene (?:of|in|from) )?" + _PIC.replace("\\d", "1"), re.I)
+# "the woman from <Picture 2> is sat on the seat ...": a person from another picture placed in the scene
+_PLACED = re.compile(r"\b(?:person|people|man|men|woman|women|girl|boy|guy|lady|subject|model|character)\s+from\s+" + _PIC
+                     + r"\s+(?:is|are|was|now|sits?|sitting|sat|stands?|standing|stood|lies|lying|lay|leans?|leaning|"
+                     r"kneels?|kneeling|knelt|crouch\w*|poses?|posing|walks?|walking|goes|appears?)\b", re.I)
 SWAP_LEAD_INTENTS = ("head_swap", "face_swap", "body_swap")
+
+
+# "she has the face and hair of <Picture 2>", "give her the face from Picture 2", "make her look like the woman in
+# <Picture 2>": an identity taken from another picture (no swap verb). Face + hair (or head / likeness) = head swap,
+# face only = face swap; hair only is left to the hair wording.
+_ID_FROM = re.compile(
+    r"\b(face|faces|facial features|head|heads|hair|hairstyle|haircut|identity|likeness|features)\b"
+    r"((?:\s*(?:,|and|&|\+)\s*(?:her |his |their |the )?(?:face|facial features|head|hair|hairstyle|identity|features))*)"
+    r"[^.<]{0,40}?\b(?:of|from|like|as in|in|with)\s+(?:the\s+\w+\s+(?:from|in)\s+)?" + _PIC, re.I)
+_LOOKS_LIKE = re.compile(r"\b(?:look|looks|looking)\s+(?:exactly\s+)?like\s+(?:the\s+\w+\s+(?:from|in)\s+)?" + _PIC
+                         + r"|\bresembl\w*\s+(?:the\s+\w+\s+(?:from|in)\s+)?" + _PIC, re.I)
+# the head / face is not in Picture 1 yet (cropped off, covered, turned away): it is drawn, not replaced
+_REVEAL = re.compile(r"\b(?:reveal\w*|uncover\w*|unmask\w*|show\w*|extend\w*|outpaint\w*|zoom\w* out)\b[^.]{0,40}?"
+                     r"\b(?:head|face|hair)\b", re.I)
+
+
+def identity_kind(prompt: str) -> str:
+    """'head' (face and hair / head / whole likeness), 'face', 'hair' or '' for an identity taken from Picture N>1."""
+    t = prompt or ""
+    if _LOOKS_LIKE.search(t):
+        return "head"
+    words = set()
+    for m in _ID_FROM.finditer(t):
+        pic = re.search(r"(\d)\s*>?\s*$", m.group(0))
+        if pic and pic.group(1) == "1":
+            continue                                     # "her face in <Picture 1>" is the base, not a source
+        words |= {w.strip().lower() for w in re.findall(r"face|facial features|head|hair|hairstyle|haircut|identity|likeness|features",
+                                                       (m.group(1) + " " + (m.group(2) or "")), re.I)}
+    if not words:
+        return ""
+    face = bool(words & {"face", "facial features", "identity", "likeness", "features"})
+    hair = bool(words & {"hair", "hairstyle", "haircut"})
+    if "head" in words or (face and hair) or words & {"identity", "likeness"}:
+        return "head"
+    return "face" if face else ("hair" if hair else "")
+
+
+def is_reveal(prompt: str) -> bool:
+    return bool(_REVEAL.search(prompt or ""))
 
 
 def swap_intent(prompt: str, n_images: int) -> str:
@@ -857,11 +900,16 @@ def swap_intent(prompt: str, n_images: int) -> str:
         return "head_swap"
     if _SWAP_FACE.search(t):
         return "face_swap"
+    kind = identity_kind(t)                       # no swap verb, but an identity taken from Picture N
+    if kind == "head":
+        return "head_swap"
+    if kind == "face":
+        return "face_swap"
     if _OUTFIT.search(t):
         return "clothing_transfer"
     if _SWAP_BODY.search(t):
         return "body_swap"
-    if _TRANSFER.search(t):
+    if _TRANSFER.search(t) or _PLACED.search(t):
         return "subject_into_environment"
     return ""
 
@@ -946,7 +994,7 @@ def classify_intent(prompt: str, roles: list, ref_mode: bool = False) -> str:
         "put him", "put her", "put them", "add him", "add her",
         "add the person", "add the man", "add the woman", "add the girl",
         "insert him", "insert her", "stand in", "sitting in this",
-        "into <picture 1>", "in <picture 1>",
+        "into <picture 1>",
     )) or (
         resolved[0] == "base" and "subject" in role_set and _has_any(t, (
             "put", "place", "add", "insert", "into", "in this", "in the",
@@ -1074,11 +1122,21 @@ def _appendix_for(intent: str, resolved: list, ref_mode: bool, skip_preserve: bo
 
     # Swaps: the wording the BFS swap LoRAs were trained on (Alissonerdx/BFS-Best-Face-Swap guides). It is also the
     # clearest instruction for edit models without those LoRAs, so every edit engine gets it.
+    if intent in ("head_swap", "face_swap") and is_reveal(prompt):
+        what = "head, face and hair" if intent == "head_swap" else "face"
+        return ("%s: start with %s as the base image, keeping its body, clothing, pose, lighting, environment and "
+                "background. Reveal the person's head in %s with the %s of the person in %s, strictly preserving "
+                "their identity, eye color and nose structure%s. The head turns and tilts the way the shoulders in %s "
+                "face, is seen from %s's camera angle, is life-size for the body, and has the skin tone, lighting, "
+                "focus and grain of %s, with makeup and expression that suit this casual photo, not %s's studio "
+                "makeup or posed smile." % (intent, base, base, what, ref,
+                                            " and hair" if intent == "head_swap" else "", base, base, base, ref))
     if intent == "head_swap":
         return ("head_swap: start with %s as the base image, keeping its lighting, environment, and background. "
                 "Remove the head from %s completely and replace it with the head from %s, strictly preserving the hair, "
                 "eye color, and nose structure of %s. Copy the eye direction, head rotation, and micro-expressions from %s. "
-                "Keep the body, clothing, pose, framing, and background of %s intact." % (base, base, ref, ref, base, base))
+                "Match the skin tone and lighting of %s. Keep the body, clothing, pose, framing, and background of %s "
+                "intact." % (base, base, ref, ref, base, base, base))
     if intent == "face_swap":
         return ("face_swap: start with %s as the base image. Replace only the face of the person in %s with the face from %s, "
                 "preserving the identity, facial features, eye color, and nose structure of %s and matching the skin tone. "
@@ -1522,3 +1580,9 @@ def pe_task_prefix(assist_info: dict) -> str:
 
 def pe_task_addon(assist_info, **_kwargs):
     return pe_task_prefix(assist_info if isinstance(assist_info, dict) else {})
+
+
+def swap_note(intent: str, prompt: str, n_images: int) -> str:
+    """The swap wording for one head / face swap, for when Auto understanding is off."""
+    resolved = ["base"] + ["subject"] * max(1, int(n_images or 2) - 1)
+    return _appendix_for(intent, resolved, False, False, prompt=prompt)

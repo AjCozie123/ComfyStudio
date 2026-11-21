@@ -203,6 +203,27 @@ def original_size_spec(input_size, multiple=32):
     }
 
 
+NATIVE_MP_MIN, NATIVE_MP_MAX = 1.5, 4.2   # H3's node is tuned for about 2048x2048 (4.2 MP)
+
+
+def native_edit_resolution(input_size, out_w, out_h, multiple=32):
+    """The size to MAKE an edit at so H3 changes only what was asked: Picture 1's own scale (1.5-4.2 MP).
+    Same shape as Picture 1 -> its original pixels (or its shape at the clamped MP); another shape (revealing a
+    head, widening the frame) -> that shape at Picture 1's pixel count. Returns a resolution string."""
+    iw, ih = int(input_size[0]), int(input_size[1])
+    p1 = iw * ih / 1e6
+    mp = min(NATIVE_MP_MAX, max(NATIVE_MP_MIN, p1))
+    same_shape = abs((out_w / float(out_h)) / (iw / float(ih)) - 1.0) < 0.03
+    if same_shape:
+        if NATIVE_MP_MIN <= p1 <= NATIVE_MP_MAX:
+            return "picture1:original"
+        return "picture1:%s" % round(mp, 2)
+    ar = out_w / float(out_h)
+    w = max(multiple, int(round(math.sqrt(mp * 1e6 * ar) / multiple)) * multiple)
+    h = max(multiple, int(round(math.sqrt(mp * 1e6 / ar) / multiple)) * multiple)
+    return "%dx%d" % (w, h)
+
+
 def picture1_mp_spec(input_size, mp, multiple=32):
     if not input_size or not input_size[0] or not input_size[1]:
         raise ValueError("Match Picture 1 needs Picture 1 so the aspect can be read.")

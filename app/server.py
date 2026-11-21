@@ -34,6 +34,7 @@ import prompt_dialect as PD
 import nodes_manager as NM
 import updater as UPD
 import specs as SP
+import edit_types as ET
 from validate_graphs import fetch_object_info, validate_graph, _combo_values
 
 PORT = int(os.environ.get("H3STUDIO_PORT", "8198"))
@@ -379,8 +380,28 @@ def comfy_busy_with_other(our_ids):
 _oi = {"t": 0, "data": None}
 
 
+def _oi_refresh_bg():
+    """Refresh the node list in the background (the full /object_info takes ~5 s with many custom nodes)."""
+    if _oi.get("busy"):
+        return
+    _oi["busy"] = True
+    def run():
+        try:
+            _oi["data"] = fetch_object_info()
+            _oi["t"] = time.time()
+        except Exception as e:
+            log.info("object_info refresh: %s", e)
+        finally:
+            _oi["busy"] = False
+    threading.Thread(target=run, daemon=True).start()
+
+
 def object_info(force=False):
-    if force or not _oi["data"] or time.time() - _oi["t"] > 300:
+    # stale-while-revalidate: an old copy answers at once (no 5 s freeze on a LoRA tap) and a fresh one loads behind it
+    if not force and _oi["data"] and time.time() - _oi["t"] > 300:
+        _oi_refresh_bg()
+        return _oi["data"]
+    if force or not _oi["data"]:
         try:
             _oi["data"] = fetch_object_info()
             _oi["t"] = time.time()
@@ -564,7 +585,24 @@ job_q = []
 q_cv = threading.Condition()
 
 
+_gal_cache = {"key": None, "items": [], "by_id": {}}
+
+
 def gallery_all():
+    """Every library item, newest first. Parsed once per change of gallery.jsonl (each thumbnail used to re-read
+    the whole file); callers get their own copies of the records."""
+    try:
+        st = os.stat(GALLERY)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is None or key != _gal_cache["key"]:
+        items = _gallery_parse()
+        _gal_cache.update(key=key, items=items, by_id={it.get("id"): it for it in items})
+    return [dict(it) for it in _gal_cache["items"]]
+
+
+def _gallery_parse():
     items = []
     if os.path.exists(GALLERY):
         with open(GALLERY, encoding="utf-8") as f:
@@ -658,11 +696,60 @@ def gallery_add(rec):
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
+def recycle(path):
+    """Send a file to the Windows Recycle Bin (so a delete can be undone). Falls back to a plain delete."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT), ("pFrom", wintypes.LPCWSTR),
+                        ("pTo", wintypes.LPCWSTR), ("fFlags", ctypes.c_ushort), ("fAnyOperationsAborted", wintypes.BOOL),
+                        ("hNameMappings", ctypes.c_void_p), ("lpszProgressTitle", wintypes.LPCWSTR)]
+        op = SHFILEOPSTRUCTW()
+        op.wFunc = 3                                   # FO_DELETE
+        op.pFrom = os.path.abspath(path) + "\0"       # double-NUL terminated list
+        op.fFlags = 0x40 | 0x10 | 0x4 | 0x400          # ALLOWUNDO | NOCONFIRMATION | SILENT | NOERRORUI
+        if ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) == 0 and not os.path.exists(path):
+            return True
+    except Exception as e:
+        log.info("recycle bin: %s", e)
+    os.remove(path)
+    return False
+
+
+def delete_item(gid):
+    """Remove one library item: its file (and the stored copies of its inputs) go to the Recycle Bin.
+    -> (ok, message, http code)."""
+    it = gallery_get(gid)
+    if not it:
+        return False, "not found", 404
+    full = output_path(it.get("subfolder") or "", it.get("filename") or "")
+    if not full or not LIB.is_app_output(full, OUTPUT, APP_OUT):
+        return False, "That file is not inside the Comfy Studio output folder, so it was not deleted.", 403
+    try:
+        if os.path.isfile(full):
+            recycle(full)
+    except OSError as e:
+        return False, "Could not delete the file: %s" % e, 500
+    snaps = list(it.get("input_snapshots") or [])
+    if it.get("source_filename") and not snaps:
+        snaps = [{"subfolder": it.get("source_subfolder") or "", "filename": it.get("source_filename")}]
+    for s in snaps:
+        src = output_path(s.get("subfolder") or "", s.get("filename") or "")
+        if src and LIB.is_app_output(src, OUTPUT, APP_OUT) and os.path.isfile(src):
+            try:
+                recycle(src)
+            except OSError:
+                pass
+    gallery_add({"id": it["id"], "deleted": True, "t": time.time()})
+    return True, "Moved to the Recycle Bin.", 200
+
+
 def gallery_get(gid):
-    for it in gallery_all():
-        if it.get("id") == gid:
-            return it
-    return None
+    gallery_all()                                   # refreshes the cache when the file changed
+    it = _gal_cache["by_id"].get(gid)
+    return dict(it) if it else None
 
 
 def output_path(subfolder, filename):
@@ -1028,6 +1115,132 @@ def _person_seg_model():
     return os.path.join(d, best) if best else ""
 
 
+def _face_model():
+    d = os.path.join(COMFY_ROOT, "models", "ultralytics", "bbox")
+    for name in ("face_yolov8m.pt", "face_yolov9c.pt", "yolov12l-face.pt"):
+        if os.path.isfile(os.path.join(d, name)):
+            return os.path.join(d, name)
+    return ""
+
+
+def face_tool(mode, src_full, out_full):
+    """face_box.py in ComfyUI's Python on the CPU: 'head' -> head mask, 'crop' -> head-and-hair crop. -> result dict."""
+    py, model = _comfy_python(), _face_model()
+    if not py or not model:
+        return {"ok": False, "why": "no face model"}
+    import subprocess
+    r = subprocess.run([py, "-I", os.path.join(HERE, "face_box.py"), mode, src_full, out_full, model], capture_output=True,
+                       text=True, timeout=120, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    for line in (r.stdout or "").splitlines()[::-1]:
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return {"ok": False, "why": (r.stderr or "")[-200:]}
+
+
+TWO_STEP_REVEAL = ("Reveal the head, face and hair of the person in <Picture 1>: continue them naturally above the frame "
+                   "where they are cut off, the head turned the way the shoulders face, seen from this camera angle, "
+                   "life-size for the body, with a natural relaxed expression, lit like the rest of the photo. Keep the "
+                   "body, clothing, pose, room and lighting of <Picture 1> unchanged.")
+
+
+def two_step_plan(data):
+    """A reveal that takes the head / face from another picture ("reveal her face; she has the face and hair of
+    <Picture 2>") is made in two steps, because one step copies Picture 2's whole look (studio light, makeup, posed
+    smile, straight-on angle): 1) reveal the head from Picture 1 alone (its angle, expression and light fit the photo),
+    2) a face-only pass on that head with Picture 2 cropped to head and hair. -> (step-1 data, plan) or (data, None)."""
+    imgs = list(data.get("images") or [])
+    prompt = data.get("prompt") or ""
+    if (str(data.get("mode") or "").lower() != "edit" or len(imgs) < 2 or data.get("inpaint_mask") or data.get("ref_mode")
+            or data.get("_face_pass") or not guard_on(data, "two_step_face", len(imgs))):
+        return data, None
+    intent = ASSIST.swap_intent(prompt, len(imgs))
+    if intent not in ("head_swap", "face_swap") or not ASSIST.is_reveal(prompt) or not _face_model() or not _comfy_python():
+        return data, None
+    ref = ASSIST.swap_ref(prompt, len(imgs))
+    plan = {"intent": intent, "picture": imgs[ref - 1] if ref - 1 < len(imgs) else imgs[1], "prompt": prompt,
+            "keep": {k: data[k] for k in ("seed", "steps", "unet_name", "clip_name", "vae_name", "sampler_name",
+                                          "scheduler", "cfg", "loras", "tune_mode", "keep_clothing", "keep_quality",
+                                          "keep_face", "understanding") if k in data}}
+    step1 = dict(data, images=[imgs[0]], roles=["base"], image_roles=["base"], prompt=TWO_STEP_REVEAL, auto_assist=False)
+    return step1, plan
+
+
+def face_pregrade(ref_full, ref_face, base_full, base_face, out_full):
+    """Re-tone the face reference (Picture 2's head crop) toward the revealed head in Picture 1: same skin colour,
+    brightness and contrast as the body's own face in the photo's light. The model then draws the new face in the right
+    complexion itself (natural light, edges and texture) instead of the app recolouring pixels afterwards (that made
+    halos and erased lipstick). Colour statistics of the face centres, in YCbCr."""
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    def core(img, box):
+        x0, y0, x1, y1 = [int(v) for v in box]
+        sx, sy = int((x1 - x0) * 0.22), int((y1 - y0) * 0.25)
+        a = np.asarray(img.convert("YCbCr"), dtype=np.float64)
+        return a[max(0, y0 + sy):y1 - sy, max(0, x0 + sx):x1 - sx].reshape(-1, 3)
+    with Image.open(ref_full) as im:
+        ref = ImageOps.exif_transpose(im).convert("RGB")
+    with Image.open(base_full) as im:
+        base = ImageOps.exif_transpose(im).convert("RGB")
+    R, B = core(ref, ref_face), core(base, base_face)
+    if len(R) < 400 or len(B) < 400:
+        return False
+    A = np.asarray(ref.convert("YCbCr"), dtype=np.float64)
+    for c in range(3):
+        mr, sr = R[:, c].mean(), R[:, c].std() + 1e-6
+        mb, sb = B[:, c].mean(), B[:, c].std() + 1e-6
+        A[..., c] = (A[..., c] - mr) * float(np.clip(sb / sr, 0.75, 1.3)) + mb
+    Image.fromarray(np.clip(A, 0, 255).astype("uint8"), "YCbCr").convert("RGB").save(out_full, quality=95)
+    log.info("face pre-grade: Y %.0f->%.0f Cr %.0f->%.0f", R[:, 0].mean(), B[:, 0].mean(), R[:, 2].mean(), B[:, 2].mean())
+    return True
+
+
+def start_face_pass(job):
+    """Step 2: find the revealed head, crop the face picture to head and hair, and queue a face-only inpaint."""
+    import base64
+    plan = job["then_face"]
+    first = job["images"][0]
+    out_full = output_path(first.get("subfolder") or "", first["filename"])
+    with open(out_full, "rb") as f:
+        up = save_upload(f.read(), "reveal_%s.png" % job["id"])
+    base_rel = up.get("name") or up.get("path")
+    folder = os.path.join(INPUT, INPUT_SUB, "_inpaint")
+    os.makedirs(folder, exist_ok=True)
+    mask_full = os.path.join(folder, "head_%s.png" % job["id"])
+    res = face_tool("head", os.path.join(INPUT, base_rel.replace("/", os.sep)), mask_full)
+    if not res.get("ok"):
+        job["message"] = job["note"] = ((job.get("note") or "") + " Step 2 skipped: no face was found in the revealed "
+                                        "picture, so this is the result.").strip()
+        return None
+    crop_name = "face_%s.jpg" % job["id"]
+    crop_full = os.path.join(folder, crop_name)
+    src2 = os.path.join(INPUT, plan["picture"].replace("/", os.sep))
+    c = face_tool("crop", src2, crop_full)
+    ref_rel = (INPUT_SUB + "/_inpaint/" + crop_name) if c.get("ok") else plan["picture"]
+    if c.get("ok") and c.get("face") and res.get("face"):
+        try:
+            face_pregrade(crop_full, c["face"], os.path.join(INPUT, base_rel.replace("/", os.sep)), res["face"], crop_full)
+        except Exception as e:
+            log.info("face pre-grade skipped: %s", e)
+    with open(mask_full, "rb") as f:
+        mask_url = "data:image/png;base64," + base64.b64encode(f.read()).decode()
+    what = "head, face and hair" if plan["intent"] == "head_swap" else "face"
+    data2 = dict(plan.get("keep") or {}, mode="edit", images=[base_rel, ref_rel], roles=["base", "subject"],
+                 image_roles=["base", "subject"], auto_assist=False, pe=False, inpaint_mask=mask_url, _face_pass=True,
+                 _face_box=res.get("face"),
+                 resolution="picture1:original",
+                 prompt="Give the person in <Picture 1> the %s of the person in <Picture 2>." % what)
+    job2 = submit_job(data2)
+    note = "Step 1 of 2: the head was revealed from your photo. Step 2 (the %s from the other picture) is queued." % what
+    job["message"] = job["note"] = ((job.get("note") or "") + " " + note).strip()
+    job2["note"] = ("Step 2 of 2: the %s from the other picture, painted onto the revealed head so its angle, "
+                    "expression and light come from your photo. %s" % (what, job2.get("note") or "")).strip()
+    job2["message"] = job2["note"]
+    return job2
+
+
 def person_lock_mask(image_rel, user_prompt):
     """(data-URL mask, note) when the edit is a plain turn of the person and a person-segmentation model is installed;
     ("", "") otherwise. The mask = that person (grown for the turn), every other pixel locked."""
@@ -1141,7 +1354,17 @@ def server_error_text(e):
 
 def guard_on(data, name, n_images=0):
     """Whether a prompt helper (keep_clothing / only_garment / keep_quality / keep_face) applies to this job.
-    Auto (Settings): decided from the instruction itself. Manual: the user's own ticks, exactly."""
+    Auto (Settings): decided from the instruction itself. Manual: the user's own ticks, exactly.
+    Either way, a helper that protects the very thing an edit changes is left out (edit_types: "same clothing" on an
+    outfit change or a reveal, "same lighting" on "make it night", "keep the face" on a face swap)."""
+    if n_images and name in ("keep_clothing", "only_garment", "only_target", "keep_quality", "keep_face"):
+        try:
+            why = ET.vetoes(data.get("prompt") or "", n_images).get(name)
+        except Exception:
+            why = None
+        if why:
+            log.info("helper %s left out: the edit is %s", name, why)
+            return False
     if (data.get("tune_mode") or "") == "auto":
         return bool(CG.auto_guards(data.get("prompt") or "", n_images).get(name, True))
     if name == "keep_face":
@@ -1582,7 +1805,7 @@ def apply_effective(card, hw):
     card["limits_basis"] = eff["basis"]
     if eff.get("clip_seconds"):
         card["clip_seconds"] = eff["clip_seconds"]
-    for k in ("clip_by_res", "single", "extend", "extend_tested"):
+    for k in ("clip_by_res", "single", "extend", "extend_tested", "locked"):
         if eff.get(k):
             card[k] = eff[k]
     if card.get("default_resolution") not in card["resolutions"]:
@@ -2380,7 +2603,13 @@ def route_extended(wid, card, graph, data):
     except (TypeError, ValueError):
         return wid, card, graph, data, ""
     shots = int(data.get("_shots") or 0)
-    if not secs or (secs <= single.get(res, 0) and shots < 2) or res not in ext:
+    # Length > Clip length set shorter than the video: the user asked for it in pieces, even when one clip would fit
+    try:
+        uclip = float(data.get("clip_seconds") or 0)
+    except (TypeError, ValueError):
+        uclip = 0.0
+    split = uclip > 0 and secs > uclip + 0.05
+    if not secs or (secs <= single.get(res, 0) and shots < 2 and not split) or res not in ext:
         return wid, card, graph, data, ""
     long_id = "h3_long_i2v" if card["task"] == "i2v" else "h3_long_t2v"
     try:
@@ -2395,10 +2624,14 @@ def route_extended(wid, card, graph, data):
         if src.get(str(k)) in dst:
             models[dst[src[str(k)]]] = v
     data = dict(data, workflow_id=long_id, models=models, overrides=None)
-    clip = (eff.get("clip_seconds") or 5)
+    clip = uclip if uclip > 0 else (eff.get("clip_seconds") or 5)
     n = int(-(-secs // clip))
-    note = ("One %s clip on this PC is at most %s s, so this was made as an extended video: %d clips of about %s s "
-            "at %s, each continuing from the last." % (res, single.get(res, 0) or "under 5", n, clip, res))
+    if split and secs <= single.get(res, 0):
+        note = ("Made in %d clips of about %s s (your Clip length) at %s, each continuing from the last."
+                % (n, _fmt_s(clip), res))
+    else:
+        note = ("One %s clip on this PC is at most %s s, so this was made as an extended video: %d clips of about %s s "
+                "at %s, each continuing from the last." % (res, single.get(res, 0) or "under 5", n, _fmt_s(clip), res))
     return long_id, lcard, lgraph, data, note
 
 
@@ -2599,17 +2832,18 @@ def submit_workflow_job(data):
         try:
             assist_info = ASSIST.build_assist_prompt(
                 prompt, data.get("image_roles"), n_images=len(images), ref_mode=bool(data.get("ref_mode")) or video_refs,
-                enabled=True, camera=camera, mode=a_mode,
+                enabled=True, camera=camera if is_image else {}, mode=a_mode,
                 width=data.get("width"), height=data.get("height"))
             prompt_sent = assist_info["prompt"]
         except Exception as e:
             log.info("workflow assist skipped: %s", e)
             assist_info = None
-    if assist_info is None and camera and prompt:
+    if camera and prompt and (assist_info is None or not is_image):
+        # a video gets motion wording ("slow push-in"), never the still-picture "re-shoot Picture 1" note
         try:
-            prompt_sent = CAMERA.apply_camera(prompt, camera, mode="edit" if images else "t2i")["prompt"]
+            prompt_sent = CAMERA.apply_camera(prompt_sent, camera, mode="video" if not is_image else ("edit" if images else "t2i"))["prompt"]
         except Exception:
-            prompt_sent = prompt
+            pass
     prompt_sent = PD.translate(prompt_sent, dialect)
     if card.get("media") == "image" and card.get("edit_kind") != "anypaint":
         prompt_sent = head_cover_final(prompt_sent, data.get("prompt") or "", edit=bool(images),
@@ -2824,6 +3058,7 @@ def submit_workflow_job(data):
         "cfg": values["cfg"] if values["cfg"] not in (None, "") else defaults.get("cfg"),
         "pe": False,
         "camera": camera,
+        "camera_mode": "video" if not is_image else None,
         "models": {},
         "resolution_in": "",
         "long_clips": {"clip": long_clip, "total": long_secs} if use_clips else None,
@@ -2895,7 +3130,7 @@ def apply_wf_enhanced_prompt(job):
     camera = job.get("camera") or {}
     if camera and text:
         try:
-            text = CAMERA.apply_camera(text, camera, mode=job.get("mode") or "t2i")["prompt"]
+            text = CAMERA.apply_camera(text, camera, mode=job.get("camera_mode") or job.get("mode") or "t2i")["prompt"]
         except Exception:
             pass
     for s in job.get("pe_keep_tail") or []:      # e.g. Krea's "Preserve the exact facial identity."
@@ -3062,21 +3297,37 @@ _CHANGE_RE = re.compile(r"(?i)\b(make|change|reshape|resize|enlarge|shrink|widen
                         r"lighter|fix|adjust|straighten|smooth|sharpen|more|less|increase|decrease)\b")
 
 
+# "The woman from <Picture 2> is sat on the seat…": someone or something from another picture is put into the area
+_FROM_PIC = re.compile(r"(?i)\bfrom\s+<?\s*picture\s*[2-9]\s*>?")
+_PLACED_FROM_PIC = re.compile(r"(?i)^\W*(?:the\s+|a\s+|an\s+|this\s+|that\s+)?(?:[\w'-]+\s+){0,3}from\s+<?\s*picture\s*[2-9]\s*>?\s+"
+                              r"(?:is|are|was|now|sits?|sitting|sat|stands?|standing|stood|lies|lying|lay|leans?|leaning|"
+                              r"kneels?|kneeling|knelt|crouch\w*|poses?|posing|in|on|at|by|next|beside|goes|appears?)\b")
+
+
 def edit_intent(text):
     """What the person wants done in the painted area: "add" something new, "change" what's there, "remove" it,
     or "mixed". Only steers the instruction the edit model gets."""
     t = str(text or "")
     found = [k for k, rx in (("add", _ADD_RE), ("remove", _REMOVE_RE), ("change", _CHANGE_RE)) if rx.search(t)]
+    if _PLACED_FROM_PIC.search(t) and "remove" not in found:
+        return "add"            # a person or thing brought in from another picture is something new in the area
     if not found:
-        # just a thing named ("a red sports car") means put it there
-        return "add" if re.match(r"(?i)\s*(a|an|some|two|three|several|\d+)\b", t) else "change"
+        # just a thing named ("a red sports car") means put it there; so does "the woman from <Picture 2> …"
+        return "add" if (re.match(r"(?i)\s*(a|an|some|two|three|several|\d+)\b", t) or _FROM_PIC.search(t)) else "change"
     return found[0] if len(found) == 1 else "mixed"
 
 
+_ADD_RULE_OLD = ("Add only what is asked, nothing else. Put it within the outline at a realistic size for the scene, "
+                 "sitting naturally on or in whatever is beneath it, in the same perspective, lighting, colour, sharpness "
+                 "and grain as the rest of the photo, with natural contact shadows.")
 _INTENT_RULES = {
-    "add": "Add only what is asked, nothing else. Put it within the outline at a realistic size for the scene, sitting "
-           "naturally on or in whatever is beneath it, in the same perspective, lighting, colour, sharpness and grain "
-           "as the rest of the photo, with natural contact shadows.",
+    # tested 2026-11-20: a person placed from Picture 2 came out a little too big, so a knee or the toes ran into the
+    # outline and were cut off there. Ask for all of it to fit inside, with room to spare.
+    "add": "Add only what is asked, nothing else. Fit all of it inside the outline: size it so every part (for a "
+           "person: head, hands, knees and feet, toes included) is complete and whole within the outline with a "
+           "little space to spare, and no part touches or crosses the outline. Keep it at a believable size for the "
+           "scene, sitting naturally on or in whatever is beneath it, in the same perspective, lighting, colour, "
+           "sharpness and grain as the rest of the photo, with natural contact shadows.",
     "change": "Change only what is asked. Everything else about the subject stays the same: identity, pose, colours, "
               "materials, patterns and texture, continuing seamlessly into the parts outside the outline so it reads "
               "as one. The change follows the subject's natural shape, with the same lighting, sharpness and grain as "
@@ -3084,6 +3335,25 @@ _INTENT_RULES = {
     "remove": "Take out what is asked and fill its place with what would naturally be behind it, continuing the "
               "surrounding background and light.",
 }
+
+
+_WRAP_HEAD = re.compile(r"(?is)^\s*Edit only inside the areas?\b[^:]{0,80}?outlined in magenta in (?:<Picture 1>|the picture):\s*")
+_WRAP_TAIL = re.compile(r"(?is)\s*Everything outside the outline stays exactly as it is\.\s*The final picture shows no magenta "
+                        r"outline(?: and number tags)?\.")
+
+
+def unwrap_instruction(text):
+    """A prompt that already carries the painted-area instruction (reused from an earlier picture, then Regenerate)
+    back to the person's own words, so the instruction isn't added twice."""
+    t = str(text or "")
+    if not _WRAP_HEAD.match(t):
+        return t
+    while _WRAP_HEAD.match(t):
+        t = t[_WRAP_HEAD.match(t).end():]
+    for r in list(_INTENT_RULES.values()) + [_ADD_RULE_OLD]:
+        t = t.replace(" " + r, "").replace(r, "")
+    t = _WRAP_TAIL.sub("", t)
+    return re.sub(r"[ \t]{2,}", " ", t).strip()
 
 
 def inpaint_instruction(text, areas, numbered=True, intent=None):
@@ -3133,7 +3403,17 @@ def inpaint_noise_mask(g, inpaint, pre_id):
     with Image.open(os.path.join(INPUT, inpaint["mask"].replace("/", os.sep))) as im:
         m = im.convert("L").crop((x0, y0, x1, y1)).resize((tw, th), Image.BILINEAR)
     # room around the area so new things can be completed, soft so it blends
-    m = m.filter(ImageFilter.MaxFilter(max(3, (min(tw, th) // 40) | 1))).filter(ImageFilter.GaussianBlur(max(2, min(tw, th) / 120)))
+    m = m.filter(ImageFilter.MaxFilter(max(3, (min(tw, th) // 40) | 1)))
+    if inpaint.get("intent") in ("add", "mixed"):
+        # something new (a person from Picture 2) may come out a touch bigger than the painting: about 4% more room
+        # all round lets a toe or knee finish instead of stopping dead at the edge. Only what the new thing really
+        # changed is pasted back (inpaint_blend_mask), so the room itself isn't redrawn.
+        k = 4
+        small = m.resize((max(8, tw // k), max(8, th // k)), Image.BILINEAR)
+        small = small.filter(ImageFilter.MaxFilter(max(3, (min(tw, th) // (24 * k)) * 2 + 1)))
+        from PIL import ImageChops
+        m = ImageChops.lighter(m, small.resize((tw, th), Image.BILINEAR).point(lambda v: 255 if v > 127 else 0))
+    m = m.filter(ImageFilter.GaussianBlur(max(2, min(tw, th) / 120)))
     folder = os.path.join(INPUT, INPUT_SUB, "_inpaint")
     plain.save(os.path.join(folder, "%s_plain.png" % pre_id))
     m.convert("RGB").save(os.path.join(folder, "%s_nmask.png" % pre_id))
@@ -3520,6 +3800,56 @@ def inpaint_tone_match(orig, edited, mask):
     return Image.fromarray(np.clip(arr, 0, 255).astype("uint8"))
 
 
+def face_skin_match(ref, edited, mask, face_box=None):
+    """A face taken from another picture keeps that person's complexion and studio light, so it doesn't match the body
+    it now sits on. Re-tone the NEW skin to the skin that was there before (step 1's revealed face: the body's own tone,
+    in the photo's light) and give it the photo's grain.
+    - target colour: the centre of the face box found in step 1 (certainly skin; a colour test can't tell this neck's
+      shadowed skin from a beige wall)
+    - which pixels: only those step 2 really redrew (the wall around the head barely changes and is left alone), and
+      only skin-toned ones (near-black hair keeps its colour)."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+    W, H = edited.size
+    if not face_box:
+        return edited
+    m = np.asarray(mask.convert("L").resize((W, H)), dtype=np.float64) / 255.0
+    ref = ref.resize((W, H))
+    R = np.asarray(ref.convert("YCbCr"), dtype=np.float64)
+    E = np.asarray(edited.convert("YCbCr"), dtype=np.float64)
+    fx0, fy0, fx1, fy1 = [int(v) for v in face_box]
+    sx, sy = int((fx1 - fx0) * 0.2), int((fy1 - fy0) * 0.22)
+    core = np.zeros((H, W), bool)
+    core[max(0, fy0 + sy):min(H, fy1 - sy), max(0, fx0 + sx):min(W, fx1 - sx)] = True
+    if core.sum() < 400:
+        return edited
+    changed = np.abs(np.asarray(edited, dtype=np.float64) - np.asarray(ref, dtype=np.float64)).mean(2) > 14
+    skinlike = (E[..., 0] > 40) & (E[..., 0] < 235) & (E[..., 2] > 136)
+    tgt = core
+    src = core & skinlike
+    if src.sum() < 400:
+        return edited
+    out = E.copy()
+    for c in range(3):
+        mr, sr = R[..., c][tgt].mean(), R[..., c][tgt].std() + 1e-6
+        me, se = E[..., c][src].mean(), E[..., c][src].std() + 1e-6
+        g = float(np.clip(sr / se, 0.75, 1.3))
+        out[..., c] = (E[..., c] - me) * g + mr
+    def hf(a):
+        img = Image.fromarray(np.clip(a, 0, 255).astype("uint8"))
+        return a - np.asarray(img.filter(ImageFilter.GaussianBlur(1.5)), dtype=np.float64)
+    nr, ne = hf(R[..., 0])[tgt].std(), hf(E[..., 0])[src].std()
+    if nr > ne + 0.3:
+        out[..., 0] += np.random.default_rng(7).normal(0, (nr ** 2 - ne ** 2) ** 0.5, out[..., 0].shape)
+    wt = Image.fromarray(((changed & skinlike) * 255).astype("uint8"))
+    wt = wt.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(max(2, W / 250)))
+    w = (np.asarray(wt, dtype=np.float64) / 255.0) * m
+    blended = E * (1 - w[..., None]) + out * w[..., None]
+    log.info("face skin match: Y %.0f->%.0f, Cr %.0f->%.0f, grain %.1f->%.1f", E[..., 0][src].mean(), R[..., 0][tgt].mean(),
+             E[..., 2][src].mean(), R[..., 2][tgt].mean(), ne, nr)
+    return Image.fromarray(np.clip(blended, 0, 255).astype("uint8"), "YCbCr").convert("RGB")
+
+
 def inpaint_blend_mask(orig, edited, mask, intent=None):
     """Where to take the edit from. Your painted area, plus whatever the model changed right next to it (the rest
     of a pool's edging, the end of a path), so new things are never cut off at the brush edge. Far-away changes are
@@ -3631,6 +3961,60 @@ def _leftover_magenta_strong(img):
     return hit.resize((W, H), Image.BILINEAR).filter(ImageFilter.GaussianBlur(max(1.5, min(W, H) * 0.003)))
 
 
+NATIVE_RATIO = 2.5          # an edit over 2.5x Picture 1's pixels is made at Picture 1's scale, then upscaled
+UPSCALE_MODELS = ("4x-UltraSharpV2.pth", "4x_foolhardy_Remacri.pth")
+
+
+def add_graph_upscale(graph, tw, th):
+    """Decode -> upscale model (4x, tiled by ComfyUI) -> exact size -> Save. Without an upscale model: exact size
+    with lanczos. Replaces whatever fed the Save node."""
+    save = next((k for k, v in graph.items() if v.get("class_type") == "SaveImage"), None)
+    dec = next((k for k, v in graph.items() if v.get("class_type") == "VAEDecode"), None)
+    if not save or not dec:
+        return False
+    src = [dec, 0]
+    try:
+        names = combo_list(object_info(), "UpscaleModelLoader", "model_name") or []
+    except Exception:
+        names = []
+    pick = next((n for want in UPSCALE_MODELS for n in names if os.path.basename(n.replace("\\", "/")) == want), None)
+    if pick:
+        graph["cs_up_load"] = {"class_type": "UpscaleModelLoader", "inputs": {"model_name": pick},
+                               "_meta": {"title": "Upscale model"}}
+        graph["cs_up_run"] = {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["cs_up_load", 0], "image": src},
+                              "_meta": {"title": "Upscale"}}
+        src = ["cs_up_run", 0]
+    graph["cs_up_size"] = {"class_type": "ImageScale", "inputs": {"upscale_method": "lanczos", "width": int(tw), "height": int(th),
+                                                                  "crop": "disabled", "image": src},
+                           "_meta": {"title": "To the size you picked"}}
+    graph[save]["inputs"]["images"] = ["cs_up_size", 0]
+    return True
+
+
+def native_upscale(job):
+    """After an edit made at Picture 1's scale: it is already upscaled in the graph; where the edit kept Picture 1's
+    shape, put the photo's own fine detail back wherever nothing changed (as removals do)."""
+    from PIL import Image, ImageOps
+    tw, th = [int(v) for v in job["hold_size"]]
+    first = job["images"][0]
+    path = output_path(first.get("subfolder") or "", first["filename"])
+    with Image.open(path) as im:
+        out = im.convert("RGB")
+    with Image.open(os.path.join(INPUT, (job.get("source_images") or [""])[0].replace("/", os.sep))) as im:
+        src = ImageOps.exif_transpose(im).convert("RGB")
+    if out.size != (tw, th):
+        out = out.resize((tw, th), Image.LANCZOS)
+    same_shape = abs((tw / float(th)) / (src.width / float(src.height)) - 1.0) < 0.03
+    made = job.get("made_size") or [src.width, src.height]
+    if same_shape:
+        out = inpaint_detail_restore(src.resize((tw, th), Image.LANCZOS), out, tw / float(made[0] or tw))
+    name = "edit_%s.png" % job["id"]
+    sub = (first.get("subfolder") or APP_OUT).replace("\\", "/")
+    out.save(os.path.join(OUTPUT, sub.replace("/", os.sep), name))
+    job["images"] = [{"filename": name, "subfolder": sub, "type": "output", "kind": "image"}] + job["images"][1:]
+    job["width"], job["height"] = tw, th
+
+
 def removal_upscale(job):
     """A removal made small (MiniMax H3 only removes reliably at about 2 MP: bigger, it copies Picture 1 and keeps the
     person) is brought back to the size you picked, with the photo's own fine detail wherever nothing was removed."""
@@ -3671,13 +4055,24 @@ def inpaint_finish(job):
     m0 = m.copy()                          # the painted area as drawn (the magenta outline ran along its edge)
     edited = inpaint_align(src.crop((cx0, cy0, cx1, cy1)), edited, m)
     edited = inpaint_tone_match(src.crop((cx0, cy0, cx1, cy1)), edited, m)
+    if info.get("face_pass") and info.get("skin_retone"):
+        # (off: re-toning pixels after the model caught the wall and the lips; the reference is pre-graded instead)
+        try:
+            fb = info.get("face_box")
+            fb = [fb[0] - cx0, fb[1] - cy0, fb[2] - cx0, fb[3] - cy0] if fb else None
+            edited = face_skin_match(src.crop((cx0, cy0, cx1, cy1)), edited, m, fb)
+        except Exception as e:
+            log.warning("face skin match skipped: %s", e)
     try:
+        if info.get("face_pass"):
+            raise ValueError("face pass")
         ws = info.get("work_size") or made_at      # a workflow may scale its result up before saving: use the real one
         ws = (min(ws[0], made_at[0]), min(ws[1], made_at[1]))
         scale = max((cx1 - cx0) / float(ws[0] or 1), (cy1 - cy0) / float(ws[1] or 1))
         edited = inpaint_detail_restore(src.crop((cx0, cy0, cx1, cy1)), edited, scale, m)
     except Exception as e:
-        log.warning("inpaint: detail restore skipped: %s", e)
+        if str(e) != "face pass":
+            log.warning("inpaint: detail restore skipped: %s", e)
     m = inpaint_blend_mask(src.crop((cx0, cy0, cx1, cy1)), edited, m, info.get("intent"))
     if info.get("marked"):
         m = ImageChops.subtract(m, leftover_magenta(edited, src.crop((cx0, cy0, cx1, cy1)), outline_band(m0)))
@@ -3737,6 +4132,8 @@ def submit_job(data):
     _clean_request(data)
     if data.get("prompt"):
         data["prompt"] = strip_lora_weights(data["prompt"])
+        # a prompt reused from a painted-area edit already carries the instruction: back to the person's own words
+        data["prompt"] = unwrap_instruction(data["prompt"])
     # a removal ("remove the person ...") with LoRAs still selected: a body / character LoRA makes the model redraw
     # the person (new hair, a new body) instead of removing them, and no LoRA helps a removal - leave them out
     removal_note = ""
@@ -3744,6 +4141,13 @@ def submit_job(data):
         removal_note = ("Your LoRAs were left out of this removal: they make the model redraw people instead of "
                         "removing them.")
         data["loras"] = []
+    face_plan = None
+    if str(data.get("mode") or "").strip().lower() not in ("workflow", "wf"):
+        try:
+            data, face_plan = two_step_plan(data)
+        except Exception as e:
+            log.info("two-step face plan: %s", e)
+            face_plan = None
     if str(data.get("mode") or "").strip().lower() in ("workflow", "wf"):
         job = submit_workflow_job(data)
         if removal_note:
@@ -3800,7 +4204,7 @@ def submit_job(data):
     orig_images = None
     prompt_user = prompt
     prompt_sent = prompt
-    hold_size, size_note = None, ""
+    hold_size, size_note, native_from = None, "", None
     if mode == "t2i":
         images = []
         if auto_assist or camera:
@@ -3877,6 +4281,27 @@ def submit_job(data):
                                  "back to %dx%d with the photo's own detail." % (fw, fh))
             except Exception as e:
                 log.info("removal size: %s", e)
+        native_from = None
+        if (not hold_size and not inpaint and not ref_mode and input_size and input_size[0]
+                and guard_on(data, "native_size", len(images or []))):
+            # tested 2026-11-21: a 12 MP edit of a 1.9 MP photo redrew the whole person (body, room, light), because
+            # H3 shrinks Picture 1 back to its own working size and the two no longer line up. Make the edit at
+            # Picture 1's own scale (only the asked change happens), then upscale it to the size you picked.
+            try:
+                full = graphs.resolve_size(resolution, mode="edit", input_size=input_size)
+                fw = int(full.get("output_width") or full.get("width"))
+                fh = int(full.get("output_height") or full.get("height"))
+                if fw * fh > NATIVE_RATIO * input_size[0] * input_size[1] and fw * fh > graphs.NATIVE_MP_MAX * 1e6:
+                    native_from = resolution
+                    hold_size, resolution = [fw, fh], graphs.native_edit_resolution(input_size, fw, fh)
+                    made = graphs.resolve_size(resolution, mode="edit", input_size=input_size)
+                    mw = int(made.get("output_width") or made.get("width"))
+                    mh = int(made.get("output_height") or made.get("height"))
+                    size_note = ("Made at %dx%d (Picture 1's own scale) so only your change happens, then upscaled to "
+                                 "%dx%d." % (mw, mh, fw, fh))
+            except Exception as e:
+                log.info("native edit size: %s", e)
+                native_from = None
         try:
             size_spec = graphs.resolve_size(resolution, mode="edit", input_size=input_size)
             assist_w = size_spec.get("output_width") or size_spec.get("width")
@@ -3897,12 +4322,23 @@ def submit_job(data):
         if assist_info.get("auto_ref") or assist_info.get("intent") in getattr(ASSIST, "MULTIPANEL_INTENTS", {"character_sheet"}):
             ref_mode = True
             edit_kind = "ref"
+            if native_from:
+                resolution, hold_size, size_note, native_from = native_from, None, "", None
             # Keep the user's chosen aspect / Match Picture 1 size. Layout adapts to W x H.
-        if guard_on(data, "keep_clothing", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer"):
+        # the swap read from your words comes first: with Auto understanding off the assist only reports "generic_multi"
+        sw_intent = ASSIST.swap_intent(data.get("prompt") or "", len(images or [])) or (assist_info or {}).get("intent")
+        if sw_intent in ("head_swap", "face_swap") and not (assist_info or {}).get("added"):
+            # Auto understanding off: the swap wording (what comes from which picture) is still the clearest
+            # instruction, so it goes in once, short, instead of the generic keep-lines
+            try:
+                prompt_sent = prompt_sent.rstrip(" .") + ". " + ASSIST.swap_note(sw_intent, data.get("prompt") or "", len(images or []))
+            except Exception as e:
+                log.info("swap note: %s", e)
+        if guard_on(data, "keep_clothing", len(images or [])) and sw_intent not in ("body_swap", "subject_into_environment", "clothing_transfer"):
             prompt_sent, _cg = CG.apply(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i",
                                         undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent, _hg = CG.apply_headgear(prompt_sent, data.get("prompt") or "", "edit" if mode == "edit" else "t2i")
-        if guard_on(data, "only_garment", len(images or [])) and (assist_info or {}).get("intent") not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
+        if guard_on(data, "only_garment", len(images or [])) and sw_intent not in ("body_swap", "subject_into_environment", "clothing_transfer", "head_swap", "face_swap"):
             prompt_sent, _og = CG.apply_only_garment(prompt_sent, data.get("prompt") or "", "edit")
         if guard_on(data, "only_target", len(images or [])) and not ref_mode:
             prompt_sent, _rg = CG.apply_removal(prompt_sent, data.get("prompt") or "", "edit")
@@ -3915,6 +4351,11 @@ def submit_job(data):
                                        undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
+        if native_from and hold_size:
+            try:
+                add_graph_upscale(graph, hold_size[0], hold_size[1])
+            except Exception as e:
+                log.info("native edit upscale node: %s", e)
         if inpaint and inpaint.get("box"):
             # without this the model may redraw the whole cut-out (new framing, people gone); with it, only your area
             try:
@@ -3987,6 +4428,8 @@ def submit_job(data):
         "message": " ".join(model_notes) or "Waiting to start…",
         "note": " ".join(model_notes),
         "hold_size": hold_size,
+        "native_size": bool(mode == "edit" and native_from and hold_size),
+        "then_face": face_plan,
         "progress": 0,
         "progress_max": 0,
         "error": "",
@@ -4001,6 +4444,9 @@ def submit_job(data):
     if inpaint:
         job["inpaint"] = inpaint
         job["edit_kind"] = "inpaint"
+        if data.get("_face_pass"):
+            inpaint["face_pass"] = True      # step 2 of a face reveal: new face, matched to the body's skin
+            inpaint["face_box"] = data.get("_face_box")
     job["pe"] = pe
     job["pe_mode"] = pe_mode if pe else None
     job["pe_tokens"] = pe_tokens_in(data.get("pe_tokens")) if pe else None
@@ -4199,9 +4645,16 @@ def _wait_for_job(job):
                         job["message"] = "Blending failed; showing the edited close-up."
                 if job["images"] and job.get("hold_size") and not job.get("inpaint"):
                     try:
-                        removal_upscale(job)
+                        (native_upscale if job.get("native_size") else removal_upscale)(job)
                     except Exception:
-                        log.exception("removal upscale")
+                        log.exception("size hold upscale")
+                if job["images"] and job.get("then_face") and not job.get("_face_started"):
+                    job["_face_started"] = True
+                    try:
+                        start_face_pass(job)
+                    except Exception:
+                        log.exception("two-step face pass")
+                        job["message"] = "Step 2 (the face pass) couldn't start; this is the revealed picture."
                 if job["images"] and job.get("then_extend") and not job.get("_ext_pid"):
                     try:
                         pid = _start_ref_extend(job)
@@ -4220,7 +4673,8 @@ def _wait_for_job(job):
                     job["error"] = "The run finished but no image was saved."
                 else:
                     job["status"] = "success"
-                    job["message"] = "Done."
+                    # a note about how it was made ("Step 1 of 2 ...", "Made at ... then upscaled") stays visible
+                    job["message"] = (job.get("note") or "").strip() or "Done."
                     rec = LIB.library_record(job, OUTPUT, APP_OUT, INPUT)
                     first = (job.get("images") or [{}])[0]
                     rec["media"] = first.get("kind") or job.get("media") or "image"
@@ -4872,7 +5326,8 @@ class H(BaseHTTPRequestHandler):
                 it.update(fit_verdict(c, hw))
                 eff = SP.effective(c, hw)
                 if eff:
-                    it.update(resolutions=eff["resolutions"], limits=eff["limits"], limits_basis=eff["basis"])
+                    it.update(resolutions=eff["resolutions"], limits=eff["limits"], limits_basis=eff["basis"],
+                              locked=eff.get("locked") or {})
                 req = c.get("requires") or {}
                 try:
                     oi_now = object_info()
@@ -4936,10 +5391,15 @@ class H(BaseHTTPRequestHandler):
                 n = 0
             return self.j(console_state(n, (q.get("t") or [""])[0], (q.get("all") or ["0"])[0] != "1"))
         if path == "/api/loras":
+            # one node's info is quick (~0.1 s) and always current (new LoRA files show up at once)
             try:
-                oi = object_info()
+                with urllib.request.urlopen(COMFY + "/object_info/LoraLoaderModelOnly", timeout=8) as f:
+                    oi = json.loads(f.read())
             except Exception:
-                oi = {}
+                try:
+                    oi = object_info()
+                except Exception:
+                    oi = {}
             names = combo_list(oi, "LoraLoaderModelOnly", "lora_name") or []
             return self.j({"items": [n for n in names if n and n != "None"]})
         if path == "/api/hardware":
@@ -5764,29 +6224,50 @@ class H(BaseHTTPRequestHandler):
             gallery_add({"id": it["id"], "fav": fav, "t": time.time()})
             return self.j({"id": it["id"], "fav": fav})
         if path == "/api/delete":
-            it = gallery_get(str(data.get("id") or ""))
-            if not it:
-                return self.j({"error": "not found"}, 404)
-            full = output_path(it.get("subfolder") or "", it.get("filename") or "")
-            if not full or not LIB.is_app_output(full, OUTPUT, APP_OUT):
-                return self.j({"error": "That file is not inside the Comfy Studio output folder, so it was not deleted."}, 403)
+            ok, msg, code = delete_item(str(data.get("id") or ""))
+            return self.j({"msg": msg} if ok else {"error": msg}, 200 if ok else code)
+        if path == "/api/delete-many":
+            ids = [str(x) for x in (data.get("ids") or []) if x][:20000]
+            done, failed = 0, []
+            for gid in ids:
+                ok, msg, _code = delete_item(gid)
+                if ok:
+                    done += 1
+                else:
+                    failed.append(msg)
+            out = {"deleted": done, "failed": len(failed)}
+            if failed:
+                out["error"] = "%d couldn't be deleted: %s" % (len(failed), failed[0])
+            return self.j(out)
+        if path == "/api/favourite-many":
+            fav = bool(data.get("fav", True))
+            n = 0
+            for gid in [str(x) for x in (data.get("ids") or []) if x][:2000]:
+                if gallery_get(gid):
+                    gallery_add({"id": gid, "fav": fav, "t": time.time()})
+                    n += 1
+            return self.j({"count": n, "fav": fav})
+        if path == "/api/open-folder":
+            # opens File Explorer on THIS PC, so only a request from the PC itself may do it
+            if not self.on_host():
+                return self.j({"error": "Opening the folder only works on the PC itself."}, 403)
+            root = os.path.join(OUTPUT, APP_OUT)
+            target, select = root, None
+            if data.get("id"):
+                it = gallery_get(str(data["id"]))
+                full = it and output_path(it.get("subfolder") or "", it.get("filename") or "")
+                if full and os.path.isfile(full) and LIB.is_app_output(full, OUTPUT, APP_OUT):
+                    select = full
             try:
-                if os.path.isfile(full):
-                    os.remove(full)
-            except OSError as e:
-                return self.j({"error": "Could not delete the file: %s" % e}, 500)
-            snaps = list(it.get("input_snapshots") or [])
-            if it.get("source_filename") and not snaps:
-                snaps = [{"subfolder": it.get("source_subfolder") or "", "filename": it.get("source_filename")}]
-            for s in snaps:
-                src = output_path(s.get("subfolder") or "", s.get("filename") or "")
-                if src and LIB.is_app_output(src, OUTPUT, APP_OUT) and os.path.isfile(src):
-                    try:
-                        os.remove(src)
-                    except OSError:
-                        pass
-            gallery_add({"id": it["id"], "deleted": True, "t": time.time()})
-            return self.j({"msg": "Deleted from the library."})
+                os.makedirs(root, exist_ok=True)
+                import subprocess
+                if select:
+                    subprocess.Popen(["explorer", "/select,", os.path.normpath(select)])
+                else:
+                    os.startfile(os.path.normpath(target))
+            except Exception as e:
+                return self.j({"error": "Couldn't open File Explorer: %s" % e}, 500)
+            return self.j({"path": os.path.normpath(select or target)})
         if path == "/api/library/import":
             it = gallery_get(str(data.get("id") or ""))
             if not it or not it.get("filename"):

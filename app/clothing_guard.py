@@ -23,6 +23,54 @@ _GARMENT = re.compile(
     r"uniform|gown|robe|corset|leggings|tank top|crop top|bodysuit|jumpsuit|overalls|cardigan|vest)\b", re.I)
 
 NEG_WORDS = "nude, naked, topless, undressed, missing clothing, exposed body"
+# a person brought in from another picture ("the woman from <Picture 2>")
+_FROM_PIC = re.compile(r"\b(?:person|people|man|men|woman|women|girl|boy|guy|lady|he|she|her|him|them|they|"
+                       r"subject|model)\s+(?:from|in)\s+<?\s*picture\s*([2-9])\s*>?", re.I)
+# a face / head / hair / identity TAKEN from another picture ("she has the face and hair of <Picture 2>"): the person
+# stays the one in Picture 1 (with Picture 1's clothes); only their identity comes from Picture N
+_LOOKS_LIKE_PIC = re.compile(r"\b(?:look|looks|looking)\s+(?:exactly\s+)?like\s+(?:the\s+\w+\s+(?:from|in)\s+)?<?\s*picture\s*([2-9])"
+                             r"|\bresembl\w*\s+(?:the\s+\w+\s+(?:from|in)\s+)?<?\s*picture\s*([2-9])", re.I)
+_REVEAL = re.compile(r"\b(?:reveal\w*|uncover\w*|unmask\w*|show\w*|extend\w*|outpaint\w*|zoom\w* out)\b", re.I)
+_IDENTITY_FROM = re.compile(r"\b(?:face|faces|facial|head|heads|hair|hairstyle|identity|features|likeness)\b[^.<]{0,60}?"
+                            r"\b(?:of|from|like|as in|in|with)\s+(?:the\s+\w+\s+(?:from|in)\s+)?<?\s*picture\s*([2-9])\s*>?", re.I)
+
+
+def identity_source(text):
+    """'2' when the instruction takes a face / hair / identity from <Picture 2>, else None."""
+    m = _IDENTITY_FROM.search(text or "")
+    if m:
+        return m.group(1)
+    m = _LOOKS_LIKE_PIC.search(text or "")
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def _pron(text):
+    t = " " + (text or "").lower() + " "
+    if any(w in t for w in (" he ", " his ", " him ", " man ", " guy ", " boy ")) and not any(w in t for w in (" she ", " her ", " woman ")):
+        return "his", "he"
+    if any(w in t for w in (" they ", " their ", " them ")) and not any(w in t for w in (" she ", " her ", " he ", " his ")):
+        return "their", "they"
+    return "her", "she"
+
+
+def identity_clause(user_prompt, mode, style=""):
+    """A face taken from another picture comes out looking pasted in (that photo's studio light, makeup and straight-on
+    angle). One short line: identity only, drawn as part of Picture 1. Kept short: long add-ons dilute the request."""
+    n = identity_source(user_prompt)
+    if mode != "edit" or not n:
+        return ""
+    pos, _sub = _pron(user_prompt)
+    if style == "plain":
+        return "Match the face to %s body's skin tone and this photo's light, angle and grain." % pos
+    hair_only = bool(re.search(r"\bhair", user_prompt or "", re.I)) and not re.search(
+        r"\b(face|facial|head|identity|likeness|features|look\w* like|resembl)", user_prompt or "", re.I)
+    if hair_only:
+        return "Take only the hairstyle from <Picture %s>, lit like the rest of <Picture 1>." % n
+    what = "facial features and hair" if re.search(r"\bhair", user_prompt or "", re.I) else "facial features"
+    return ("Take only the %s from <Picture %s>, not its lighting, makeup or pose: same skin tone and light as %s body "
+            "in <Picture 1>, seen from <Picture 1>'s camera angle, life-size on %s neck." % (what, n, pos, pos))
+
+
 # anything worn: in an EDIT, a prompt that names one is about clothing (add a jacket, put a hat on her, give her a
 # scarf), so "keep the clothing the same" would fight it
 _WEARABLE = re.compile(
@@ -83,8 +131,15 @@ def clause(user_prompt, mode, style=""):
     if mode == "edit":
         if style == "plain":           # Krea 2 Edit: trained on one short instruction
             return "Keep their clothing exactly the same."
-        return ("Keep the clothing of the person in <Picture 1> exactly the same: same garments, same coverage, "
-                "same colours and fit.")
+        # "the woman from <Picture 2> is sat on the seat": the person (and their clothes) come from that picture
+        if _REVEAL.search(t):
+            return ("Keep the clothing of the person in <Picture 1> the same." if identity_source(t) else "")
+        src = _FROM_PIC.search(t)
+        if src and identity_source(t):
+            src = None          # only a face / hair comes from Picture N: the clothes are still Picture 1's
+        where = ("from <Picture %s>" % src.group(1)) if src else "in <Picture 1>"
+        return ("Keep the clothing of the person %s exactly the same: same garments, same coverage, "
+                "same colours and fit." % where)
     if _GARMENT.search(t):              # a new picture that describes clothes
         return "The person stays fully dressed in the clothing described."
     return ""
@@ -193,9 +248,14 @@ def apply_only_garment(prompt_sent, user_prompt, mode, style=""):
 def apply_quality(prompt_sent, user_prompt, mode, style=""):
     c = quality_clause(user_prompt, mode, style)
     low = (prompt_sent or "").lower()
-    if not c or "same photograph" in low or "original photo's" in low or "keep the original image quality" in low:
-        return prompt_sent, False
-    return (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
+    out, added = prompt_sent, False
+    if c and not ("same photograph" in low or "original photo's" in low or "keep the original image quality" in low):
+        out, added = (prompt_sent or "").strip().rstrip(" .") + ". " + c, True
+    ic = identity_clause(user_prompt, mode, style)
+    low_out = (out or "").lower()
+    if ic and not any(k in low_out for k in ("take only the", "match the face to", "head_swap:", "face_swap:")):
+        out, added = (out or "").strip().rstrip(" .") + ". " + ic, True
+    return out, added
 
 
 def negative_quality(neg, user_prompt, mode):

@@ -95,6 +95,24 @@ def effective(card, hw):
         both = set(tier) | set(ext)
         out["resolutions"] = sorted(both, key=lambda r: RES_ORDER.index(r) if r in RES_ORDER else 99)
         out["limits"] = {r: max(tier.get(r, 0), ext.get(r, 0)) for r in both}
+    out["locked"] = locked_sizes(kind, native, out["resolutions"])
+    return out
+
+
+def locked_sizes(kind, native, have):
+    """Sizes the engine can draw that need a bigger graphics card than this one -> {size: GB needed}. Shown greyed
+    out in the size panel (e.g. "1080p - 16 GB+") so people know they exist."""
+    tables = [VIDEO_TIERS.get(kind) or {}]
+    if kind == "h3":
+        tables.append(VIDEO_TIERS["h3_long"])
+    out = {}
+    top = max([RES_ORDER.index(r) for r in have if r in RES_ORDER] or [-1])
+    for r in native:
+        if r in have or r not in RES_ORDER or RES_ORDER.index(r) <= top or RES_ORDER.index(r) > RES_ORDER.index("1080p"):
+            continue
+        need = min([gb for t in tables for gb, sizes in t.items() if r in sizes] or [0])
+        if need:
+            out[r] = need
     return out
 
 

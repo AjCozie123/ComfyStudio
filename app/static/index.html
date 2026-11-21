@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261121c">
+  <link rel="stylesheet" href="/static/app.css?v=20261121g">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -135,8 +135,10 @@
 
   <!-- ============ Library view ============ -->
   <!-- ============ Workflows view ============ -->
-  <div id="upd-banner" class="upd-banner hidden" role="status">
+  <div id="upd-banner" class="upd-banner hidden" role="status" aria-live="polite">
+    <span class="upd-tag" id="upd-tag"></span>
     <span class="upd-text"></span>
+    <a class="chip-btn hidden" id="upd-notes" target="_blank" rel="noopener">What's new</a>
     <button type="button" class="chip-btn primary" id="upd-install">Install now</button>
     <button type="button" class="chip-btn" id="upd-later">Later</button>
   </div>
@@ -1098,6 +1100,6 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261115b"></script>
-  <script src="/static/app.js?v=20261121d"></script>
+  <script src="/static/app.js?v=20261121g"></script>
 </body>
 </html>

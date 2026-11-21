@@ -4990,7 +4990,10 @@ def install_plan(wid=None):
     return {"hardware": {k: hw.get(k) for k in ("gpu", "vram_gb", "ram_gb", "profile")}, "items": out}
 
 
-UPDATE_STATE = {"checked": 0, "status": None}
+UPDATE_STATE = {"checked": 0, "status": None, "phase": "", "phase_until": 0}
+# phase: "" | "waiting" (an important update is ready, something is generating) | "installing" (a short countdown so
+# every open window can warn you) | "restarting"
+UPDATE_GRACE = 15          # seconds of warning before an automatic install starts
 
 
 def auto_critical_on():
@@ -5031,27 +5034,71 @@ def _lora_targets():
 LORA_WORKER = LL.Worker(DATA, _lora_targets, lora_online_on, lambda: _active_job_count() == 0, log)
 
 
+def _note_version():
+    """Remember which version ran last, so the page can say "Updated to x.y.z" once after an update (also after an
+    update installed by an older version that didn't announce anything: its backup folder names the old version)."""
+    try:
+        st = app_paths.load(DATA)
+        cur, prev = UPD.app_version(), st.get("last_version")
+        if not prev:
+            # first start of a version that remembers this: an update leaves data/_update/backup_<old version>
+            olds = []
+            for n in os.listdir(os.path.join(DATA, "_update")) if os.path.isdir(os.path.join(DATA, "_update")) else []:
+                m = re.match(r"backup_(\d+(?:\.\d+)+)$", n)
+                if m and UPD.vtuple(m.group(1)) < UPD.vtuple(cur):
+                    olds.append(m.group(1))
+            prev = max(olds, key=UPD.vtuple) if olds else cur
+        if prev != cur:
+            st["updated_from"], st["updated_at"] = prev, time.time()
+        st["last_version"] = cur
+        app_paths.save(DATA, st)
+    except Exception as e:
+        log.info("version note: %s", e)
+
+
+def _set_phase(phase, until=0):
+    UPDATE_STATE.update(phase=phase, phase_until=until)
+
+
+def _auto_install(st):
+    """An important update, installed by itself: wait while anything is generating (the page asks you to let it
+    finish or stop it), warn every open window for a few seconds, then install and restart."""
+    while True:
+        if not auto_critical_on():
+            _set_phase("")
+            return False
+        if _active_job_count() > 0:
+            _set_phase("waiting")
+            time.sleep(10)
+            continue
+        _set_phase("installing", time.time() + UPDATE_GRACE)
+        time.sleep(UPDATE_GRACE)
+        if _active_job_count() > 0:          # something was started anyway: wait again
+            continue
+        log.info("installing critical update %s automatically", st.get("latest"))
+        res = UPD.apply()
+        if res.get("updated"):
+            _set_phase("restarting")
+            UPD.restart_soon(port=PORT)
+            return True
+        _set_phase("")
+        UPDATE_STATE["error"] = res.get("message") or "The update couldn't be installed."
+        return False
+
+
 def _update_loop():
-    time.sleep(60)
+    time.sleep(45)
     while True:
         try:
             if UPD.release_repo() or UPD.is_git_install():
                 st = UPD.status(fetch=True)
                 UPDATE_STATE.update(checked=time.time(), status=st)
                 if st.get("critical") and st.get("behind") and auto_critical_on():
-                    # wait for an idle moment (never restart under someone's generation)
-                    for _ in range(120):
-                        if _active_job_count() == 0:
-                            break
-                        time.sleep(30)
-                    if _active_job_count() == 0:
-                        log.info("installing critical update %s automatically", st.get("latest"))
-                        res = UPD.apply()
-                        if res.get("updated"):
-                            UPD.restart_soon(port=PORT)
-                            return
+                    if _auto_install(st):
+                        return
         except Exception as e:
             log.info("update check: %s", e)
+            _set_phase("")
         time.sleep(12 * 3600)
 
 
@@ -5474,6 +5521,17 @@ class H(BaseHTTPRequestHandler):
             st = dict(UPDATE_STATE.get("status") or {"version": UPD.app_version(), "repo": UPD.release_repo()})
             st["auto_critical"] = bool(auto_critical_on())
             st["checked"] = UPDATE_STATE.get("checked")
+            st["phase"] = UPDATE_STATE.get("phase") or ""
+            st["phase_left"] = max(0, int(round((UPDATE_STATE.get("phase_until") or 0) - time.time())))
+            st["busy"] = _active_job_count()
+            st["error"] = UPDATE_STATE.get("error") or ""
+            saved = app_paths.load(DATA)
+            if saved.get("updated_from") and time.time() - float(saved.get("updated_at") or 0) < 3 * 86400:
+                st["updated_from"] = saved["updated_from"]       # shown once per browser as "Updated to x.y.z"
+            repo = st.get("repo") or UPD.release_repo()
+            if repo:
+                st["notes_url"] = "https://github.com/%s/releases/tag/v%s" % (repo, st.get("latest") or st.get("version"))
+                st["this_notes_url"] = "https://github.com/%s/releases/tag/v%s" % (repo, UPD.app_version())
             return self.j(st)
         if path == "/api/update/check":
             try:
@@ -6077,12 +6135,30 @@ class H(BaseHTTPRequestHandler):
                 pass  # the connection drops while ComfyUI restarts
             return self.j({"ok": True, "message": "ComfyUI is restarting. This takes about a minute."})
         if path == "/api/update/apply":
+            busy = _active_job_count()
+            if busy and not data.get("stop"):
+                return self.j({"busy": busy, "error": "Something is generating. Let it finish, or choose Stop and install."}, 409)
+            if busy:
+                for jid in [k for k, v in list(jobs.items()) if v.get("status") in ("queued", "running", "waiting_comfy")]:
+                    try:
+                        cancel(jid)
+                    except Exception:
+                        pass
+                for _ in range(30):
+                    if not _active_job_count():
+                        break
+                    time.sleep(1)
+            _set_phase("installing")
             try:
                 res = UPD.apply()
             except ValueError as e:
+                _set_phase("")
                 return self.j({"error": str(e)}, 400)
             if res.get("updated"):
+                _set_phase("restarting")
                 UPD.restart_soon(port=PORT)
+            else:
+                _set_phase("")
             return self.j(res)
         if path == "/api/loras/user":
             # your own trigger words / "use when the prompt mentions" words / settings for one LoRA
@@ -6121,6 +6197,9 @@ class H(BaseHTTPRequestHandler):
             app_paths.save(DATA, st)
             return self.j({"auto_critical": st["auto_critical"]})
         if path == "/api/generate":
+            if UPDATE_STATE.get("phase") in ("installing", "restarting"):
+                return self.j({"error": "Comfy Studio is installing an important update and restarts in a few seconds. "
+                                        "Try again in a minute; your library and settings are kept."}, 503)
             try:
                 job = submit_job(data)
             except NeedsAction as e:
@@ -6433,6 +6512,7 @@ def main():
     threading.Thread(target=_ws_thread, daemon=True).start()
     threading.Thread(target=_update_loop, daemon=True).start()
     threading.Thread(target=_worker, daemon=True).start()
+    _note_version()       # "Updated to x.y.z" once, after an update
     LORA_WORKER.start()   # LoRA trigger words from CivitAI / CivArchive, only while idle
     threading.Thread(target=_console_jobs, daemon=True).start()   # job changes -> the Console pill
     # Bind the Tailscale IP in a side thread; skip gracefully if it is absent.

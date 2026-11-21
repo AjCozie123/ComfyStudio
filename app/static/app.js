@@ -8323,51 +8323,162 @@ function bindShell() {
   render();
 })();
 
-/* ===== Updates: important-fix banner + automatic fixes switch v20261112n =====
-   The server checks GitHub in the background (once the app knows its GitHub page). A normal update shows on the
-   Workflows page; an important (critical) fix also shows a banner. Installing keeps data/ (library, PIN, settings)
-   and rolls back by itself if the new version doesn't start. */
+/* ===== Updates: one banner that says what kind of update it is and what is happening v20261121 =====
+   Important + automatic: tells you it is waiting for your generation to finish (or to be stopped), counts down a few
+   seconds before installing, then says it is restarting. Important with automatic fixes off, and minor updates: you
+   choose (Install / Later). After any update: "Updated to x.y.z" with What's new. Installing keeps data/ (library,
+   PIN, settings) and rolls back by itself if the new version doesn't start. */
 (function () {
-  const LATER = "cs.upd.later";
+  const LATER = "cs.upd.later", SEEN = "cs.upd.ver";
+  const b = $("upd-banner");
+  if (!b) return;
+  const tag = $("upd-tag"), text = b.querySelector(".upd-text"), notes = $("upd-notes");
+  const btnInstall = $("upd-install"), btnLater = $("upd-later");
+  let timer = null, st = null, restarting = false, justUpdated = false;
+
+  function show(kind, label, msg, opts) {
+    opts = opts || {};
+    b.dataset.kind = kind;
+    tag.textContent = label;
+    text.textContent = msg;
+    notes.classList.toggle("hidden", !opts.notes);
+    if (opts.notes) notes.href = opts.notes;
+    btnInstall.classList.toggle("hidden", !opts.install);
+    btnInstall.textContent = opts.install || "Install now";
+    btnLater.classList.toggle("hidden", !opts.later);
+    btnLater.textContent = opts.later || "Later";
+    b.classList.remove("hidden");
+  }
+  function hide() { b.classList.add("hidden"); }
+  function schedule(ms) { clearTimeout(timer); timer = setTimeout(refresh, ms); }
+
+  async function waitForRestart() {
+    restarting = true;
+    show("restart", "Updating", "Comfy Studio is restarting with the update… this page reloads by itself.", {});
+    for (let i = 0; i < 90; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try { await api("/api/status"); location.reload(); return; } catch (e) {}
+    }
+    show("restart", "Updating", "The restart is taking longer than usual. If the app doesn't come back, close it and open it again.", {});
+  }
+
   async function refresh() {
-    let st;
-    try { st = await api("/api/update/state"); } catch (e) { return; }
+    if (restarting) return;
+    try { st = await api("/api/update/state"); } catch (e) {
+      // the server went away mid-install: that's the restart
+      if (st && (st.phase === "installing" || st.phase === "restarting")) { waitForRestart(); }
+      else schedule(60000);
+      return;
+    }
     if ($("upd-auto")) {
       $("upd-auto").checked = !!st.auto_critical;
       $("upd-auto").disabled = !(st.repo || st.git);
       $("upd-auto").closest("label").title = (st.repo || st.git) ? "" : "Available once this copy knows its GitHub page.";
     }
-    const show = !!(st.critical && st.behind) && LS.get(LATER, "") !== String(st.latest || "");
-    const b = $("upd-banner");
-    if (!b) return;
-    b.classList.toggle("hidden", !show);
-    if (show) b.querySelector(".upd-text").textContent = "Important fix available (" + (st.latest || "new version") + "). It installs in a few seconds and keeps your library.";
-  }
-  async function install() {
-    const b = $("upd-banner");
-    b.querySelector(".upd-text").textContent = "Installing the fix\u2026 the app restarts by itself.";
-    try {
-      const r = await api("/api/update/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      if (!r.updated) { b.querySelector(".upd-text").textContent = r.message || "Nothing to install."; return; }
-    } catch (e) { b.querySelector(".upd-text").textContent = e.message || "Couldn't install the fix."; return; }
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try { await api("/api/status"); location.reload(); return; } catch (e) {}
+    // just updated: say so once (per browser), with what changed
+    const seen = LS.get(SEEN, "");
+    // updated since this browser last looked, or the server says it was just updated (a silent update by an older
+    // version: this browser never stored a version)
+    if (st.version && seen !== st.version && (seen || st.updated_from) && !justUpdated) {
+      justUpdated = true;
+      LS.set(SEEN, st.version);
+      show("done", "Updated", "Comfy Studio was updated to " + st.version +
+        (st.updated_from && st.updated_from !== st.version ? " (from " + st.updated_from + ")" : "") + ". Your library and settings are kept.",
+        { notes: st.this_notes_url, later: "OK" });
+      schedule(60000);
+      return;
     }
+    if (st.version && !seen) LS.set(SEEN, st.version);
+    const ver = st.latest || "new version";
+    const phase = st.phase || "";
+    if (phase === "restarting") { waitForRestart(); return; }
+    if (phase === "installing") {
+      const left = st.phase_left || 0;
+      show("installing", "Important update", left > 0
+        ? "Installing important update " + ver + " in " + left + " s. Comfy Studio restarts by itself; your library and settings are kept."
+        : "Installing important update " + ver + "… Comfy Studio restarts in a few seconds.", { notes: st.notes_url });
+      schedule(1500);
+      return;
+    }
+    if (phase === "waiting") {
+      show("waiting", "Important update · automatic",
+        "Important update " + ver + " is ready. It installs as soon as nothing is generating: please let your current generation finish, or stop it to install now.",
+        { notes: st.notes_url, install: "Stop and install now" });
+      schedule(4000);
+      return;
+    }
+    if (st.error && st.behind) {
+      show("error", "Update", "The update to " + ver + " couldn't install by itself (" + st.error + "). You can try Install now.",
+        { notes: st.notes_url, install: "Install now", later: "Later" });
+      schedule(10 * 60000);
+      return;
+    }
+    if (st.critical && st.behind) {
+      if (st.auto_critical) {
+        // found and about to install (the server moves to "installing" within seconds)
+        show("installing", "Important update · automatic", "Important update " + ver + " found. It installs automatically in a moment.",
+          { notes: st.notes_url });
+        schedule(3000);
+        return;
+      }
+      if (LS.get(LATER, "") !== String(ver)) {
+        show("important", "Important update", "Important update " + ver + " is available. It installs in a few seconds and keeps your library and settings.",
+          { notes: st.notes_url, install: "Install now", later: "Later" });
+      } else hide();
+      schedule(10 * 60000);
+      return;
+    }
+    if (st.behind) {
+      if (LS.get(LATER, "") !== String(ver)) {
+        show("minor", "Minor update", "Update " + ver + " is available. Install it whenever it suits you.",
+          { notes: st.notes_url, install: "Install", later: "Later" });
+      } else hide();
+      schedule(30 * 60000);
+      return;
+    }
+    if (b.dataset.kind !== "done") hide();
+    // the server's first check runs about a minute after it starts: ask again soon until it has run
+    schedule(st.checked ? 30 * 60000 : 5000);
   }
-  if ($("upd-install")) $("upd-install").addEventListener("click", install);
-  if ($("upd-later")) $("upd-later").addEventListener("click", async () => {
-    try { const st = await api("/api/update/state"); LS.set(LATER, String(st.latest || "")); } catch (e) {}
-    $("upd-banner").classList.add("hidden");
+
+  async function install(stop) {
+    btnInstall.disabled = true;
+    show(b.dataset.kind || "important", tag.textContent || "Update", "Installing the update… Comfy Studio restarts by itself.", { notes: notes.href || "" });
+    try {
+      const r = await api("/api/update/apply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stop: !!stop }) });
+      if (!r.updated) { show("error", "Update", r.message || "Nothing to install.", { later: "OK" }); return; }
+    } catch (e) {
+      if (/generating/i.test(e.message || "")) {
+        askConfirm({ title: "Stop and install?", body: "Something is generating. Stop it and install the update now? Your library and settings are kept.",
+          yes: "Stop and install", onYes: () => install(true) });
+        refresh();
+      } else show("error", "Update", e.message || "Couldn't install the update.", { install: "Try again", later: "Later" });
+      return;
+    } finally { btnInstall.disabled = false; }
+    waitForRestart();
+  }
+  btnInstall.addEventListener("click", () => {
+    if (b.dataset.kind === "waiting") {
+      askConfirm({ title: "Stop and install now?", body: "This stops what is generating now and installs the important update. Your library and settings are kept.",
+        yes: "Stop and install", onYes: () => install(true) });
+    } else install(false);
+  });
+  btnLater.addEventListener("click", () => {
+    if (st && st.latest) LS.set(LATER, String(st.latest));
+    hide();
   });
   if ($("upd-auto")) $("upd-auto").addEventListener("change", async () => {
     try {
       const r = await api("/api/update/auto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: $("upd-auto").checked }) });
       toast(r.auto_critical ? "Important fixes will install by themselves (only while idle)" : "Important fixes will wait for you");
+      refresh();
     } catch (e) { showError(e.message || "Couldn't save that."); }
   });
+  window.__updRefresh = refresh;
+  // a window in the background has its timers slowed right down: look again the moment it is in front
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  window.addEventListener("focus", () => refresh());
   refresh();
-  setInterval(refresh, 30 * 60 * 1000);
 })();
 
 /* ===== Node packs Comfy Studio added (Workflows page): list + Remove v20261112p ===== */

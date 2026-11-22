@@ -1733,3 +1733,64 @@ body.lib-selecting .masonry > .lib-item.is-sel:hover .thumb img { transform: sca
 .is-panning, .is-panning * { cursor: grabbing !important; }
 .zoom-anim { transition: transform .15s ease-out, filter .2s ease !important; }
 @media (max-width: 719px) { .zoom-bar { bottom: 10px; } }
+
+/* ===== Prompt box readability v20261122a =====
+   Slim (collapsed) line: the text was cut off (21 px tall with 12 px padding left 9 px for the words).
+   Open: easier to read (bigger, more line spacing), grows to about a third of the screen then scrolls inside,
+   so it never covers the whole picture; on a phone the limit follows the space left above the keyboard. */
+#prompt { font-size: 15.5px; line-height: 1.55; overflow-y: auto; scrollbar-width: thin;
+  max-height: min(32vh, 280px) !important; }
+@supports (height: 1dvh) { #prompt { max-height: min(32dvh, 280px) !important; } }
+body.kb-open #prompt { max-height: calc(var(--vvh, 100vh) * .30) !important; }
+body.gs-open:not(.gs-expand) #prompt {
+  height: calc(1.5em + 12px) !important; max-height: calc(1.5em + 12px) !important; line-height: 1.5em;
+  font-size: 14.5px; overflow: hidden;
+}
+/* open over a generation: a solid, clearly outlined card, and a darker fade behind it so the picture doesn't show
+   through the text */
+body.gs-open.gs-expand .composer { background: #19191c; border: 1px solid rgba(255,255,255,.12); }
+body.gs-open.gs-expand .dock { background: linear-gradient(rgba(13,13,14,0), rgba(13,13,14,.9) 22%, rgba(13,13,14,.98)); }
+#prompt::placeholder { color: rgba(243,243,244,.42); }
+@media (max-width: 899px) {
+  #prompt { font-size: 16px; max-height: min(26vh, 210px) !important; }   /* 16 px: iPhone doesn't zoom in */
+  @supports (height: 1dvh) { #prompt { max-height: min(26dvh, 210px) !important; } }
+  body.kb-open #prompt { max-height: calc(var(--vvh, 100vh) * .28) !important; }
+}
+
+/* ===== Guided tour v20261122a ===== */
+.tour-root { position: fixed; inset: 0; z-index: 10000; pointer-events: none; }
+.tour-root.hidden { display: none; }
+.tour-block { position: absolute; inset: 0; pointer-events: auto; background: transparent; }
+.tour-root.no-target .tour-block { background: rgba(0,0,0,.62); }
+.tour-spot {
+  position: fixed; border-radius: 14px; pointer-events: none;
+  box-shadow: 0 0 0 2px rgba(167,139,250,.95), 0 0 0 9999px rgba(0,0,0,.62);
+  transition: left .22s ease, top .22s ease, width .22s ease, height .22s ease;
+}
+.tour-root.no-target .tour-spot { box-shadow: none; }
+.tour-card {
+  position: fixed; pointer-events: auto; width: 340px; box-sizing: border-box;
+  background: #1b1b1f; color: #f3f3f4; border: 1px solid rgba(255,255,255,.12); border-radius: 16px;
+  padding: 14px 16px 12px; box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  transition: left .22s ease, top .22s ease; font-size: 14px; line-height: 1.5;
+}
+.tour-step { font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: #a78bfa; margin-bottom: 4px; min-height: 1px; }
+.tour-title { margin: 0 0 4px; font-size: 16px; font-weight: 650; }
+.tour-text { margin: 0 0 12px; color: rgba(243,243,244,.82); }
+.tour-btns { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.tour-btn {
+  height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14);
+  background: transparent; color: #f3f3f4; font: inherit; font-size: 13.5px; cursor: pointer;
+}
+.tour-btn.primary { background: #f3f3f4; color: #111; border-color: #f3f3f4; font-weight: 600; }
+.tour-btn.quiet { border-color: transparent; color: rgba(243,243,244,.6); margin-right: auto; }
+.tour-btn:focus-visible { outline: 2px solid #a78bfa; outline-offset: 2px; }
+.tour-again { margin: 12px 16px 0; }
+@media (prefers-reduced-motion: reduce) { .tour-spot, .tour-card { transition: none; } }
+
+/* ===== Declutter pass v20261122a ===== */
+/* phone: Clear / Undo sit in the pill row over the feed; they were see-through ghosts. Same look as the pills now. */
+.prompt-clear.in-hud, .prompt-undo.in-hud { background: #1f1f22; color: rgba(243,243,244,.85); border-color: rgba(255,255,255,.10); }
+/* Stop ComfyUI: a quiet button, red only on hover (it isn't an alarm; it also wasn't clear it stops ComfyUI) */
+.comfy-start.comfy-stop { background: transparent; color: rgba(243,243,244,.72); border-color: rgba(255,255,255,.14); }
+.comfy-start.comfy-stop:hover, .comfy-start.comfy-stop:focus-visible { background: rgba(255,107,107,.18); color: #ffb3b3; border-color: rgba(255,107,107,.5); }

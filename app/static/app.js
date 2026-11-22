@@ -7864,8 +7864,8 @@ function bindShell() {
   stop.type = "button";
   stop.id = "comfy-stop";
   stop.className = "comfy-start comfy-stop hidden";
-  stop.setAttribute("aria-label", "Stop ComfyUI");
-  stop.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg><span>Stop</span>';
+  stop.setAttribute("aria-label", "Stop ComfyUI"); stop.title = "Stop ComfyUI (frees the graphics card). Sending a prompt starts it again.";
+  stop.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg><span>Stop ComfyUI</span>';
   chip.parentNode.insertBefore(stop, chip);
   stop.addEventListener("click", async () => {
     if (!window.confirm("Stop ComfyUI? Anything it's generating will stop.")) return;
@@ -10081,4 +10081,18 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     else return;
     e.preventDefault(); e.stopImmediatePropagation();
   }, true);
+})();
+
+/* ===== Prompt box readability v20261122a =====
+   Phone keyboard: the visible height (visualViewport) drives the prompt's height limit, so the open prompt and
+   the send button stay above the keyboard. */
+(function () {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  function upd() {
+    document.documentElement.style.setProperty("--vvh", Math.round(vv.height) + "px");
+    document.body.classList.toggle("kb-open", window.innerHeight - vv.height > 120);
+  }
+  vv.addEventListener("resize", upd);
+  upd();
 })();

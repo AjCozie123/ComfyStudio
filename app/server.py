@@ -346,12 +346,75 @@ def format_comfy_error(payload):
     return text or "ComfyUI rejected the workflow."
 
 
-def comfy_up():
+def _comfy_port_open(timeout=2):
     try:
-        comfy("GET", "/system_stats", timeout=3)
+        socket.create_connection((COMFY_HOST, COMFY_PORT), timeout=timeout).close()
         return True
+    except OSError:
+        return False
+
+
+def comfy_answers(timeout=4):
+    """ComfyUI really answered an HTTP request (it is ready for jobs)."""
+    try:
+        comfy("GET", "/system_stats", timeout=timeout)
+        return True
+    except ComfyError:
+        return True                    # it answered, with an HTTP error: it is running
     except Exception:
         return False
+
+
+def comfy_up():
+    """True when ComfyUI is running. While it loads a 20 GB model on this PC it can take longer than a few seconds
+    to answer, and that used to be read as "ComfyUI is not running" (the job failed although it was fine). So a slow
+    answer counts as running as long as its port still takes connections; only a refused connection is "down"."""
+    if comfy_answers(timeout=4):
+        return True
+    return _comfy_port_open()
+
+
+_ensure_lock = threading.Lock()
+COMFY_START_WAIT = 360                 # seconds: a cold start with many custom nodes takes ~30-90 s here
+
+
+def ensure_comfy(job=None, wait=COMFY_START_WAIT):
+    """Make sure ComfyUI is running before a job goes to it. When it is down (on this PC) it is started the same way
+    as the Start button, then we wait until it answers. -> None when ready, "cancelled", or a clear error message."""
+    if comfy_up():
+        return None
+    time.sleep(1.5)                    # one failed check is not "down"
+    if comfy_up():
+        return None
+    if not _comfy_local():
+        return "ComfyUI isn't answering at %s. Start it on that computer, then try again." % COMFY
+    prev = (job or {}).get("status")
+    if job is not None:
+        job["status"] = "waiting_comfy"
+        job["message"] = "Starting ComfyUI\u2026 (about a minute)"
+    t0 = time.time()
+    with _ensure_lock:                 # several jobs at once: only one of them starts ComfyUI
+        if not comfy_up() and not COMFY_STYLE.get("busy"):   # busy = the app is already restarting it
+            try:
+                log.info("Generate: ComfyUI is down, starting it (%s)", start_comfy())
+            except Exception as e:
+                log.info("Generate: couldn't start ComfyUI: %s", e)
+                return "ComfyUI isn't running and couldn't be started: %s" % e
+    while time.time() - t0 < wait:
+        if job is not None and job.get("status") == "cancelled":
+            return "cancelled"
+        if comfy_answers(timeout=5):
+            log.info("Generate: ComfyUI ready after %.0f s", time.time() - t0)
+            if job is not None:
+                job["status"] = prev if prev and prev != "waiting_comfy" else "queued"
+                job["message"] = "ComfyUI is ready."
+            return None
+        if job is not None:
+            job["message"] = "Starting ComfyUI\u2026 %d s" % (time.time() - t0)
+        time.sleep(2)
+    log.info("Generate: ComfyUI didn't answer within %d s", wait)
+    return ("ComfyUI didn't start within %d minutes. Open ComfyUI's window (or comfy_launch.log) to see why, "
+            "then try again." % (wait // 60))
 
 
 def comfy_queue():
@@ -1515,7 +1578,7 @@ def _prompt_lost(pid, st):
     try:
         h = comfy("GET", "/history/" + pid, timeout=10)
     except Exception:
-        h = {}
+        return None                    # couldn't ask: not proof the job is gone (ComfyUI may just be busy)
     if h:
         st["miss"] = 0
         return None
@@ -2108,10 +2171,11 @@ def _remember_comfy_start(argv, embedded):
 def _launch_comfy(cmd):
     """Start ComfyUI in its own minimised console window (like the user's .bat), and remember it was us."""
     import subprocess
-    si = subprocess.STARTUPINFO()
-    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    si.wShowWindow = 7                                   # SW_SHOWMINNOACTIVE: minimised, doesn't take focus
-    subprocess.Popen(cmd, cwd=COMFY_PORTABLE, creationflags=0x00000010 | 0x00000200, startupinfo=si)
+    if "--disable-auto-launch" not in cmd:
+        cmd = list(cmd) + ["--disable-auto-launch"]      # started from the app: no browser tab
+    # in the background: no console window (its log is in ComfyUI/user/comfyui.log); the green light shows it's up
+    subprocess.Popen(cmd, cwd=COMFY_PORTABLE, creationflags=0x08000000 | 0x00000200,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _comfy_start["t"] = time.time()
     try:
         st = app_paths.load(DATA)
@@ -2230,6 +2294,23 @@ def _maybe_memory_retry(job, text):
     return True
 
 
+def _clear_crash_flag():
+    """Killing ComfyUI's python makes its run_comfyui.bat write comfy_crashed.flag, and the AI Studio keeper then
+    "recovers" ComfyUI about 20 s later (a Stop that undid itself; once that restart died half-way). A deliberate
+    stop is not a crash: remove the flag for the next few seconds (the keeper waits 8 s before acting on it)."""
+    flag = os.path.join(COMFY_PORTABLE, "comfy_crashed.flag")
+
+    def run():
+        for delay in (0.5, 1.5, 2, 2):
+            time.sleep(delay)
+            try:
+                os.remove(flag)
+                log.info("removed comfy_crashed.flag after a deliberate stop")
+            except OSError:
+                pass
+    threading.Thread(target=run, daemon=True).start()
+
+
 def stop_comfy(force=False):
     """Stop the ComfyUI running on this PC (the process listening on its port, with its child processes).
     Refuses while it is generating unless force is set. Only works for a ComfyUI on this PC."""
@@ -2249,6 +2330,23 @@ def stop_comfy(force=False):
         except Exception:
             pass
     port = u.port or 8188
+    stop_ps1 = os.path.join(COMFY_PORTABLE, "stop_comfyui.ps1")
+    if os.path.isfile(stop_ps1):
+        # the launcher's own stop: closes ComfyUI, its console window and the .bat, and clears the lock and crash
+        # flag, so nothing (the AI Studio keeper) starts it again
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", stop_ps1, "-Force"],
+                               capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+            log.info("stop_comfyui.ps1: %s", ((r.stdout or "") + (r.stderr or "")).strip()[-300:])
+        except Exception as e:
+            log.info("stop_comfyui.ps1 failed: %s", e)
+        for _ in range(16):
+            if not _comfy_port_open(timeout=1):
+                _clear_crash_flag()
+                _comfy_start["t"] = 0
+                log.info("stopped ComfyUI (stop_comfyui.ps1)")
+                return "ComfyUI stopped."
+            time.sleep(0.5)
     out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
                          creationflags=0x08000000).stdout
     pids = set()
@@ -2259,8 +2357,23 @@ def stop_comfy(force=False):
     pids.discard(str(os.getpid()))
     if not pids:
         raise ValueError("Couldn't find the ComfyUI process to stop.")
+    denied = False
     for pid in pids:
-        subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], capture_output=True, creationflags=0x08000000)
+        r = subprocess.run(["taskkill", "/PID", pid, "/T", "/F"], capture_output=True, text=True,
+                           creationflags=0x08000000)
+        denied = denied or "access is denied" in ((r.stdout or "") + (r.stderr or "")).lower()
+    for _ in range(20):                # check it really went (taskkill can fail, e.g. an admin-started ComfyUI)
+        if not _comfy_port_open(timeout=1):
+            break
+        time.sleep(0.5)
+    else:
+        log.info("stop ComfyUI failed (pid %s)%s", ",".join(sorted(pids)), " access denied" if denied else "")
+        if denied:
+            raise ValueError("Couldn't stop ComfyUI: it was started as administrator, so Comfy Studio isn't allowed to "
+                             "close it. Close its window, or right-click stop_comfyui_admin.bat in the Comfy Studio "
+                             "folder and choose Run as administrator.")
+        raise ValueError("ComfyUI didn't stop. Close its window yourself, then try again.")
+    _clear_crash_flag()
     _comfy_start["t"] = 0
     log.info("stopped ComfyUI (pid %s)", ",".join(sorted(pids)))
     return "ComfyUI stopped."
@@ -3183,7 +3296,7 @@ def submit_workflow_job(data):
         raise explain_problems(g, problems)
     defaults = card.get("defaults") or {}
     job = {
-        "id": uuid.uuid4().hex[:12],
+        "id": _new_job_id(),
         "mode": "edit" if images else "t2i",
         "media": card.get("media") or "image",
         "task": card.get("task"),
@@ -3281,6 +3394,69 @@ def submit_workflow_job(data):
         job_q.append(job["id"])
         q_cv.notify()
     return job
+
+
+def defer_until_comfy(data):
+    """Generate pressed while ComfyUI is stopped: a placeholder job ("Starting ComfyUI...") is shown at once; ComfyUI
+    is started, and when it answers the real job is built under the same id and queued as usual."""
+    ph = {"id": uuid.uuid4().hex[:12], "mode": data.get("mode") or "t2i", "status": "waiting_comfy",
+          "message": "Starting ComfyUI\u2026 (about a minute)", "prompt": data.get("prompt") or "",
+          "prompt_user": data.get("prompt") or "", "t": time.time(), "media": "image"}
+    jobs[ph["id"]] = ph
+    order.append(ph["id"])
+
+    def work():
+        err = ensure_comfy(ph)
+        if ph.get("status") == "cancelled" or err == "cancelled":
+            return
+        if err:
+            ph.update(status="error", error=err, t_done=time.time())
+            return
+        try:
+            object_info(force=True)
+        except Exception as e:
+            log.info("object_info after start: %s", e)
+        try:
+            _defer_ids.id = ph["id"]
+            real = submit_job(data)
+            if real and real.get("id") != ph["id"]:
+                # built under its own id (a path that doesn't use _new_job_id): show that job instead
+                jobs.pop(ph["id"], None)
+                try:
+                    order.remove(ph["id"])
+                except ValueError:
+                    pass
+                return
+        except NeedsAction as e:
+            ph.update(status="error", error=str(e), t_done=time.time())
+        except ValueError as e:
+            ph.update(status="error", error=str(e), t_done=time.time())
+        except Exception:
+            log.exception("deferred generate")
+            ph.update(status="error", error="Something went wrong in the app: %s"
+                      % traceback.format_exc().splitlines()[-1], t_done=time.time())
+        finally:
+            _defer_ids.id = None
+        try:
+            order.remove(ph["id"])        # the real job was appended under the same id
+        except ValueError:
+            pass
+        if ph["id"] not in order:
+            order.append(ph["id"])
+    threading.Thread(target=work, daemon=True).start()
+    return ph
+
+
+_defer_ids = threading.local()
+
+
+def _new_job_id():
+    """A new job id, or the waiting placeholder's id when the job is being built after ComfyUI was started."""
+    jid = getattr(_defer_ids, "id", None)
+    if jid:
+        _defer_ids.id = None
+        return jid
+    return uuid.uuid4().hex[:12]
 
 
 def apply_wf_enhanced_prompt(job):
@@ -4577,7 +4753,7 @@ def submit_job(data):
     if problems:
         raise ValueError("The workflow did not match this ComfyUI install:\n" + "\n".join(problems[:12]))
     job = {
-        "id": uuid.uuid4().hex[:12],
+        "id": _new_job_id(),
         "mode": mode,
         "prompt": prompt,
         "status": "queued",
@@ -4923,6 +5099,59 @@ def _wait_for_job(job):
     job["t_done"] = time.time()
 
 
+class _NotReady(Exception):
+    pass
+
+
+def _comfy_has_prompt(pid):
+    try:
+        q = comfy("GET", "/queue", timeout=10)
+        if pid in _queue_prompt_ids(q.get("queue_running")) | _queue_prompt_ids(q.get("queue_pending")):
+            return True
+        return bool(comfy("GET", "/history/" + pid, timeout=10))
+    except Exception:
+        return False
+
+
+def submit_prompt(job, graph, tries=4):
+    """POST /prompt with our own prompt_id. A dropped or timed-out connection (ComfyUI busy loading a model, or
+    restarting) is retried after ComfyUI answers again; before each retry ComfyUI is asked whether it already took
+    the job, so it never runs twice. ComfyUI rejecting the workflow (ComfyError) is not retried."""
+    pid = str(uuid.uuid4())
+    body = {"prompt": graph, "client_id": CLIENT_ID, "prompt_id": pid}
+    last = None
+    for attempt in range(tries):
+        if attempt:
+            if job.get("status") == "cancelled":
+                return {"prompt_id": pid}
+            err = ensure_comfy(job)
+            if err == "cancelled":
+                return {"prompt_id": pid}
+            if err:
+                raise _NotReady(err)
+            if _comfy_has_prompt(pid):
+                log.info("job %s: ComfyUI had already taken the prompt", job.get("id"))
+                return {"prompt_id": pid}
+            job["status"] = "running"
+            job["message"] = "Sending to ComfyUI again (try %d)\u2026" % (attempt + 1)
+        try:
+            resp = comfy("POST", "/prompt", body, timeout=90)
+            return resp if (resp.get("prompt_id") or resp.get("promptId")) else dict(resp, prompt_id=pid)
+        except ComfyError as e:
+            if (e.payload or {}).get("_http", 400) >= 500 and attempt < tries - 1:
+                last = e                # a server error (not a bad workflow): try again
+                log.info("job %s: /prompt server error, retrying: %s", job.get("id"), e)
+                time.sleep(3 * (attempt + 1))
+                continue
+            raise
+        except Exception as e:        # refused / reset / timed out
+            last = e
+            log.info("job %s: /prompt failed (try %d): %s", job.get("id"), attempt + 1, e)
+            time.sleep(3 * (attempt + 1))
+    raise _NotReady("Couldn't hand the job to ComfyUI after %d tries (%s). ComfyUI may have crashed; "
+                    "check its window, then try again." % (tries, last))
+
+
 def _worker():
     while True:
         with q_cv:
@@ -4933,9 +5162,12 @@ def _worker():
         if not job or job["status"] == "cancelled":
             continue
         try:
-            if not comfy_up():
+            err = ensure_comfy(job)
+            if err == "cancelled" or job["status"] == "cancelled":
+                continue
+            if err:
                 job["status"] = "error"
-                job["error"] = "ComfyUI is not running at %s. Start it first, then try again." % COMFY
+                job["error"] = err
                 job["t_done"] = time.time()
                 continue
             # Queue behind a foreign job rather than interrupting it.
@@ -4971,13 +5203,19 @@ def _worker():
                         job["message"] = "Shot 1 from your picture…"
                 except Exception as e:
                     log.info("reference extend skipped: %s", e)
-            body = {"prompt": job["graph"], "client_id": CLIENT_ID}
             try:
-                resp = comfy("POST", "/prompt", body, timeout=60)
+                resp = submit_prompt(job, job["graph"])
             except ComfyError as e:
                 job["status"] = "error"
                 job["error"] = str(e)
                 job["t_done"] = time.time()
+                continue
+            except _NotReady as e:
+                job["status"] = "error"
+                job["error"] = str(e)
+                job["t_done"] = time.time()
+                continue
+            if job["status"] == "cancelled":
                 continue
             pid = resp.get("prompt_id") or resp.get("promptId")
             if not pid:
@@ -5895,6 +6133,8 @@ class H(BaseHTTPRequestHandler):
                 return self.j(st)
             except Exception as e:
                 return self.j({"error": str(e)}, 500)
+        if path == "/api/tour":
+            return self.j({"seen": int(app_paths.load(DATA).get("tour_seen") or 0)})
         if path == "/api/status":
             foreign, running, pending = (False, [], [])
             up = comfy_up()
@@ -6577,6 +6817,14 @@ class H(BaseHTTPRequestHandler):
             if UPDATE_STATE.get("phase") in ("installing", "restarting"):
                 return self.j({"error": "Comfy Studio is installing an important update and restarts in a few seconds. "
                                         "Try again in a minute; your library and settings are kept."}, 503)
+            if not comfy_up() and _comfy_local():
+                # ComfyUI is stopped: start it and build the job once it answers (building it now would skip the
+                # checks that need ComfyUI's node list)
+                try:
+                    _clean_request(data)
+                except ValueError as e:
+                    return self.j({"error": str(e)}, 400)
+                return self.j({"job": job_view(defer_until_comfy(data))})
             try:
                 job = submit_job(data)
             except NeedsAction as e:
@@ -6641,6 +6889,14 @@ class H(BaseHTTPRequestHandler):
             info["alias_text"] = alias_info["text"]
             info["alias_warnings"] = alias_info.get("warnings") or []
             return self.j(info)
+        if path == "/api/tour":
+            try:
+                st = app_paths.load(DATA)
+                st["tour_seen"] = max(int(st.get("tour_seen") or 0), int(data.get("seen") or 0))
+                app_paths.save(DATA, st)
+            except Exception as e:
+                return self.j({"error": str(e)}, 400)
+            return self.j({"ok": True})
         if path == "/api/cancel":
             return self.j({"msg": cancel(str(data.get("id") or ""))})
         if path == "/api/setpin":

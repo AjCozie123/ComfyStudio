@@ -1,7 +1,7 @@
 """Comfy Studio as a desktop app: its own window (no browser, no tabs, no address bar).
 
 Starts the Comfy Studio server if it isn't running, then opens the studio in a native window
-(pywebview on Windows' built-in WebView2). Does not start or stop ComfyUI.
+(pywebview on Windows' built-in WebView2). Closing the window also stops ComfyUI.
 Run with pythonw.exe so no console appears.
 """
 import ctypes
@@ -158,6 +158,18 @@ def open_in_browser():
     webbrowser.open(URL)
 
 
+def stop_comfy_on_close():
+    """Closing the app closes ComfyUI too (it holds GPU memory and slows games down). The server stops it with the
+    launcher's clean stop, so its console closes and nothing starts it again."""
+    try:
+        req = urllib.request.Request(URL + "api/comfy/stop", data=b'{"force": true, "why": "app closed"}',
+                                     method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=40) as r:
+            r.read()
+    except Exception as e:
+        note_error("closing ComfyUI with the app: %s" % e)
+
+
 def main():
     # one copy only: a second launch just brings the open window forward
     mutex = kernel32.CreateMutexW(None, False, "Local\\" + APP_ID)
@@ -220,6 +232,7 @@ def main():
         # usually Windows' WebView2 is missing (older Windows 10): the browser works instead
         note_error("app window failed (%s: %s): opening in the browser" % (type(e).__name__, e))
         open_in_browser()
+    stop_comfy_on_close()
     del mutex
     # the window is closed: end the whole app process now, so no video / sound can keep running in the background
     os._exit(0)

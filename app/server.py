@@ -597,6 +597,10 @@ def _ws_thread():
         try:
             s, leftover = _ws_handshake(path)
             log.info("comfy websocket connected")
+            # a (re)connect usually means ComfyUI (re)started, maybe with newly installed node packs: the cached
+            # node list is from before, and kept workflows saying "missing nodes" for minutes after a restart
+            _oi["t"] = 0
+            _oi_refresh_bg()
             while True:
                 try:
                     opcode, data, leftover = _ws_recv(s, leftover)
@@ -2245,6 +2249,54 @@ def restart_comfy_style(style, wait=True):
     COMFY_STYLE["active"] = style
     _oi.update(t=0)
     return _comfy_back(240) if wait else True
+
+
+def restart_comfy_plain():
+    """Restart ComfyUI in the way it runs now (to load new node packs). -> (ok, message).
+    1. Comfy Studio can restart it (portable ComfyUI on this PC, or the launcher): stop, then start the same way.
+    2. Else ComfyUI-Manager's reboot, checked: ComfyUI must really go away and come back.
+    3. Else no pretending: ask the user to close and reopen ComfyUI."""
+    if comfy_restart_how():
+        try:
+            prof = (hardware() or {}).get("profile") or "everyday"
+            if comfy_up():
+                stop_comfy(force=True)
+            _comfy_start["t"] = 0
+            start_comfy(prof if prof in PROFILE_NAMES else "everyday")
+            _oi["t"] = 0
+            return True, "Restarting ComfyUI so it loads the new node packs. This takes about a minute."
+        except Exception as e:
+            log.info("restart ComfyUI: %s", e)
+    try:
+        NM.reboot()
+    except Exception:
+        pass                                   # the connection drops while ComfyUI restarts
+    for _ in range(20):                        # did it really go down?
+        time.sleep(0.5)
+        if not _comfy_port_open(timeout=1):
+            _oi["t"] = 0
+            return True, "Restarting ComfyUI so it loads the new node packs. This takes about a minute."
+    return False, ("Comfy Studio can't restart this ComfyUI by itself. Close ComfyUI (its window, or the ComfyUI app) "
+                   "and start it again; Comfy Studio notices when it's back.")
+
+
+_IMPORT_FAIL = re.compile(r"(?:IMPORT FAILED|Cannot import)\W.*?custom_nodes[\\/]+([^\\/\s:]+)", re.I)
+
+
+def comfy_import_failures():
+    """{custom_nodes folder: ComfyUI's own error line} for node packs ComfyUI couldn't load (from its log)."""
+    out = {}
+    try:
+        raw = comfy("GET", "/internal/logs/raw", timeout=4)
+        entries = [_ANSI.sub("", str(e.get("m") or "")) for e in (raw.get("entries") or [])]
+    except Exception:
+        return out
+    for i, m in enumerate(entries):
+        g = _IMPORT_FAIL.search(m)
+        if g:
+            nxt = " ".join(x.strip() for x in entries[i + 1:i + 3] if x.strip())[:300]
+            out[g.group(1)] = (m.strip() + (" " + nxt if nxt else ""))[:400]
+    return out
 
 
 def _maybe_memory_retry(job, text):
@@ -5445,6 +5497,49 @@ def _comfy_back(timeout=240):
     return False
 
 
+_REG_CACHE = {}
+
+
+def _registry_repo(pack_id):
+    """GitHub address of a pack in the official Comfy registry (api.comfy.org), or None."""
+    if pack_id in _REG_CACHE:
+        return _REG_CACHE[pack_id]
+    url = None
+    try:
+        req = urllib.request.Request("https://api.comfy.org/nodes/" + urllib.parse.quote(pack_id),
+                                     headers={"User-Agent": "ComfyStudio", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            rep_ = (json.loads(r.read()) or {}).get("repository") or ""
+        if CN.parse_github(rep_):
+            o, n = CN.parse_github(rep_)
+            url = "https://github.com/%s/%s" % (o, n)
+    except Exception as e:
+        log.info("registry lookup %s: %s", pack_id, e)
+    _REG_CACHE[pack_id] = url
+    return url
+
+
+def _pack_urls_for(wid, classes):
+    """{node class: GitHub url} for the missing nodes of an engine, from the pack stamps saved with the workflow."""
+    out = {}
+    try:
+        card, _g = WF.get(wid)
+    except Exception:
+        return out
+    for item in ((card.get("requires") or {}).get("custom_nodes") or []):
+        cls, mod = item.get("class_type"), str(item.get("module") or item.get("github") or "").strip()
+        if cls not in classes or not mod:
+            continue
+        if CN.parse_github(mod) and ("/" in mod):
+            o, n = CN.parse_github(mod) if mod.startswith("http") else (mod.split("/")[0], mod.split("/")[1])
+            out[cls] = "https://github.com/%s/%s" % (o, n)
+        else:
+            url = _registry_repo(mod)
+            if url:
+                out[cls] = url
+    return out
+
+
 def _setup_run(wid):
     """Everything an engine needs, in order, without more taps: the node packs Comfy Studio needs + any this engine
     uses, its model files (official links), a ComfyUI restart only when nodes were added, then a final check."""
@@ -5473,8 +5568,10 @@ def _setup_run(wid):
                 notes.append("Some node packs didn't install: %s." % ", ".join(str(x) for x in job["failed"]))
         engine_nodes = list(plan.get("missing_nodes") or [])
         core_missing = []
+        manager_ok = False
         if engine_nodes:
-            res = NM.resolve(engine_nodes)
+            manager_ok = NM.manager_available()
+            res = NM.resolve(engine_nodes) if manager_ok else {"manager": False, "packs": [], "unknown": list(engine_nodes)}
             packs = [pk["id"] for pk in (res.get("packs") or []) if pk.get("registry") and not pk.get("installed")]
             core_missing = list(res.get("unknown") or [])
             if packs:
@@ -5494,6 +5591,29 @@ def _setup_run(wid):
                                 break
                             time.sleep(3)
                         added_nodes = True
+        # nodes the Manager couldn't place (or there is no Manager, as on most fresh installs): the workflow records
+        # which pack each custom node comes from, so install those packs straight from GitHub
+        left = [n for n in (core_missing if engine_nodes else []) if n not in have]
+        if left and os.path.isdir(NODES_DIR):
+            urls = _pack_urls_for(wid, left)
+            for url in sorted(set(urls.values())):
+                try:
+                    jid = CN.start_github(url, DATA, NODES_DIR, comfy_py())
+                except ValueError as e:
+                    if "already installed" in str(e):
+                        added_nodes = True          # folder there, not loaded yet: the restart below loads it
+                        continue
+                    notes.append("%s: %s" % (url, e))
+                    continue
+                while CN.JOBS.get(jid, {}).get("state") == "running":
+                    _setup_step("nodes", "running", "Installing %s from GitHub\u2026" % url.rsplit("/", 1)[-1])
+                    time.sleep(2)
+                j = CN.JOBS.get(jid) or {}
+                if j.get("state") == "done":
+                    added_nodes = True
+                else:
+                    notes.append("Couldn't install %s: %s" % (url.rsplit("/", 1)[-1], j.get("message") or "see the log"))
+            core_missing = [n for n in core_missing if n not in urls]
         _setup_step("nodes", "done", "Added" if added_nodes else "Nothing needed")
         # 2. model files
         todo = [f for f in plan["files"] if not f["present"] and f.get("url") and f.get("target_dir")]
@@ -5523,13 +5643,17 @@ def _setup_run(wid):
         # 3. restart ComfyUI so new node packs load
         if added_nodes:
             _setup_step("restart", "running", "Restarting ComfyUI (about a minute)\u2026")
-            try:
-                NM.reboot()
-            except Exception:
-                pass
+            ok, msg = restart_comfy_plain()
+            if not ok:
+                _setup_step("restart", "error", "Restart ComfyUI yourself")
+                SETUP.update(state="needs", message="The node packs are installed. " + msg +
+                             " Then press Set up again to finish.")
+                return
+            time.sleep(4)
             if not _comfy_back():
                 _setup_step("restart", "error", "ComfyUI didn't come back")
                 raise ValueError("ComfyUI didn't come back after the restart. Start it again, then press Set up to finish.")
+            _oi["t"] = 0
             _setup_step("restart", "done", "Restarted")
         else:
             _setup_step("restart", "skipped", "Not needed")
@@ -5545,10 +5669,20 @@ def _setup_run(wid):
             problems.append("%d file%s still missing." % (after["missing"], "" if after["missing"] == 1 else "s"))
         if after.get("missing_nodes"):
             still = after["missing_nodes"]
-            core = [n for n in still if n in core_missing] or still
-            problems.append("Your ComfyUI doesn't have %s. These come with ComfyUI itself, so update ComfyUI "
-                            "(ComfyUI Manager \u203a Update ComfyUI, or the update script in your ComfyUI folder), "
-                            "then press Set up again." % ", ".join(core[:6]))
+            core = [n for n in still if n in core_missing]
+            other = [n for n in still if n not in core_missing]
+            if core and manager_ok:
+                problems.append("Your ComfyUI doesn't have %s. No node pack provides these, so they come with a newer "
+                                "ComfyUI: update ComfyUI (ComfyUI Manager \u203a Update ComfyUI, or the update script in "
+                                "your ComfyUI folder), then press Set up again." % ", ".join(core[:6]))
+            elif core:
+                problems.append("Comfy Studio couldn't find which node pack provides %s (the workflow doesn't say, and "
+                                "ComfyUI-Manager isn't installed to look it up). Install that pack in ComfyUI, or add it "
+                                "with Workflows \u203a Node packs \u203a From GitHub, then press Set up again."
+                                % ", ".join(core[:6]))
+            if other:
+                problems.append("%s still isn't loaded. If ComfyUI wasn't restarted, close it and start it again, then "
+                                "press Set up again." % ", ".join(other[:6]))
         problems += notes
         if problems:
             _setup_step("check", "error", "Not ready yet")
@@ -6109,8 +6243,20 @@ class H(BaseHTTPRequestHandler):
                 have = set(object_info())
             except Exception:
                 have = set()
-            return self.j({"packs": CN.required_status(HERE, NODES_DIR, have), "comfy_up": bool(have),
-                           "nodes_dir": NODES_DIR, "comfy_python": bool(comfy_py())})
+            packs = CN.required_status(HERE, NODES_DIR, have)
+            if have and any(x["installed"] and not x["loaded"] for x in packs):
+                try:                                  # on disk but not in the list: ask ComfyUI itself, not the cache
+                    have = set(object_info(force=True))
+                    packs = CN.required_status(HERE, NODES_DIR, have)
+                except Exception:
+                    pass
+            failed = comfy_import_failures() if have else {}
+            for x in packs:
+                err = next((m for f, m in failed.items()
+                            if f.lower() in [x["folder"].lower()] + [a.lower() for a in x.get("aliases") or []]), "")
+                x["load_error"] = err if (x["installed"] and not x["loaded"]) else ""
+            return self.j({"packs": packs, "comfy_up": bool(have), "nodes_dir": NODES_DIR,
+                           "comfy_python": bool(comfy_py()), "can_restart": bool(comfy_restart_how())})
         if path == "/api/nodes/custom":
             return self.j({"installed": CN.installed(DATA), "comfy_python": bool(comfy_py()), "nodes_dir": NODES_DIR})
         if path == "/api/nodes/status":
@@ -6755,11 +6901,8 @@ class H(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self.j({"error": str(e)}, 400)
         if path == "/api/comfy/restart":
-            try:
-                NM.reboot()
-            except Exception:
-                pass  # the connection drops while ComfyUI restarts
-            return self.j({"ok": True, "message": "ComfyUI is restarting. This takes about a minute."})
+            ok, msg = restart_comfy_plain()
+            return self.j({"ok": True, "message": msg} if ok else {"ok": False, "error": msg}, 200 if ok else 409)
         if path == "/api/update/apply":
             busy = _active_job_count()
             if busy and not data.get("stop"):

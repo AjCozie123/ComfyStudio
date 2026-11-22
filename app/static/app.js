@@ -5284,6 +5284,7 @@ function bindShell() {
     });
   }
 
+  window.__wfRenderList = () => renderList();   // the node-pack banner refreshes the cards after a restart
   async function renderList() {
     await loadList();
     await loadInstallPlan();
@@ -9120,22 +9121,87 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   async function refresh() {
     let d;
     try { d = await api("/api/nodes/required"); } catch (e) { return; }
-    const miss = (d.packs || []).filter((p) => !p.installed);
-    const waiting = (d.packs || []).filter((p) => p.installed && !p.loaded);
-    if (!miss.length && !(d.comfy_up && waiting.length)) { box.classList.add("hidden"); return; }
+    const packs = d.packs || [];
+    const miss = packs.filter((p) => !p.installed);
+    const broken = packs.filter((p) => p.installed && !p.loaded && p.load_error);
+    const waiting = packs.filter((p) => p.installed && !p.loaded && !p.load_error);
+    lastWaiting = waiting.length + broken.length;
+    if (!miss.length && !(d.comfy_up && (waiting.length || broken.length))) { box.classList.add("hidden"); return; }
     box.classList.remove("hidden");
     const esc = (t) => String(t || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    const restartBtn = '<button type="button" class="chip-btn primary" id="np-restart">Restart ComfyUI</button>'
+      + '<button type="button" class="chip-btn" id="np-check">Check again</button><span class="np-status" id="np-status"></span>';
+    if (!miss.length && broken.length) {
+      // installed, ComfyUI restarted, but it couldn't load them: say why, offer a clean reinstall
+      box.innerHTML = '<p class="np-title">ComfyUI couldn’t load ' + broken.length + " node pack" + (broken.length === 1 ? "" : "s") + "</p>"
+        + '<ul class="np-list">' + broken.map((p) => "<li><b>" + esc(p.folder) + "</b><br><small>" + esc(p.load_error) + "</small></li>").join("") + "</ul>"
+        + '<p class="pop-note">Usually a Python package it needs didn’t install. Reinstall puts a fresh copy in (the old one is kept in custom_nodes_quarantine) and installs what it needs again.</p>'
+        + '<div class="np-actions"><button type="button" class="chip-btn primary" id="np-reinstall">Reinstall</button>' + restartBtn.replace(' primary"', '"') + "</div>";
+      $("np-reinstall").addEventListener("click", () => reinstall(broken.map((p) => p.folder)));
+      bindRestart(d);
+      return;
+    }
     if (!miss.length) {
-      box.innerHTML = '<p class="np-title">Node packs installed</p><p class="pop-note">Restart ComfyUI so it loads: '
-        + waiting.map((p) => esc(p.folder)).join(", ") + ".</p>";
+      // the folders are there, ComfyUI hasn't loaded them yet: that only happens on a restart
+      box.innerHTML = '<p class="np-title">Installed — restart ComfyUI to finish</p><p class="pop-note">ComfyUI loads new node packs only when it starts: '
+        + waiting.map((p) => esc(p.folder)).join(", ") + "."
+        + (d.can_restart ? "" : " Comfy Studio will try; if it can’t, close ComfyUI and open it again.") + "</p>"
+        + '<div class="np-actions">' + restartBtn + "</div>";
+      bindRestart(d);
       return;
     }
     box.innerHTML = '<p class="np-title">' + miss.length + " node pack" + (miss.length === 1 ? "" : "s") + " missing</p>"
-      + '<p class="pop-note">Some engines need these ComfyUI node packs. Comfy Studio installs the exact versions it was tested with.</p>'
+      + '<p class="pop-note">Some engines need these ComfyUI node packs. Comfy Studio installs the exact versions it was tested with; then it restarts ComfyUI so they load.</p>'
       + '<ul class="np-list">' + miss.map((p) => "<li><b>" + esc(p.folder) + "</b> · " + esc(p.for) + "</li>").join("") + "</ul>"
       + '<div class="np-actions"><button type="button" class="chip-btn primary" id="np-install">Install ' + (miss.length === 1 ? "it" : "all " + miss.length) + '</button>'
       + '<span class="np-status" id="np-status"></span></div>';
     $("np-install").addEventListener("click", install);
+  }
+  let lastWaiting = 0, watchTimer = 0;
+  function bindRestart(d) {
+    $("np-restart").addEventListener("click", restartComfy);
+    $("np-check").addEventListener("click", async () => { setStatus("Checking…"); await refresh(); afterChange(); });
+  }
+  function setStatus(t) { if ($("np-status")) $("np-status").textContent = t; }
+  async function restartComfy() {
+    const b = $("np-restart");
+    if (b) b.disabled = true;
+    let r;
+    try {
+      r = await api("/api/comfy/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    } catch (e) {
+      setStatus(e.message || "Couldn’t restart ComfyUI.");
+      if (b) b.disabled = false;
+      watchUntilLoaded(true);         // the user restarts it themselves: notice when it's back, without a reload
+      return;
+    }
+    setStatus((r && r.message) || "Restarting ComfyUI…");
+    watchUntilLoaded();
+  }
+  // after a restart: keep checking until ComfyUI is back and has loaded the packs (or 4 minutes pass)
+  function watchUntilLoaded(manual) {
+    clearTimeout(watchTimer);
+    const t0 = Date.now();
+    const keep = manual ? (($("np-status") || {}).textContent || "") : "";
+    const tick = async () => {
+      await refresh();
+      if (!lastWaiting) { afterChange(); toast("Node packs loaded. The engines that needed them are ready.", 4500); return; }
+      if (Date.now() - t0 > (manual ? 900000 : 240000)) { setStatus("Still not loaded. If ComfyUI is closed, open it; then Check again."); return; }
+      setStatus(keep || "Waiting for ComfyUI to come back…");
+      watchTimer = setTimeout(tick, manual ? 5000 : 3000);
+    };
+    watchTimer = setTimeout(tick, 4000);
+  }
+  function afterChange() { if (window.__wfRenderList) window.__wfRenderList().catch(() => {}); }
+  async function reinstall(folders) {
+    const b = $("np-reinstall");
+    if (b) b.disabled = true;
+    setStatus("Reinstalling…");
+    for (const f of folders) {
+      try { await api("/api/nodes/remove", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: f }) }); }
+      catch (e) { setStatus(e.message || ("Couldn’t move " + f + " aside.")); if (b) b.disabled = false; return; }
+    }
+    install();
   }
   async function install() {
     const b = $("np-install");
@@ -9149,14 +9215,17 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     clearTimeout(timer);
     let j;
     try { j = await api("/api/nodes/job?id=" + encodeURIComponent(id)); } catch (e) { return; }
-    if ($("np-status")) $("np-status").textContent = j.message || "Installing…";
+    setStatus(j.message || "Installing…");
     if (j.state === "running") { timer = setTimeout(() => poll(id), 1500); return; }
-    toast(j.message || "Done");
-    refresh();
+    toast(j.message || "Done", 4500);
+    await refresh();
+    if (j.state === "done" && lastWaiting && $("np-restart")) restartComfy();   // they only load when ComfyUI starts
   }
   new MutationObserver(() => { if (document.body.classList.contains("view-workflows")) refresh(); })
     .observe(document.body, { attributes: true, attributeFilter: ["class"] });
   window.__refreshNodePacks = refresh;
+  // ComfyUI came back (status light): packs installed earlier may be loaded now
+  window.addEventListener("comfy:up", async () => { await refresh(); if (!lastWaiting) afterChange(); });
 })();
 
 

@@ -160,11 +160,15 @@ try:
 except Exception:
     pass
 
-logging.basicConfig(
-    filename=os.path.join(DATA, "app.log"),
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-)
+# app.log used to grow forever (every request is logged; 31 MB after two weeks): keep 4 files of 5 MB at most
+import logging.handlers as _lh
+try:
+    _log_handler = _lh.RotatingFileHandler(os.path.join(DATA, "app.log"), maxBytes=5 * 1024 * 1024, backupCount=3,
+                                           encoding="utf-8", delay=True)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", handlers=[_log_handler])
+except Exception:
+    logging.basicConfig(filename=os.path.join(DATA, "app.log"), level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("h3studio")
 
 # ---------------------------------------------------------------- the Console pill (what the app is doing, live)
@@ -399,13 +403,15 @@ def ensure_comfy(job=None, wait=COMFY_START_WAIT):
                 log.info("Generate: ComfyUI is down, starting it (%s)", start_comfy())
             except Exception as e:
                 log.info("Generate: couldn't start ComfyUI: %s", e)
-                return "ComfyUI isn't running and couldn't be started: %s" % e
+                # e.g. the ComfyUI Desktop app, or a ComfyUI started from somewhere Comfy Studio can't see
+                return ("ComfyUI isn't running, and Comfy Studio can't start this one by itself. Open ComfyUI (the "
+                        "ComfyUI app, or its run .bat), wait until it's ready, then press send again.")
     while time.time() - t0 < wait:
         if job is not None and job.get("status") == "cancelled":
             return "cancelled"
         if comfy_answers(timeout=5):
             log.info("Generate: ComfyUI ready after %.0f s", time.time() - t0)
-            if job is not None:
+            if job is not None and job.get("status") != "cancelled":
                 job["status"] = prev if prev and prev != "waiting_comfy" else "queued"
                 job["message"] = "ComfyUI is ready."
             return None
@@ -4493,6 +4499,11 @@ def _clean_request(data):
     for k in ("models", "camera", "overrides"):
         if data.get(k) is not None and not isinstance(data[k], dict):
             raise ValueError("That request wasn't understood (%s)." % k)
+    # a pasted book would make ComfyUI's text encoder crawl or run out of memory: say so instead
+    for k, cap in (("prompt", 20000), ("negative", 8000)):
+        if len(data.get(k) or "") > cap:
+            raise ValueError("That %s is very long (%d characters). Please keep it under %d." % (
+                "prompt" if k == "prompt" else "negative prompt", len(data[k]), cap))
     for k in ("images", "loras", "image_roles", "inpaint_areas", "videos", "audios"):
         if data.get(k) is not None and not isinstance(data[k], list):
             raise ValueError("That request wasn't understood (%s)." % k)
@@ -5178,9 +5189,9 @@ def submit_prompt(job, graph, tries=4):
     body = {"prompt": graph, "client_id": CLIENT_ID, "prompt_id": pid}
     last = None
     for attempt in range(tries):
+        if job.get("status") == "cancelled":
+            return {"prompt_id": None}
         if attempt:
-            if job.get("status") == "cancelled":
-                return {"prompt_id": pid}
             err = ensure_comfy(job)
             if err == "cancelled":
                 return {"prompt_id": pid}
@@ -5189,6 +5200,8 @@ def submit_prompt(job, graph, tries=4):
             if _comfy_has_prompt(pid):
                 log.info("job %s: ComfyUI had already taken the prompt", job.get("id"))
                 return {"prompt_id": pid}
+            if job.get("status") == "cancelled":
+                return {"prompt_id": None}
             job["status"] = "running"
             job["message"] = "Sending to ComfyUI again (try %d)\u2026" % (attempt + 1)
         try:
@@ -5207,6 +5220,21 @@ def submit_prompt(job, graph, tries=4):
             time.sleep(3 * (attempt + 1))
     raise _NotReady("Couldn't hand the job to ComfyUI after %d tries (%s). ComfyUI may have crashed; "
                     "check its window, then try again." % (tries, last))
+
+
+def _withdraw_prompt(pid):
+    """Take one of our prompts back out of ComfyUI: delete it if it waits, interrupt it if it already runs."""
+    if not pid:
+        return
+    try:
+        action, _r, _p = cancel_comfy_actions(pid)
+        if action == "delete":
+            comfy("POST", "/queue", {"delete": [pid]})
+        elif action == "interrupt":
+            comfy("POST", "/interrupt", {"prompt_id": pid})
+        log.info("withdrew prompt %s from ComfyUI (%s)", pid, action or "already gone")
+    except Exception as e:
+        log.info("withdraw prompt %s: %s", pid, e)
 
 
 def _worker():
@@ -5230,11 +5258,11 @@ def _worker():
             # Queue behind a foreign job rather than interrupting it.
             # Our own previous jobs are allowed to sit in Comfy's native queue.
             foreign, _, _ = comfy_busy_with_other(_our_prompt_ids())
+            if job["status"] == "cancelled":       # cancelled while ComfyUI's queue was being read
+                continue
             if foreign:
                 job["status"] = "queued"
                 job["message"] = "Queued behind another ComfyUI job. This app will not cancel someone else's run."
-            if job["status"] == "cancelled":
-                continue
             if job.get("pe"):
                 job["status"] = "running"
                 job["message"] = "Enhancing prompt (%s)..." % ("Quality" if job.get("pe_mode") == "quality" else "Fast")
@@ -5251,6 +5279,8 @@ def _worker():
                         job["error"] = str(e)
                         job["t_done"] = time.time()
                         continue
+            if job["status"] == "cancelled":       # last look before anything is sent to ComfyUI
+                continue
             job["status"] = "running"
             job["message"] = "Starting…"
             if job.get("ref_extend_on") and job.get("_lcp") and not job.get("then_extend"):
@@ -5272,9 +5302,12 @@ def _worker():
                 job["error"] = str(e)
                 job["t_done"] = time.time()
                 continue
-            if job["status"] == "cancelled":
-                continue
             pid = resp.get("prompt_id") or resp.get("promptId")
+            if job["status"] == "cancelled":
+                # Cancel arrived while the job was being handed to ComfyUI: it is in ComfyUI's queue now, take it
+                # back out (it used to run anyway)
+                _withdraw_prompt(pid)
+                continue
             if not pid:
                 job["status"] = "error"
                 job["error"] = "ComfyUI did not accept the job."

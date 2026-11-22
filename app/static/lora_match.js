@@ -386,7 +386,10 @@
         // the same words close together in another order ("thick, full thighs", "hips super wide")
         const near = findNear(P.s1, pw, isNegI);
         if (near) {
-          const v = src === "hint" ? 3 : src === "user" ? 8 : src === "trigger" ? (gtrig.has(key) ? 0 : 8) : named(src) ? 6
+          // a style LoRA (it restyles the whole picture) or a name made only of everyday words ("dark&light")
+          // needs its words together as a phrase: "a dark room, light behind her" is lighting, not that style
+          const v = src === "hint" ? 3 : src === "user" ? 8 : src === "trigger" ? (gtrig.has(key) ? 0 : 8)
+            : named(src) ? ((it.kind === "style" || pw.every(isGeneric) || /style/i.test(it.folder || "")) ? 0 : 6)
             : ((S.tag.get(key) || 0) <= RARE && bodyMentioned && it.kind !== "style" ? 4 : 0);
           if (v > s) { s = v; toks = near; }
         }

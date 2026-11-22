@@ -10114,14 +10114,19 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
 (function () {
   const chip = document.getElementById("status");
   if (!chip) return;
-  let wasDown = chip.dataset.state === "down" || chip.dataset.state === "checking";
+  // only a real "offline" counts: "Checking..." at page start is not ComfyUI coming up (0.2.49 treated it as one and
+  // reloaded the built-in MiniMax settings over the chosen engine's on every page open - Qwen showed 6 steps)
+  let wasDown = chip.dataset.state === "down";
   new MutationObserver(() => {
     const st = chip.dataset.state;
     if (st === "down") { wasDown = true; return; }
     if ((st === "up" || st === "busy") && wasDown) {
       wasDown = false;
       setTimeout(async () => {
-        try { if (typeof loadConfig === "function") await loadConfig(); } catch (e) {}
+        // the built-in engine's settings only when the built-in engine is the one in use; a workflow engine
+        // (Qwen, Klein, Krea ...) keeps its own steps / sampler and just gets its model lists refreshed below
+        const builtin = !state.engine || state.engine === "builtin" || state.engine === "none";
+        try { if (builtin && typeof loadConfig === "function") await loadConfig(); } catch (e) {}
         try { window.__hw = Object.assign(window.__hw || {}, await api("/api/hardware")); } catch (e) {}
         window.dispatchEvent(new Event("comfy:up"));
       }, 1500);                         // give ComfyUI a moment to finish loading its node list

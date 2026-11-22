@@ -1797,3 +1797,12 @@ body.gs-open.gs-expand .dock { background: linear-gradient(rgba(13,13,14,0), rgb
 
 /* Camera in Edit follows the engine v20261122d */
 #camera-open.cam-off { display: none !important; }
+
+/* ===== Header alignment v20261122h =====
+   The section switcher (Create / Library / Guide / Workflows) sat centred between the logo and the right-hand
+   buttons, ~125 px left of the picture grid and the chat box (both centred on the window). It now sits on the
+   window's own centre line whenever it fits (checked live in app.js, since the right-hand status text changes
+   width); otherwise it falls back to the old position so nothing ever overlaps. */
+.topbar.nav-centered .topnav { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 28px);
+                               transform: translate(-50%, -50%); margin-left: 0; }
+.topbar.nav-centered .brand { margin-right: auto; }

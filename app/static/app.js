@@ -4864,8 +4864,10 @@ function bindShell() {
   // nothing the user picked is reset).
   window.addEventListener("comfy:up", () => {
     const opts = (active && active.options) || {};
-    const empty = !active || !Object.keys(opts).length ||
-      Object.values(opts).every((v) => !v || (Array.isArray(v) ? !v.length : !Object.keys(v).length));
+    // ComfyUI off: the slots are there but every choice list is empty (and sampler / scheduler lists too)
+    const models = opts.models || [];
+    const empty = !active || (models.every((m) => !(m.choices || []).length) &&
+                              !(opts.sampler || []).length && !(opts.scheduler || []).length);
     if (active && empty) { active = null; applyEngine(); }
   });
 
@@ -10183,4 +10185,30 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     return r;
   };
   new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+})();
+
+/* ===== Header alignment v20261122h: centre the section switcher on the window when it fits ===== */
+(function () {
+  const bar = document.querySelector(".topbar");
+  const nav = bar && bar.querySelector(".topnav");
+  if (!bar || !nav) return;
+  let t = 0;
+  function fit() {
+    bar.classList.add("nav-centered");
+    const n = nav.getBoundingClientRect();
+    const brand = document.getElementById("brand");
+    const left = brand ? brand.getBoundingClientRect().right : 0;
+    let right = window.innerWidth;
+    [...bar.children].forEach((el) => {
+      if (el === nav || el === brand || !el.offsetParent) return;
+      right = Math.min(right, el.getBoundingClientRect().left);
+    });
+    const ok = n.left - left >= 16 && right - n.right >= 16;
+    bar.classList.toggle("nav-centered", ok);
+  }
+  window.__navFit = fit;
+  window.addEventListener("resize", fit);
+  new MutationObserver((ms) => { if (ms.some((m) => m.target !== bar)) { clearTimeout(t); t = setTimeout(fit, 30); } }).observe(bar, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+  fit();
+  setTimeout(fit, 800);
 })();

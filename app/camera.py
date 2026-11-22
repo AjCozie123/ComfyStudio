@@ -113,8 +113,115 @@ _OPT = {(c["id"], o["id"]): o for c in CATEGORIES for o in c["options"]}
 
 
 def catalog():
-    """JSON-serialisable catalogue for the Camera sheet."""
-    return {"categories": CATEGORIES}
+    """JSON-serialisable catalogue for the Camera sheet (+ which options each engine follows in Edit)."""
+    return {"categories": CATEGORIES, "edit_support": {k: sorted(v) for k, v in EDIT_SUPPORT.items()}}
+
+
+# ---------------------------------------------------------------- Edit: re-shooting an existing photo
+# Tested 2026-11-22 (samples/camera/sheets): "Camera: orbit right 90 degrees" style notes were ignored by every edit
+# model, but describing the FINISHED view ("seen from their right side, in a full side profile view") works on
+# MiniMax H3, FLUX.2 Klein 9B and Qwen Image. Each option below says what the new picture shows.
+EDIT_PHRASE = {
+    ("angle", "eye_level"): "The camera is at the main subject's eye height, looking straight at them.",
+    ("angle", "low_angle"): "Show the same scene from a low camera angle: the camera is near the floor looking up at the main subject.",
+    ("angle", "worms_eye"): "Show the same scene from a worm's-eye view: the camera is on the ground looking steeply up at the main subject.",
+    ("angle", "high_angle"): "Show the same scene from a high camera angle: the camera is above the main subject looking down, so we see more of the floor.",
+    ("angle", "birds_eye"): "Show the same scene from directly above, a top-down view looking straight down on the main subject and the floor.",
+    ("angle", "dutch"): "Show the same scene with the camera tilted sideways, so the whole picture is at a slanted dutch angle.",
+    ("angle", "profile_left"): "Show the main subject seen from their left side, in a full side profile view, eye-level shot.",
+    ("angle", "profile_right"): "Show the main subject seen from their right side, in a full side profile view, eye-level shot.",
+    ("angle", "three_quarter"): "Show the main subject in a three-quarter view: their body turned about 45 degrees away from the camera.",
+    ("angle", "back_view"): "Show the main subject seen from directly behind: we see their back and the back of their head, not their face.",
+    ("angle", "from_behind"): "Show the main subject seen from directly behind: we see their back and the back of their head, not their face.",
+    ("shot", "ecu"): "Show the same scene as an extreme close-up of the main subject's face.",
+    ("shot", "cu"): "Show the same scene as a close-up: framed on the main subject's face and shoulders.",
+    ("shot", "mcu"): "Show the same scene as a medium close-up: the main subject from the chest up.",
+    ("shot", "medium"): "Show the same scene as a medium shot: the main subject from the waist up.",
+    ("shot", "cowboy"): "Show the same scene framed from the main subject's mid-thigh up.",
+    ("shot", "full"): "Show the same scene as a full-body shot: the main subject from head to feet with some space around them.",
+    ("shot", "wide"): "Show the same scene as a wide shot: the camera further back, the main subject smaller with much more of the place around them.",
+    ("shot", "ews"): "Show the same scene as an extreme wide shot: the camera far away, the main subject small in a large view of the place.",
+    ("move", "orbit_left_45"): "Show the main subject in a three-quarter view from their left side: the camera has moved about 45 degrees around them.",
+    ("move", "orbit_right_45"): "Show the main subject in a three-quarter view from their right side: the camera has moved about 45 degrees around them.",
+    ("move", "orbit_left_90"): "Show the main subject seen from their left side, in a full side profile view, eye-level shot.",
+    ("move", "orbit_right_90"): "Show the main subject seen from their right side, in a full side profile view, eye-level shot.",
+    ("move", "rotate_front"): "Show the main subject seen from the front, facing the camera.",
+    ("move", "rotate_back"): "Show the main subject seen from directly behind: we see their back and the back of their head, not their face.",
+    ("move", "closer"): "Show the same scene with the camera much closer to the main subject: a tighter, closer framing.",
+    ("move", "further"): "Zoom out: the camera is much further back, the main subject smaller, with much more of the place visible around them.",
+    ("move", "raise"): "Show the same scene from a higher camera position looking down at the main subject.",
+    ("move", "lower"): "Show the same scene from a lower camera position looking up at the main subject.",
+    ("move", "aerial"): "Show the same place from high up in the air, a drone view looking down on it.",
+    ("lens", "14mm"): "Show the same scene as if shot with an ultra-wide 14 mm lens: strong perspective and much more of the place in view.",
+    ("lens", "24mm"): "Show the same scene as if shot with a wide 24 mm lens: a broader view of the place.",
+    ("lens", "35mm"): "Show the same scene as if shot with a 35 mm lens.",
+    ("lens", "50mm"): "Show the same scene as if shot with a 50 mm lens: natural perspective.",
+    ("lens", "85mm"): "Show the same scene as if shot with an 85 mm portrait lens: tighter framing on the main subject and a softly blurred background.",
+    ("lens", "200mm"): "Show the same scene as if shot with a 200 mm telephoto lens: very tight framing and a flattened, blurred background.",
+    ("lens", "fisheye"): "Show the same scene through a fisheye lens: a strongly curved, bulging wide view.",
+    ("lens", "macro"): "Show an extreme macro close-up detail of the main subject.",
+    ("lens", "tilt_shift"): "Show the same scene with a tilt-shift look: a thin band of sharp focus and a miniature feel.",
+    ("focus", "shallow"): "Give the picture a shallow depth of field: the main subject sharp and the background strongly blurred.",
+    ("focus", "deep"): "Give the picture deep focus: everything sharp from front to back.",
+}
+# not "keep the same clothes": the same prompt may ask for a new outfit or place together with the new angle
+EDIT_KEEP = "Apart from the camera view and anything asked above, keep the same person and the same picture."
+
+# Which options each edit engine really follows (from the tests above). An engine missing here: Camera is hidden in
+# Edit. ots / pov / flat lay and the Style framings are left out of Edit everywhere (they compose a new picture).
+# Tested 2026-11-22 at 640x832, seed 777 (samples/camera/sheets 01-04). Kept: what worked, plus options of the same
+# kind as a passing one (e.g. orbit 90 = side profile, raise = high angle). Dropped: what did nothing or broke.
+_VIEWS = {"angle:eye_level", "angle:low_angle", "angle:worms_eye", "angle:high_angle", "angle:birds_eye",
+          "angle:profile_left", "angle:profile_right", "angle:three_quarter", "angle:back_view", "angle:from_behind",
+          "move:orbit_left_45", "move:orbit_right_45", "move:orbit_left_90", "move:orbit_right_90",
+          "move:rotate_front", "move:rotate_back", "move:raise", "move:lower"}
+_TIGHT = {"shot:ecu", "shot:cu", "shot:mcu", "shot:medium", "shot:cowboy", "move:closer"}
+_WIDE = {"shot:full", "shot:wide", "shot:ews", "move:further"}
+EDIT_SUPPORT = {
+    # H3: every view + tighter framing, 85/200 mm look and background blur work; dutch came out sideways, wider
+    # framing / 14 mm did nothing
+    "minimax_h3": _VIEWS | _TIGHT | {"lens:85mm", "lens:200mm", "focus:shallow"},
+    # Klein: views and every shot size work; dutch, lens looks and focus did nothing
+    "flux2_klein": _VIEWS | _TIGHT | _WIDE,
+    # Qwen Image (2.1 and Edit 2509): views, shot sizes, dutch, zooming out and wide lenses work; 85 mm / blur didn't
+    "qwen_image": _VIEWS | _TIGHT | _WIDE | {"angle:dutch", "lens:14mm", "lens:24mm"},
+}
+
+
+def edit_family(card=None, builtin=False):
+    """The EDIT_SUPPORT key for an engine card (None: Camera isn't offered in Edit for it)."""
+    if builtin:
+        return "minimax_h3"
+    c = card or {}
+    if c.get("edit_kind") in ("krea_edit", "inpaint") or c.get("task") not in (None, "edit"):
+        return None
+    txt = " ".join(str(c.get(k) or "") for k in ("family", "id", "profile", "name")).lower()
+    if "minimax" in txt or "h3" in txt.split("_")[0:1]:
+        return "minimax_h3"
+    if "klein" in txt or "flux.2" in txt or "flux2" in txt:
+        return "flux2_klein"
+    if "qwen" in txt:
+        return "qwen_image"
+    return None
+
+
+def filter_for_edit(selections, family):
+    """Drop the options an engine doesn't follow in Edit (stale picks from another engine must not leak in)."""
+    sel = normalize_camera(selections)
+    ok = EDIT_SUPPORT.get(family or "", set())
+    return {cat: v for cat, v in sel.items() if "%s:%s" % (cat, v) in ok}
+
+
+def edit_block(selections) -> str:
+    sel = normalize_camera(selections)
+    parts = []
+    for cat in CATEGORIES:
+        v = sel.get(cat["id"])
+        if v and (cat["id"], v) in EDIT_PHRASE:
+            parts.append(EDIT_PHRASE[(cat["id"], v)])
+    if not parts:
+        return ""
+    return " ".join(parts) + " " + EDIT_KEEP
 
 
 def normalize_camera(raw) -> dict:
@@ -182,11 +289,7 @@ def camera_block(selections, mode: str = "t2i") -> str:
         # a video moves through time: the camera notes describe the shot and its motion, never a re-shoot of a still
         return "Camera: %s." % details
     if mode in ("edit", "image-edit", "image_edit"):
-        return (
-            "Re-shoot the same scene of <Picture 1> from this new viewpoint, "
-            "keeping the subject's identity and details and the scene contents consistent. "
-            "Camera: %s." % details
-        )
+        return edit_block(selections)
     # t2i and reference mode: new or composed scene, not a reshoot of Picture 1
     return "Camera: %s." % details
 

@@ -4859,6 +4859,15 @@ function bindShell() {
     syncDockHeight();
   }
   window.applyEngine = applyEngine;
+  // Page opened while ComfyUI was off: the engine's model lists came back empty and stayed empty ("my models
+  // aren't available") until a reload. When ComfyUI comes up, load them again (only if they are empty, so
+  // nothing the user picked is reset).
+  window.addEventListener("comfy:up", () => {
+    const opts = (active && active.options) || {};
+    const empty = !active || !Object.keys(opts).length ||
+      Object.values(opts).every((v) => !v || (Array.isArray(v) ? !v.length : !Object.keys(v).length));
+    if (active && empty) { active = null; applyEngine(); }
+  });
 
   // a family with several parts (e.g. MiniMax H3 Image ULTRA: text to image, edit, inpaint, outpaint) works as one:
   // picking it sets it for Create AND Edit; for Edit its plain edit engine, and the server switches to the family's
@@ -10095,4 +10104,83 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   }
   vv.addEventListener("resize", upd);
   upd();
+})();
+
+/* ===== ComfyUI came up after the page opened v20261122d =====
+   Studio opened before ComfyUI: model lists, LoRAs and hardware were empty. When the status light turns from
+   offline to connected, everything that depends on ComfyUI is loaded again ("comfy:up" for the engine panel). */
+(function () {
+  const chip = document.getElementById("status");
+  if (!chip) return;
+  let wasDown = chip.dataset.state === "down" || chip.dataset.state === "checking";
+  new MutationObserver(() => {
+    const st = chip.dataset.state;
+    if (st === "down") { wasDown = true; return; }
+    if ((st === "up" || st === "busy") && wasDown) {
+      wasDown = false;
+      setTimeout(async () => {
+        try { if (typeof loadConfig === "function") await loadConfig(); } catch (e) {}
+        try { window.__hw = Object.assign(window.__hw || {}, await api("/api/hardware")); } catch (e) {}
+        window.dispatchEvent(new Event("comfy:up"));
+      }, 1500);                         // give ComfyUI a moment to finish loading its node list
+    }
+  }).observe(chip, { attributes: true, attributeFilter: ["data-state"] });
+})();
+
+/* ===== Camera in Edit follows the engine v20261122d =====
+   Tested per engine (samples/camera): in Edit, Camera only offers what the chosen engine really does. An engine
+   that can't re-shoot a photo from another angle (Krea 2 Edit / Paint) has no Camera pill in Edit; the others show
+   only their working options. Create / Reference / Video are unchanged. The server applies the same rule. */
+(function () {
+  let SUPPORT = null;          // {family: ["angle:low_angle", ...]}
+  let family = "minimax_h3";   // built-in engine = MiniMax H3
+  fetch("/api/camera/support").then((r) => r.json()).then((d) => { SUPPORT = d.edit_support || {}; sync(); }).catch(() => {});
+  function editing() {
+    return state.mode === "edit" && !state.refMode && state.media !== "video";
+  }
+  function allowed() {
+    if (!editing() || !SUPPORT) return null;           // null = no limit
+    return new Set(SUPPORT[family] || []);
+  }
+  window.__cameraAllowed = allowed;
+  function sync() {
+    const btn = $("camera-open");
+    const ok = allowed();
+    const off = !!ok && ok.size === 0;
+    if (btn) btn.classList.toggle("cam-off", off);
+    const row = $("camera-chips");
+    if (row && off) row.hidden = true;
+    if (typeof renderCameraChips === "function") renderCameraChips();
+  }
+  const baseEng = window.onEngineChanged;
+  window.onEngineChanged = function (active) {
+    if (typeof baseEng === "function") baseEng.apply(this, arguments);
+    family = active && active.card ? (active.card.camera_edit || null) : "minimax_h3";
+    sync();
+  };
+  // chips and the sheet only show what this engine does in Edit
+  const baseChips = renderCameraChips;
+  renderCameraChips = function () {
+    const ok = allowed();
+    if (!ok) return baseChips.apply(this, arguments);
+    const keep = state.camera;
+    state.camera = Object.fromEntries(Object.entries(keep || {}).filter(([c, v]) => ok.has(c + ":" + v)));
+    try { return baseChips.apply(this, arguments); } finally { state.camera = keep; }
+  };
+  const baseSheet = renderCameraSheet;
+  renderCameraSheet = function () {
+    const r = baseSheet.apply(this, arguments);
+    const ok = allowed();
+    const body = $("camera-body");
+    if (ok && body) {
+      body.querySelectorAll(".camera-tile").forEach((t) => {
+        t.classList.toggle("hidden", !ok.has(t.dataset.cat + ":" + t.dataset.id));
+      });
+      body.querySelectorAll(".camera-group").forEach((g) => {
+        g.classList.toggle("hidden", !g.querySelector(".camera-tile:not(.hidden)"));
+      });
+    }
+    return r;
+  };
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ["class"] });
 })();

@@ -3088,6 +3088,9 @@ def submit_workflow_job(data):
     if prompt and data.get("understanding") is not False:
         prompt = UND.apply_extra(prompt, DATA, card.get("id"))   # the user's "always add" sentences
     camera = CAMERA.normalize_camera(data.get("camera") or {})
+    if camera and images and card.get("media") == "image" and not data.get("ref_mode"):
+        # an edit re-shoots the photo: only the options this engine really follows (none for Krea 2 Edit / Paint)
+        camera = CAMERA.filter_for_edit(camera, CAMERA.edit_family(card))
     pe_input = prompt      # an edit's enhancer reads your words WITH the keep-clothing / removal / quality guards
     prompt_sent = prompt
     dialect = PD.for_card(card)
@@ -4534,6 +4537,8 @@ def submit_job(data):
     if roles is None:
         roles = []
     camera = CAMERA.normalize_camera(data.get("camera") or {})
+    if camera and mode == "edit" and not data.get("ref_mode"):
+        camera = CAMERA.filter_for_edit(camera, CAMERA.edit_family(builtin=True))
     pe_system_extra = ""
     pe_task_extra = ""
     assist_info = {"prompt": prompt, "added": False, "roles": {}, "notes": []}
@@ -5955,6 +5960,7 @@ class H(BaseHTTPRequestHandler):
                 if it.get("picture_min") is None:
                     it["picture_min"] = it["picture_max"] = len(sl.get("images") or [])
                 it["lora_family"] = lora_family_for(c)
+                it["camera_edit"] = CAMERA.edit_family(c)
                 it.update(fit_verdict(c, hw))
                 eff = SP.effective(c, hw)
                 if eff:
@@ -5989,6 +5995,7 @@ class H(BaseHTTPRequestHandler):
                 log.info("workflow knobs: %s", e)
                 knobs = []
             card["lora_family"] = lora_family_for(card)
+            card["camera_edit"] = CAMERA.edit_family(card)
             return self.j({"card": card, "options": _wf_model_options(card), "summary": WF.summary(card), "knobs": knobs})
         if path == "/api/install/plan":
             try:
@@ -6133,6 +6140,8 @@ class H(BaseHTTPRequestHandler):
                 return self.j(st)
             except Exception as e:
                 return self.j({"error": str(e)}, 500)
+        if path == "/api/camera/support":
+            return self.j({"edit_support": CAMERA.catalog()["edit_support"]})
         if path == "/api/tour":
             return self.j({"seen": int(app_paths.load(DATA).get("tour_seen") or 0)})
         if path == "/api/status":

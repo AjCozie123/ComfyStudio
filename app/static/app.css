@@ -1794,3 +1794,6 @@ body.gs-open.gs-expand .dock { background: linear-gradient(rgba(13,13,14,0), rgb
 /* Stop ComfyUI: a quiet button, red only on hover (it isn't an alarm; it also wasn't clear it stops ComfyUI) */
 .comfy-start.comfy-stop { background: transparent; color: rgba(243,243,244,.72); border-color: rgba(255,255,255,.14); }
 .comfy-start.comfy-stop:hover, .comfy-start.comfy-stop:focus-visible { background: rgba(255,107,107,.18); color: #ffb3b3; border-color: rgba(255,107,107,.5); }
+
+/* Camera in Edit follows the engine v20261122d */
+#camera-open.cam-off { display: none !important; }

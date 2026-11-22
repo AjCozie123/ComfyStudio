@@ -137,9 +137,9 @@
   const saved = {};
   function snapshot() {
     try {
-      saved.media = (q("#media-seg button.is-on") || {}).dataset ? q("#media-seg button.is-on").dataset.media : "image";
-      saved.mode = (q('.mode-seg button.is-on, #mode-seg button.is-on') || {}).dataset ? q('.mode-seg button.is-on, #mode-seg button.is-on').dataset.mode : "t2i";
-      saved.images = (window.state && Array.isArray(state.images)) ? state.images.slice() : null;
+      saved.media = (typeof state !== "undefined" && state.media) || "image";
+      saved.mode = (typeof state !== "undefined" && state.mode) || "t2i";
+      saved.images = ((typeof state !== "undefined") && Array.isArray(state.images)) ? state.images.slice() : null;
       saved.prompt = $("prompt") ? $("prompt").value : "";
     } catch (e) {}
   }
@@ -148,7 +148,7 @@
     setMedia(saved.media || "image");
     setMode(saved.mode || "t2i");
     try {
-      if (saved.images && window.state && state.images.length !== saved.images.length) {
+      if (saved.images && (typeof state !== "undefined") && state.images.length !== saved.images.length) {
         state.images = saved.images.slice();
         if (typeof renderSlots === "function") renderSlots();
       }
@@ -358,6 +358,20 @@
     });
   }
 
+  // Edit / Inpaint need a Picture 1. Without one, the tour borrows the newest picture from the Library (exactly what
+  // "Edit this" does); restore() takes it out again when the tour ends. -> true when there is a Picture 1.
+  async function ensurePicture() {
+    try {
+      if ((typeof state !== "undefined") && state.images && state.images.length) return true;
+      const d = await (await fetch("/api/gallery?mode=all", { cache: "no-store" })).json();
+      const it = (d.items || []).find((x) => (x.media || "image") === "image" && x.id);
+      if (!it || typeof reuseOutput !== "function") return false;
+      await reuseOutput(it, "picture1");
+      await wait(500);
+      return !!(state.images && state.images.length);
+    } catch (e) { return false; }
+  }
+
   // ---------- Edit + Inpaint deep dive ----------
   function editDive(job, next) {
     const editBtn = find("#gen-stage .gs-edit");
@@ -368,7 +382,8 @@
       buttons: [
         { label: "Skip", quiet: true, go: next },
         { label: "Show me Edit", primary: true, go: async () => {
-          if (job && editBtn) editBtn.click(); else setMode("edit");
+          if (job && editBtn) editBtn.click();
+          else { setMode("edit"); await ensurePicture(); }
           await wait(700);
           if (window.__composerCollapse) { try { window.__composerCollapse(); } catch (e) {} }
           const EDIT = [
@@ -399,9 +414,18 @@
     show({ el: pill, step: "Inpaint", title: "Open the painter?", text: "See the painting tools on your picture. Nothing is changed unless you press send.",
            buttons: [{ label: "Skip", quiet: true, go: next },
                      { label: "Open it", primary: true, role: "next", go: async () => {
-                       pill.click();
-                       await wait(600);
-                       if (!find("#inpaint-sheet")) return next();
+                       // the painter works on Picture 1: without one it only says "Add a picture first"
+                       if (!(await ensurePicture())) {
+                         return show({ el: find("#add-images"), step: "Inpaint", title: "Inpaint needs a picture",
+                                       text: "The painter works on Picture 1, and there's no picture yet. Add one with + (or make one), then tap Inpaint.",
+                                       buttons: [{ label: "Continue", primary: true, role: "next", go: next }] });
+                       }
+                       const p = find("#inpaint-pill") || pill;
+                       p.click();
+                       let sheet = null;
+                       for (let k = 0; k < 15 && !sheet; k++) { await wait(150); sheet = find("#inpaint-sheet"); }
+                       if (!sheet) return next();
+                       await wait(250);
                        const IP = [
                          S("#ip-stage", "Paint over it", "Paint the area to change, a little bigger than the thing itself.",
                            "Covering a bit of the surroundings lets the new part blend in. Then close this and write what it should become: “a red scarf”, “open hand”."),

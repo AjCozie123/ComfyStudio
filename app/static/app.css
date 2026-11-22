@@ -1806,3 +1806,17 @@ body.gs-open.gs-expand .dock { background: linear-gradient(rgba(13,13,14,0), rgb
 .topbar.nav-centered .topnav { position: absolute; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 28px);
                                transform: translate(-50%, -50%); margin-left: 0; }
 .topbar.nav-centered .brand { margin-right: auto; }
+
+/* ===== Composer: no empty gaps, smaller picture tiles v20261122m =====
+   An empty hint line (#prompt-hint, 15 px margins) and an empty extras row left a ~40 px band between the prompt
+   and "Will also send". Empty helpers now take no space, so the prompt sits right above the chips ("Will also
+   send" already opens as a panel over the prompt, v20261121). Picture tiles and the Base / role label are smaller. */
+#prompt-hint:empty { display: none !important; }
+.composer-extras:not(:has(> :not(.hidden):not([hidden]))) { display: none; }
+.composer-extras { gap: 4px; }
+.slot { width: 52px; gap: 2px; }
+.slot .thumb { width: 52px; height: 52px; border-radius: 12px; }
+.slot-add { width: 52px; height: 52px; border-radius: 12px; }
+.role-chip { width: 52px; height: 18px; font-size: 10px; line-height: 16px; }
+#clear-all { margin-top: 14px; }
+.slots { padding-top: 4px; gap: 6px; }

@@ -134,13 +134,19 @@ async function loadConfig() {
       pc.addEventListener("change", () => LS.set("cs.pe.choice", pc.value));
     }
   }
-  fillSelect("sampler_name", m.sampler_name, d.sampler_name || "euler");
+  // The sampling fields are shared by every engine. When a workflow engine (Qwen, Klein, Krea ...) is already
+  // filled in, its own steps / CFG / sampler / scheduler stay: this load can finish AFTER the engine's (slow
+  // ComfyUI at start-up) and used to put the built-in MiniMax H3 values (6 steps, lcm_detail) over them.
+  const wfActive = !!(state.engine && state.engine !== "builtin" && state.engine !== "none");
+  if (!wfActive) fillSelect("sampler_name", m.sampler_name, d.sampler_name || "euler");
   // where the app is open decides where pictures come from: this PC browses its folders, other devices use
   // their own file picker (so a phone or someone else's computer never sees this PC's files by accident)
   document.body.classList.toggle("on-host", !!(state.cfg && state.cfg.on_host));
-  fillSelect("scheduler", m.scheduler, d.scheduler || "simple");
-  if ($("steps")) $("steps").value = cfg.default_steps || 6;
-  if ($("cfg")) $("cfg").value = d.cfg ?? 1;
+  if (!wfActive) {
+    fillSelect("scheduler", m.scheduler, d.scheduler || "simple");
+    if ($("steps")) $("steps").value = cfg.default_steps || 6;
+    if ($("cfg")) $("cfg").value = d.cfg ?? 1;
+  }
   if (tuneMode() === "manual" && (!state.engine || state.engine === "builtin" || state.engine === "none")) restoreManual("builtin");
   if ($("pe")) $("pe").checked = false; if (typeof syncPills === "function") syncPills();
   const hint = $("pe-hint");
@@ -4607,7 +4613,13 @@ function bindShell() {
     if (el.tagName === "SELECT") { if ([...el.options].some((o) => o.value === String(v))) el.value = String(v); }
     else el.value = v;
   }
+  // the model's tested settings, then your own values on top (they stay until you reset them)
   function applyModelRecipe(announce) {
+    const r0 = applyModelRecipeInner(announce);
+    if (window.__applyOwn) window.__applyOwn();
+    return r0;
+  }
+  function applyModelRecipeInner(announce) {
     if (!active) return;
     const card = active.card, s = card.slots || {};
     const r = findRecipe(card);
@@ -10237,4 +10249,111 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
     apply(hidden);
   });
   apply(read());
+})();
+
+/* ===== Your own settings stay until you reset them v20261122s =====
+   Steps, CFG, sampler and scheduler you set yourself are kept for each engine, in Auto AND Manual, across restarts
+   and engine switches. Auto's tested values (and the workflow's own) only fill what you haven't changed. A small
+   reset next to each field (shown only when you changed it) and "Reset all" put the engine's default back.
+   Only real clicks / typing count (event.isTrusted): values the app fills in itself are never taken as yours. */
+(function () {
+  const KEYS = TUNE_KEYS;
+  const eng = () => (state.engine && state.engine !== "none") ? state.engine : "builtin";
+  const ownKey = (id) => "cs.own." + id;
+  const load = (id) => { try { return JSON.parse(LS.get(ownKey(id), "{}")) || {}; } catch (e) { return {}; } };
+  const save = (id, v) => LS.set(ownKey(id), JSON.stringify(v));
+  let applying = false;
+  function setVal(el, v) {
+    if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(v))) return false;
+    el.value = String(v);
+    return true;
+  }
+  function applyOwn() {
+    const own = load(eng());
+    applying = true;
+    KEYS.forEach((k) => { const el = $(k); if (el && own[k] != null && own[k] !== "") setVal(el, own[k]); });
+    applying = false;
+    syncResets();
+  }
+  window.__applyOwn = applyOwn;
+
+  function builtinDefault(k) {
+    const c = state.cfg || {}, d = c.defaults || {};
+    return { steps: c.default_steps || 6, cfg: d.cfg ?? 1, sampler_name: d.sampler_name || "euler", scheduler: d.scheduler || "simple" }[k];
+  }
+  // back to the engine's default: forget your value (also Manual's copy), let the app fill the field again,
+  // then put your other values back on top
+  function resetKeys(keys) {
+    const id = eng();
+    const own = load(id);
+    keys.forEach((k) => delete own[k]);
+    save(id, own);
+    try {
+      const m = JSON.parse(LS.get(tuneKey(id), "null"));
+      if (m) { keys.forEach((k) => delete m[k]); LS.set(tuneKey(id), JSON.stringify(m)); }
+    } catch (e) {}
+    if (id === "builtin") keys.forEach((k) => { const el = $(k); if (el) setVal(el, builtinDefault(k)); });
+    else if (window.__refillWfSettings) window.__refillWfSettings();
+    setTimeout(applyOwn, 60);
+    toast(keys.length > 1 ? "Settings back to this engine's defaults" : "Back to this engine's default");
+  }
+
+  // a small reset button next to each field, shown only while that field holds your own value
+  const btns = {};
+  KEYS.forEach((k) => {
+    const el = $(k);
+    const label = el && el.closest("label");
+    if (!label) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "own-reset hidden";
+    b.title = "Back to this engine's default";
+    b.setAttribute("aria-label", "Reset " + (label.firstChild && label.firstChild.textContent || k).trim() + " to default");
+    b.textContent = "\u21ba";
+    b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); resetKeys([k]); });
+    label.appendChild(b);
+    btns[k] = b;
+    el.addEventListener("change", (e) => {
+      if (applying || !e.isTrusted) return;
+      const own = load(eng());
+      own[k] = el.value;
+      save(eng(), own);
+      syncResets();
+    });
+  });
+  const grid = $("steps") && $("steps").closest(".settings-group");
+  let all = null;
+  if (grid) {
+    const head = grid.querySelector(".pop-label");
+    all = document.createElement("button");
+    all.type = "button";
+    all.className = "knobs-reset own-reset-all hidden";
+    all.textContent = "Reset all";
+    all.title = "Steps, CFG, sampler and scheduler back to this engine's defaults";
+    all.addEventListener("click", () => resetKeys(KEYS.slice()));
+    if (head) head.appendChild(all);
+  }
+  function syncResets() {
+    const own = load(eng());
+    let n = 0;
+    KEYS.forEach((k) => { const on = own[k] != null && own[k] !== ""; if (on) n++; if (btns[k]) btns[k].classList.toggle("hidden", !on); });
+    if (all) all.classList.toggle("hidden", n === 0);
+  }
+
+  // put your values back after anything automatic fills the fields
+  const baseEng = window.onEngineChanged;
+  window.onEngineChanged = function () {
+    if (typeof baseEng === "function") baseEng.apply(this, arguments);
+    setTimeout(applyOwn, 160);            // after the engine's own fill (0-80 ms) and Manual's restore
+  };
+  if (typeof loadConfig === "function") {
+    const baseCfg = loadConfig;
+    loadConfig = async function () {
+      const r = await baseCfg.apply(this, arguments);
+      if (eng() === "builtin") applyOwn();
+      return r;
+    };
+  }
+  document.querySelectorAll("#tune-seg > button").forEach((b) => b.addEventListener("click", () => setTimeout(applyOwn, 120)));
+  setTimeout(applyOwn, 1200);
 })();

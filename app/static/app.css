@@ -1826,3 +1826,13 @@ body.gs-open.gs-expand .dock { background: linear-gradient(rgba(13,13,14,0), rgb
 body.recent-collapsed #recent-row { display: none !important; }
 body.recent-collapsed #recent-strip .feed-head { margin-bottom: 4px; }
 body.recent-collapsed #recent-strip .feed-head h2::after { content: " \00b7 hidden"; font-weight: 400; color: var(--dim); }
+
+/* ===== Your own settings: reset buttons v20261122s ===== */
+.field-grid .field { position: relative; }
+.own-reset {
+  position: absolute; top: -2px; right: 0; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 13px; line-height: 1; color: var(--accent);
+  background: transparent; border: 0; cursor: pointer;
+}
+.own-reset:hover, .own-reset:focus-visible { background: var(--surface-3); }
+.own-reset-all { margin-left: 8px; font-size: 11.5px; vertical-align: middle; }

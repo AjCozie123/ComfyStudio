@@ -484,6 +484,7 @@
   }
 
   function ask() {
+    markSeen();          // asked once: closing the app now (or skipping) never brings it back; Guide -> Take the tour does
     show({
       step: "Welcome", title: "Would you like a quick tour?",
       text: "A short walk through the buttons, how LoRAs and Inpaint work, and an optional test picture. Tap More on any step for examples.",

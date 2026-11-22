@@ -1820,3 +1820,9 @@ body.gs-open.gs-expand .dock { background: linear-gradient(rgba(13,13,14,0), rgb
 .role-chip { width: 52px; height: 18px; font-size: 10px; line-height: 16px; }
 #clear-all { margin-top: 14px; }
 .slots { padding-top: 4px; gap: 6px; }
+
+/* ===== Hide / show Recent v20261122q ===== */
+.feed-actions { display: flex; align-items: baseline; gap: 14px; }
+body.recent-collapsed #recent-row { display: none !important; }
+body.recent-collapsed #recent-strip .feed-head { margin-bottom: 4px; }
+body.recent-collapsed #recent-strip .feed-head h2::after { content: " \00b7 hidden"; font-weight: 400; color: var(--dim); }

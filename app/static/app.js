@@ -10212,3 +10212,24 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
   fit();
   setTimeout(fit, 800);
 })();
+
+/* ===== Hide / show Recent on the Create page v20261122q =====
+   "Hide" next to Recent minimises the recent pictures, and it stays that way the next time Comfy Studio opens
+   (remembered on this device). The Library always shows everything. */
+(function () {
+  const btn = document.getElementById("recent-toggle");
+  if (!btn) return;
+  const KEY = "cs.recentHidden";
+  function read() { try { return localStorage.getItem(KEY) === "1"; } catch (e) { return false; } }
+  function apply(hidden) {
+    document.body.classList.toggle("recent-collapsed", hidden);
+    btn.textContent = hidden ? "Show" : "Hide";
+    btn.setAttribute("aria-expanded", hidden ? "false" : "true");
+  }
+  btn.addEventListener("click", () => {
+    const hidden = !document.body.classList.contains("recent-collapsed");
+    try { localStorage.setItem(KEY, hidden ? "1" : "0"); } catch (e) {}
+    apply(hidden);
+  });
+  apply(read());
+})();

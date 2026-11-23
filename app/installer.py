@@ -95,9 +95,29 @@ def _present(idx, folder, base):
     return None
 
 
-def plan_for(graph, idx, folder_paths):
-    """Files a workflow needs: present / missing (+ official link and target folder)."""
+FOLDER_ALIAS = {"diffusion_models": ("diffusion_models", "unet", "checkpoints"), "text_encoders": ("text_encoders", "clip"),
+                "checkpoints": ("checkpoints", "diffusion_models")}
+
+
+def alternatives(idx, folder, base, limit=60):
+    """Files already on this PC that could stand in for a missing one: same ComfyUI folder, same kind of file
+    (a .gguf needs a GGUF loader, so .gguf only replaces .gguf), most similar name first."""
+    import difflib
+    gguf = base.lower().endswith(".gguf")
+    names = set()
+    for f in FOLDER_ALIAS.get(folder, (folder,)):
+        for fn, full in (idx.get(f) or {}).items():
+            if fn.endswith(".gguf") == gguf:
+                names.add(os.path.basename(full))
+    want = base.lower()
+    return sorted(names, key=lambda n: (-difflib.SequenceMatcher(None, want, n.lower()).ratio(), n.lower()))[:limit]
+
+
+def plan_for(graph, idx, folder_paths, choices=None):
+    """Files a workflow needs: present / missing (+ official link and target folder). choices = {wanted file
+    (lower case): a file the user already has and picked instead}; such a file counts as present."""
     lk = links()
+    choices = choices or {}
     files = []
     for value, folder in workflow_files(graph):
         base = re.split(r"[\\/]", value)[-1]
@@ -111,11 +131,19 @@ def plan_for(graph, idx, folder_paths):
         # into the output\<folder> entries ComfyUI also lists
         dirs = sorted(dirs, key=lambda d: (os.path.basename(os.path.normpath(d)).lower() != tgt_folder.lower(),
                                            os.path.basename(os.path.dirname(os.path.normpath(d))).lower() != "models"))
-        files.append({
+        item = {
             "file": base, "folder": tgt_folder, "present": bool(have),
             "size_gb": round(os.path.getsize(have) / 1e9, 2) if have else None,
             "url": (link or {}).get("url"), "target_dir": dirs[0] if dirs else None,
-        })
+        }
+        if not have:
+            pick = choices.get(base.lower())
+            got = (_present(idx, tgt_folder, pick) or _present(idx, folder, pick)) if pick else None
+            if got:
+                item.update(present=True, using=os.path.basename(got), size_gb=round(os.path.getsize(got) / 1e9, 2))
+            else:
+                item["alternatives"] = alternatives(idx, tgt_folder, base) or alternatives(idx, folder, base)
+        files.append(item)
     return files
 
 

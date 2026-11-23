@@ -1836,3 +1836,74 @@ body.recent-collapsed #recent-strip .feed-head h2::after { content: " \00b7 hidd
 }
 .own-reset:hover, .own-reset:focus-visible { background: var(--surface-3); }
 .own-reset-all { margin-left: 8px; font-size: 11.5px; vertical-align: middle; }
+
+/* engine not set up: one plain box on the card that says what's missing and that Set up fixes it (v20261123a) */
+.wf-setup-callout { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: rgba(243,180,75,.08); border: 1px solid rgba(243,180,75,.35); }
+.wf-setup-callout p { margin: 0; font-size: 13px; line-height: 1.45; }
+.wf-setup-callout .wf-setup-head { color: var(--warn); font-weight: 600; margin-bottom: 4px; }
+.wf-setup-callout .wf-setup-how { color: var(--text); }
+.wf-setup-callout .wf-setup-list { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.wf-setup-callout .wf-setup-list summary { cursor: pointer; }
+.wf-setup-callout .wf-setup-list p { margin-top: 4px; font-size: 12px; color: var(--muted); word-break: break-word; }
+.wf-setup-callout.wf-offline { margin-bottom: 16px; }
+.wf-setup-callout.wf-offline .wf-actions { margin-top: 10px; display: flex; gap: 8px; }
+.wf-setup-btn { box-shadow: 0 0 0 2px rgba(243,180,75,.45); }
+
+/* missing model file: download it, or use a version the user already has (v20261123b) */
+.wf-files .wf-file-row, .wf-swapped .wf-file-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.wf-file-name { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; }
+.wf-file-name b { font-size: 13px; word-break: break-all; }
+.wf-file-name small, .wf-file-none { font-size: 12px; color: var(--muted); }
+.wf-file-pick { flex: 1 1 100%; min-width: 0; max-width: 100%; }
+.wf-swapped { margin: 0 0 10px; }
+.wf-swapped .wf-file-row { border-top: 0; padding: 4px 0; }
+.wf-swap-text { flex: 1 1 0; min-width: 0; font-size: 12px; color: var(--ok, #46d17f); word-break: break-word; }
+.wf-setup-callout .wf-setup-how + .wf-setup-how { margin-top: 6px; }
+.wf-file-field { flex: 1 1 100%; min-width: 0; margin: 0; }
+.wf-file-field select { width: 100%; }
+.wf-files { min-width: 0; }
+.wf-files .fold-note { word-break: normal; overflow-wrap: anywhere; }
+
+/* ===== Character swap (swap.js) v20261124 ===== */
+.swap-pill.is-on { border-color: rgba(229, 72, 77, .55); background: rgba(229, 72, 77, .12); }
+.swap-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 4px 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.swap-hint-dot { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; flex: none; }
+.swap-card { max-width: 640px; }
+.swap-body { overflow-y: auto; padding: 0 2px 18px; display: flex; flex-direction: column; gap: 14px; }
+.swap-sec { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.swap-sec h3 { margin: 0; font-size: 14.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.swap-step { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700; flex: none; }
+.swap-note { margin: 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.swap-auto-note { padding: 0 6px; }
+.swap-seg { display: flex; }
+.swap-seg > button { flex: 1; min-height: 36px; }
+.swap-howto { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.55; color: var(--text); }
+.swap-colors { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+.swap-color { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 14px; border: 2px solid var(--line-2); background: var(--surface-2); color: var(--text); text-align: left; cursor: pointer; min-height: 56px; }
+.swap-color.is-on { border-color: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 25%, transparent); }
+.swap-color.is-off { opacity: .45; cursor: default; }
+.swap-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--c); flex: none; }
+.swap-color-txt { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.swap-color-txt strong { font-size: 13.5px; }
+.swap-color-txt small { font-size: 11.5px; color: var(--muted); }
+.swap-color img, .swap-color-empty { width: 38px; height: 38px; border-radius: 9px; object-fit: cover; flex: none; }
+.swap-color-empty { display: grid; place-items: center; border: 1px dashed var(--line-2); color: var(--dim); }
+.swap-stage { position: relative; align-self: center; max-width: 100%; border-radius: 14px; overflow: hidden; cursor: pointer; background: var(--surface-2); user-select: none; -webkit-user-select: none; }
+.swap-stage.is-empty { min-height: 120px; width: 100%; }
+.swap-stage img { display: block; max-width: 100%; max-height: calc(var(--app-h) * 0.5); pointer-events: none; -webkit-user-drag: none; }
+.swap-stage canvas { position: absolute; left: 0; top: 0; pointer-events: none; }
+.swap-stage-note { font-weight: 500; color: var(--text); }
+.swap-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.swap-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+@media (max-width: 520px) { .swap-opts { grid-template-columns: 1fr; } }
+.opt-card { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 10px 12px; border-radius: 14px; border: 2px solid var(--line-2); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.opt-card small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.opt-card.is-on { border-color: var(--accent); background: var(--accent-soft); }
+.swap-setup { padding: 12px; border-radius: 14px; border: 1px solid rgba(243, 180, 75, .45); background: rgba(243, 180, 75, .1); display: flex; flex-direction: column; gap: 8px; }
+.swap-setup p { margin: 0; font-size: 13px; line-height: 1.45; }
+.swap-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.swap-field > span { display: flex; flex-direction: column; gap: 2px; }
+.swap-field > span b { font-weight: 600; color: var(--accent); margin-left: 6px; }
+.swap-field small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.swap-field select, #swap-own-text { background: var(--surface-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; font: inherit; }
+.swap-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }

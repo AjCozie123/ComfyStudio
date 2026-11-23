@@ -1985,6 +1985,11 @@
    "name": "z_image_turbo_int8_convrot.safetensors",
    "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors",
    "directory": "diffusion_models"
+  },
+  "minimax_h3_image_character_swap_multiple_by_color_fro_v0.1.safetensors": {
+   "name": "minimax_h3_image_character_swap_multiple_by_color_fro_v0.1.safetensors",
+   "directory": "loras",
+   "url": "https://huggingface.co/Alissonerdx/Minimax-H3-ComfyUI/resolve/main/loras/minimax_h3_image_character_swap_multiple_by_color_fro_v0.1.safetensors"
   }
  }
 }

@@ -120,6 +120,58 @@ def resolve(class_types):
     return {"manager": True, "packs": list(found.values()), "unknown": unknown}
 
 
+PUBLIC_MAP_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json"
+PUBLIC_STATS_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/github-stats.json"
+CORE_REPO = "https://github.com/comfyanonymous/comfyui"
+_public = {"t": 0, "map": None, "stars": {}}
+
+
+def _get_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "ComfyStudio"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.loads(r.read()) or {}
+
+
+def lookup_public(class_types):
+    """{node class: GitHub url} from ComfyUI-Manager's public node list, for PCs that don't have the Manager.
+    Many forks copy popular nodes, so when several packs claim a node the most-starred one wins. A node that
+    ComfyUI itself provides is left out (the fix for that is updating ComfyUI, not a pack). Only github.com packs
+    are returned (that is all custom_nodes.start_github installs). Unknown classes are left out."""
+    if _public["map"] is None or time.time() - _public["t"] > 6 * 3600:
+        mapping = _get_json(PUBLIC_MAP_URL)
+        try:
+            stars = {k.rstrip("/").lower(): (v or {}).get("stars") or 0 for k, v in _get_json(PUBLIC_STATS_URL).items()}
+        except Exception:
+            stars = {}
+        _public.update(map=mapping, stars=stars, t=time.time())
+    stars = _public["stars"]
+    import re
+    out = {}
+    for cls in class_types:
+        exact, by_pattern = [], []
+        for url, v in _public["map"].items():
+            if not (isinstance(v, list) and v):
+                continue
+            names = v[0] or []
+            pat = (v[1] or {}).get("nodename_pattern") if len(v) > 1 and isinstance(v[1], dict) else None
+            if cls in names:
+                exact.append(url)
+            elif pat:
+                try:
+                    if re.search(pat, cls):
+                        by_pattern.append(url)
+                except re.error:
+                    pass
+        cands = exact or by_pattern
+        if any(u.rstrip("/").lower().removesuffix(".git") == CORE_REPO for u in cands):
+            continue                                   # a core ComfyUI node: a newer ComfyUI has it
+        gh = [u for u in cands if u.lower().startswith("https://github.com/")]
+        if gh:
+            best = max(gh, key=lambda u: stars.get(u.rstrip("/").lower(), 0))
+            out[cls] = best.rstrip("/").removesuffix(".git")
+    return out
+
+
 def install(pack_ids):
     """Queue registry packs for install. Returns {queued:[...], blocked:[...], failed:[...]}."""
     _, packs = _load()

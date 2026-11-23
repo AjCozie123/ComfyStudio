@@ -8,7 +8,7 @@ Talks to the ComfyUI saved in data/settings.json (127.0.0.1:8188 by default). Do
 from __future__ import annotations
 
 import gzip, hashlib, hmac, io, ipaddress, json, logging, os, re, secrets, shutil, socket, struct
-import sys, threading, time, traceback, uuid, urllib.error, urllib.parse, urllib.request
+import random, sys, threading, time, traceback, uuid, urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import ThreadingMixIn
 
@@ -30,6 +30,7 @@ import camera as CAMERA
 import appearance as APPEARANCE
 import nudity as NUDITY
 import workflow_registry as WF
+import char_swap as CSW
 import prompt_dialect as PD
 import nodes_manager as NM
 import updater as UPD
@@ -345,6 +346,10 @@ def format_comfy_error(payload):
     if not text:
         text = payload.get("exception_message") or payload.get("message") or ""
     low = text.lower()
+    etype = str(err.get("type") or "") if isinstance(err, dict) else ""
+    if etype == "missing_node_type" or ("node" in low and ("does not exist" in low or "may not be installed" in low)):
+        return ("This engine needs an add-on (ComfyUI node pack) that isn't installed yet. Open Workflows and press "
+                "Set up on this engine's card: Comfy Studio installs it and restarts ComfyUI for you. (" + text[:200] + ")")
     if any(s in low for s in ("out of memory", "cuda oom", "cuda out of memory", "allocation on device")):
         return "The GPU ran out of memory. Try the 4 MP size (the default), fewer reference images, or Prompt Enhancer off. " + text
     return text or "ComfyUI rejected the workflow."
@@ -3326,6 +3331,11 @@ def submit_workflow_job(data):
         if "channel" in g[native_set[0]]["inputs"]:
             g[native_set[0]]["inputs"]["channel"] = "red"
     try:
+        for want, use in apply_file_choices(g, card.get("id") or wid):
+            notes.append("Using your %s instead of %s." % (use, re.split(r"[\\/]", want)[-1]))
+    except Exception as e:
+        log.info("file choices skipped: %s", e)
+    try:
         WF.fix_moved_files(g, object_info())
     except Exception as e:
         log.info("fix_moved_files skipped: %s", e)
@@ -4531,8 +4541,250 @@ def strip_lora_weights(prompt):
     return re.sub(r"[ \t]{2,}", " ", out).strip()
 
 
+# ------------------------------------------------------------------ Character swap (MiniMax H3 Image + BFS swap LoRA)
+_swap_people_cache = {}        # (image, mtime, mp, concepts, threshold) -> people result
+
+
+def swap_status():
+    """What the character swap needs on this PC -> {'ready': bool, 'missing': [plain names], 'card': id}."""
+    missing = []
+    try:
+        oi = object_info()
+    except Exception:
+        return {"ready": False, "missing": ["ComfyUI isn't running"], "card": CSW.CARD_ID, "comfy": False}
+    if "BFSVideoSegmentPicker" not in oi or "BFSH3ImageAutoCharacterSwapConditioning" not in oi:
+        missing.append("the BFS Nodes add-on")
+
+    def has(cls, field, rx):
+        try:
+            return any(re.search(rx, n, re.I) for n in combo_list(oi, cls, field) or [])
+        except Exception:
+            return False
+    if not has("LoraLoaderModelOnly", "lora_name", r"character_swap_multiple_by_color"):
+        missing.append("the character swap LoRA (75 MB)")
+    if not has("UNETLoader", "unet_name", r"minimax_h3_image_pruned"):
+        missing.append("the MiniMax H3 Image model")
+    if not has("VAELoader", "vae_name", r"minimax_h3_image_vae"):
+        missing.append("the H3 Image VAE")
+    if not has("CLIPLoader", "clip_name", r"qwen3vl_32b_minimax_h3"):
+        missing.append("the H3 text encoder")
+    if not has("CheckpointLoaderSimple", "ckpt_name", r"sam3"):
+        missing.append("SAM 3.1 (finds the people)")
+    return {"ready": not missing, "missing": missing, "card": CSW.CARD_ID, "comfy": True}
+
+
+def _swap_base():
+    _card, g = WF.get(CSW.CARD_ID)
+    return g
+
+
+def _run_quick(graph, timeout=240):
+    """Send a small graph to the front of ComfyUI's queue and wait for its /history entry."""
+    pid = str(uuid.uuid4())
+    comfy("POST", "/prompt", {"prompt": graph, "client_id": CLIENT_ID, "prompt_id": pid, "front": True}, timeout=60)
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        h = comfy("GET", "/history/" + pid, timeout=30)
+        e = h.get(pid) if isinstance(h, dict) else None
+        if e and (e.get("status") or {}).get("completed") is not None:
+            st = e.get("status") or {}
+            if st.get("status_str") == "error":
+                msg = next((m[1].get("exception_message") for m in st.get("messages") or [] if m[0] == "execution_error"), "")
+                raise ValueError("Finding the people failed: %s" % (str(msg).strip()[:200] or "ComfyUI error"))
+            return e
+        time.sleep(0.7)
+    raise ValueError("Finding the people took too long (ComfyUI may be busy with another job). Try again in a moment.")
+
+
+def swap_people(image, mp=2.0, settings=None):
+    """Find the people in Picture 1 (SAM 3.1). Cached per picture and size."""
+    s = CSW.clean_settings(settings, True)
+    image = str(image or "").replace("\\", "/")
+    full = os.path.abspath(os.path.join(INPUT, image.replace("/", os.sep)))
+    if not image or not (full.startswith(os.path.abspath(INPUT) + os.sep) and os.path.isfile(full)):
+        raise ValueError("Picture 1 wasn't found. Add it again.")
+    bake_orientation_file(full)
+    key = (image, os.path.getmtime(full), round(float(mp), 2), s["concepts"], s["threshold"])
+    if key in _swap_people_cache:
+        return _swap_people_cache[key]
+    entry = _run_quick(CSW.segment_graph(_swap_base(), image, mp, s))
+    res = CSW.people_from_history(entry)
+    res["mp"] = round(float(mp), 2)
+    _swap_people_cache[key] = res
+    while len(_swap_people_cache) > 40:
+        _swap_people_cache.pop(next(iter(_swap_people_cache)))
+    return res
+
+
+def swap_people_view(res):
+    """The finder's result for the page: boxes + each person's mask as a small PNG (data URL)."""
+    import base64 as _b64
+    out = []
+    try:
+        from PIL import Image as _Im
+    except Exception:
+        _Im = None
+    real = {p["id"] for p in CSW.real_people(res.get("people") or [])}
+    for p in res.get("people") or []:
+        item = {"id": p["id"], "box": p["box"], "area": round(p["area"], 4), "score": round(p["score"], 3),
+                "likely": p["id"] in real, "mask": ""}
+        m = p.get("mask") or {}
+        if _Im and m.get("filename"):
+            try:
+                q = urllib.parse.urlencode({"filename": m["filename"], "subfolder": m.get("subfolder") or "",
+                                            "type": m.get("type") or "temp"})
+                raw = comfy("GET", "/view?" + q, timeout=30, raw=True)
+                im = _Im.open(io.BytesIO(raw))
+                # the picker's masks are white with the person in the alpha channel
+                im = im.getchannel("A") if "A" in im.getbands() else im.convert("L")
+                im.thumbnail((720, 720))
+                buf = io.BytesIO()
+                im.save(buf, "PNG", optimize=True)
+                item["mask"] = "data:image/png;base64," + _b64.b64encode(buf.getvalue()).decode()
+            except Exception as e:
+                log.info("swap mask %s: %s", p["id"], e)
+        out.append(item)
+    return {"people": out, "width": res.get("width"), "height": res.get("height"), "mp": res.get("mp")}
+
+
+def swap_route_wanted(data):
+    """Should this request be made with the character swap? -> (yes, why). Picked on purpose (its card or the Swap
+    pill), or the words ask to replace a person with someone from another picture (any wording) while routing is on."""
+    images = [x for x in (data.get("images") or []) if str(x).strip()]
+    if str(data.get("workflow_id") or "") == CSW.CARD_ID:
+        return True, "picked"
+    if isinstance(data.get("swap"), dict) and data["swap"].get("on") and len(images) >= 2:
+        return True, "picked"
+    if data.get("swap_route") is False or len(images) < 2:
+        return False, ""
+    if data.get("inpaint_mask") or data.get("ref_mode"):
+        return False, ""
+    return (True, "words") if CSW.wants_swap(data.get("prompt") or "", len(images)) else (False, "")
+
+
+def submit_char_swap(data, why="picked"):
+    """A character swap job: Picture 1 = the photo, Pictures 2-4 = who goes in (red, blue, green)."""
+    images = [str(x).replace("\\", "/") for x in (data.get("images") or []) if str(x).strip()]
+    if len(images) < 2:
+        raise ValueError("A character swap needs two pictures: Picture 1 = the photo to change, Picture 2 = the new "
+                         "person. Add the new person with +.")
+    stt = swap_status()
+    if not stt["ready"]:
+        raise NeedsAction("Character swap needs a one-time setup: %s. Open Workflows, find “MiniMax H3 · "
+                          "Character swap” and press Set up (it downloads and installs everything)."
+                          % ", ".join(stt["missing"]), "setup", workflow_id=CSW.CARD_ID, missing=stt["missing"])
+    for name in images:
+        full = os.path.abspath(os.path.join(INPUT, name.replace("/", os.sep)))
+        if not (full.startswith(os.path.abspath(INPUT) + os.sep) and os.path.isfile(full)):
+            raise ValueError("Image %s was not found. Upload it again." % name)
+        bake_orientation_file(full)
+    sw = data.get("swap") if isinstance(data.get("swap"), dict) else {}
+    manual = bool(sw.get("manual"))
+    prompt_user = (data.get("prompt") or "").strip()
+    settings = dict(sw.get("settings") or {})
+    if settings.get("body") in (None, "", "auto"):
+        settings["body"] = CSW.body_mode(prompt_user)
+    if not settings.get("mp"):
+        try:
+            settings["mp"] = float(data.get("swap_mp") or 0) or CSW.DEFAULTS["mp"]
+        except (TypeError, ValueError):
+            settings["mp"] = CSW.DEFAULTS["mp"]
+    s = CSW.clean_settings(settings, manual)
+    refs = images[1:1 + CSW.MAX_PEOPLE]
+    picks = {k: v for k, v in (sw.get("picks") or {}).items() if k in ("1", "2", "3") and isinstance(v, str) and v}
+    seed = data.get("seed")
+    if data.get("random_seed") or seed in (None, "", "random"):
+        seed = random.randint(1, 2 ** 48)
+    try:
+        seed = int(seed)
+    except (TypeError, ValueError):
+        seed = random.randint(1, 2 ** 48)
+    card, _g = WF.get(CSW.CARD_ID)
+    prefix = out_dir(engine_label(card), "minimax_h3_image", kind_label(card)) + "/" + _seg(card["id"], "workflow")
+    override = (sw.get("prompt") or "").strip() if manual and sw.get("own_prompt") else ""
+    notes = []
+    if why == "words":
+        notes.append("Your words ask to swap a person, so this was made with MiniMax H3 · Character swap.")
+    if s["body"] == "keep":
+        notes.append("Keeping the original body shape (only the face, hair, skin and outfit change).")
+    job = {
+        "id": _new_job_id(), "mode": "edit", "media": "image", "task": "edit",
+        "workflow_id": CSW.CARD_ID, "workflow_name": card.get("name") or "Character swap",
+        "model_name": "MiniMax H3 Image", "prompt": prompt_user or "Character swap", "prompt_user": prompt_user,
+        "prompt_sent": "", "status": "queued", "graph": None, "t": time.time(), "images": [],
+        "source_images": list(images), "note": " ".join(notes), "inpaint": None, "edit_kind": "char_swap",
+        "auto_assist": False, "assist_intent": "body_swap", "dialect": "minimax_h3_image", "alias_warnings": [],
+        "message": "Waiting to start…", "progress": 0, "progress_max": 0, "error": "", "prompt_id": None,
+        "seed": seed, "steps": s["steps"], "width": None, "height": None, "sampler_name": "euler_ancestral",
+        "scheduler": "ddim_uniform", "cfg": 1, "pe": False, "camera": None, "camera_mode": None, "models": {},
+        "resolution_in": "", "long_clips": None, "ref_extend_on": False, "ref_picture": images[0], "_lcp": None,
+        # completed by the worker (finding the people takes a few seconds): swap_prepare()
+        "swap_plan": {"image": images[0], "refs": refs, "picks": picks, "picks_mp": sw.get("picks_mp"), "settings": s,
+                      "seed": seed, "override": override, "prefix": prefix, "prompt_user": prompt_user,
+                      "picked_people": sw.get("people") or []},
+    }
+    jobs[job["id"]] = job
+    order.append(job["id"])
+    with q_cv:
+        job_q.append(job["id"])
+        q_cv.notify()
+    return job
+
+
+def swap_prepare(job):
+    """Worker step: find the people (when needed), choose who is swapped, build the graph. Raises ValueError."""
+    plan = job["swap_plan"]
+    s = plan["settings"]
+    job["status"] = "running"
+    job["message"] = "Finding the people in Picture 1…"
+    res = swap_people(plan["image"], s["mp"], s)
+    people = res.get("people") or []
+    if not people:
+        raise ValueError("No person was found in Picture 1, so there is no one to swap. Use a photo where the person "
+                         "is clearly visible.")
+    picks = dict(plan.get("picks") or {})
+    if picks and plan.get("picks_mp") not in (None, res.get("mp")) and plan.get("picked_people"):
+        picks = CSW.remap_picks(plan["picked_people"], people, picks)       # picked at another size: same people
+    ids = {p["id"] for p in people}
+    picks = {k: v for k, v in picks.items() if v in ids}
+    auto = not picks
+    if auto:
+        picks = CSW.auto_pick(people, len(plan["refs"]), plan.get("prompt_user") or "")
+    ordered = [picks[k] for k in sorted(picks) if picks.get(k)][:len(plan["refs"])]
+    picks = {str(i + 1): pid for i, pid in enumerate(ordered)}
+    if not picks:
+        raise ValueError("Couldn't tell who to swap. Tap the Swap pill and choose the person.")
+    g, prompt = CSW.build_graph(_swap_base(), plan["image"], plan["refs"][:len(picks)], picks, s, plan["seed"],
+                                plan.get("override") or "", plan["prefix"])
+    oi = object_info()
+    try:
+        WF.fix_moved_files(g, oi)
+        for n_ in WF.use_installed_models(g, oi) or []:
+            job["note"] = (job.get("note", "") + " " + n_).strip()
+    except Exception as e:
+        log.info("swap model fit skipped: %s", e)
+    problems = validate_graph(g, oi, input_root=INPUT)
+    if problems:
+        raise explain_problems(g, problems)
+    who = ", ".join("%s mark → Picture %d" % (CSW.COLORS[int(k) - 1], int(k) + 1) for k in sorted(picks))
+    extra = "Swapping %d %s (%s)%s." % (len(picks), "person" if len(picks) == 1 else "people", who,
+                                        ", chosen automatically" if auto else "")
+    job["note"] = (job.get("note", "") + " " + extra).strip()
+    job["graph"] = g
+    job["prompt_sent"] = prompt
+    job["swap_picks"] = picks
+    job["width"], job["height"] = res.get("width"), res.get("height")
+
+
 def submit_job(data):
     _clean_request(data)
+    try:
+        _sw_on, _sw_why = swap_route_wanted(data)
+    except Exception as e:
+        log.info("swap routing check: %s", e)
+        _sw_on, _sw_why = False, ""
+    if _sw_on and (_sw_why == "picked" or swap_status().get("ready")):
+        return submit_char_swap(data, _sw_why)
     if data.get("prompt"):
         data["prompt"] = strip_lora_weights(data["prompt"])
         # a prompt reused from a painted-area edit already carries the instruction: back to the person's own words
@@ -4628,6 +4880,7 @@ def submit_job(data):
                                        undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=False)
+        apply_file_choices(graph, "builtin")
     else:
         images = list(data.get("images") or [])
         images = [str(x).replace("\\", "/") for x in images if str(x).strip()]
@@ -4756,6 +5009,7 @@ def submit_job(data):
                                        undressed=pic_undressed(data.get("images")) if mode == "edit" else False)
         prompt_sent = lora_trigger_prompt(prompt_sent, data.get("loras"))
         graph, meta = build_main_graph(mode, prompt_sent, resolution, seed, steps, models, images, input_size, ref_mode=ref_mode)
+        apply_file_choices(graph, "builtin")
         if native_from and hold_size:
             try:
                 add_graph_upscale(graph, hold_size[0], hold_size[1])
@@ -5281,6 +5535,17 @@ def _worker():
                         continue
             if job["status"] == "cancelled":       # last look before anything is sent to ComfyUI
                 continue
+            if job.get("swap_plan") and not job.get("graph"):
+                try:
+                    swap_prepare(job)
+                except Exception as e:
+                    log.info("swap prepare: %s", e)
+                    job["status"] = "error"
+                    job["error"] = str(e)
+                    job["t_done"] = time.time()
+                    continue
+                if job["status"] == "cancelled":
+                    continue
             job["status"] = "running"
             job["message"] = "Starting…"
             if job.get("ref_extend_on") and job.get("_lcp") and not job.get("then_extend"):
@@ -5452,12 +5717,63 @@ def install_index(force=False):
     return _inst_cache["fp"], _inst_cache["idx"]
 
 
+FILE_CHOICES = os.path.join(DATA, "file_choices.json")
+
+
+def file_choices(engine_id=None):
+    """The user's own stand-ins for model files an engine wants but this PC doesn't have:
+    {engine id: {wanted file (lower case): the file they already have}}."""
+    try:
+        d = json.load(open(FILE_CHOICES, encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    return (d.get(engine_id) or {}) if engine_id is not None else d
+
+
+def set_file_choice(engine_id, wanted, use):
+    d = file_choices()
+    m = d.setdefault(engine_id, {})
+    if use:
+        m[wanted.lower()] = use
+    else:
+        m.pop(wanted.lower(), None)
+    if not m:
+        d.pop(engine_id, None)
+    tmp = FILE_CHOICES + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1)
+    os.replace(tmp, FILE_CHOICES)
+
+
+def apply_file_choices(graph, engine_id):
+    """Swap in the files the user picked instead of missing ones (by file name; fix_moved_files then finds the
+    sub-folder). Only when the wanted file still isn't on this PC, so downloading it later wins by itself."""
+    picks = file_choices(engine_id)
+    if not picks:
+        return []
+    try:
+        _fp, idx = install_index()
+    except Exception:
+        idx = {}
+    have = {fn for m in (idx or {}).values() for fn in m}
+    done = []
+    for n in graph.values():
+        for k, v in list((n.get("inputs") or {}).items()):
+            if not isinstance(v, str):
+                continue
+            base = re.split(r"[\\/]", v)[-1].lower()
+            if base in picks and base not in have:
+                n["inputs"][k] = picks[base]
+                done.append((v, picks[base]))
+    return done
+
+
 def _builtin_plan_item(idx, fp, hw, oi):
     """The built-in MiniMax H3 image engine (new pictures + edits) as a plan item: the files its own graphs load."""
     seen, nodes = {}, set()
     for g in (build_main_graph("t2i", "x", "1024x1024", 1, 6, {}, [], None)[0],
               build_main_graph("edit", "x", "1024x1024", 1, 6, {}, [INPUT_SUB + "/x.png"], (1024, 1024))[0]):
-        for f in INST.plan_for(g, idx, fp):
+        for f in INST.plan_for(g, idx, fp, file_choices("builtin")):
             seen.setdefault(f["file"], f)
         nodes |= {n.get("class_type") for n in g.values() if n.get("class_type") and oi and n.get("class_type") not in oi}
     files = list(seen.values())
@@ -5491,7 +5807,7 @@ def install_plan(wid=None):
             card, graph = WF.get(card["id"])
         except Exception:
             continue
-        files = INST.plan_for(graph, idx, fp)
+        files = INST.plan_for(graph, idx, fp, file_choices(card["id"]))
         missing = [f for f in files if not f["present"]]
         nodes = sorted({n.get("class_type") for n in graph.values() if n.get("class_type") and oi and n.get("class_type") not in oi})
         verdict = fit_verdict(apply_effective(card, hw), hw)
@@ -5602,18 +5918,32 @@ def _setup_run(wid):
         engine_nodes = list(plan.get("missing_nodes") or [])
         core_missing = []
         manager_ok = False
+        gh_only = {}
         if engine_nodes:
             manager_ok = NM.manager_available()
             res = NM.resolve(engine_nodes) if manager_ok else {"manager": False, "packs": [], "unknown": list(engine_nodes)}
             packs = [pk["id"] for pk in (res.get("packs") or []) if pk.get("registry") and not pk.get("installed")]
             core_missing = list(res.get("unknown") or [])
+            # packs the Manager knows but only as a GitHub link: installed straight from GitHub below
+            gh_only = {}
+            for pk in (res.get("packs") or []):
+                if not pk.get("registry") and not pk.get("installed") and CN.parse_github(pk.get("repository") or ""):
+                    for n in pk.get("nodes") or []:
+                        gh_only[n] = pk["repository"]
             if packs:
                 if not NM.manager_available():
                     notes.append("ComfyUI-Manager isn't available, so these node packs couldn't be added: %s." % ", ".join(packs))
                 else:
                     r = NM.install(packs)
+                    blocked_ids = {b.get("id") for b in (r.get("blocked") or [])}
+                    for pk in (res.get("packs") or []):
+                        if pk.get("id") in blocked_ids and CN.parse_github(pk.get("repository") or ""):
+                            for n in pk.get("nodes") or []:
+                                gh_only[n] = pk["repository"]
+                            blocked_ids.discard(pk.get("id"))
                     for b in (r.get("blocked") or []):
-                        notes.append("%s: %s" % (b.get("id"), b.get("reason")))
+                        if b.get("id") in blocked_ids:
+                            notes.append("%s: %s" % (b.get("id"), b.get("reason")))
                     if r.get("queued"):
                         t0 = time.time()
                         while time.time() - t0 < 900:
@@ -5627,8 +5957,22 @@ def _setup_run(wid):
         # nodes the Manager couldn't place (or there is no Manager, as on most fresh installs): the workflow records
         # which pack each custom node comes from, so install those packs straight from GitHub
         left = [n for n in (core_missing if engine_nodes else []) if n not in have]
+        if engine_nodes:
+            left += [n for n in gh_only if n not in have and n not in left]
+        looked_up = False
         if left and os.path.isdir(NODES_DIR):
             urls = _pack_urls_for(wid, left)
+            for n, u in gh_only.items():
+                urls.setdefault(n, u)
+            rest = [n for n in left if n not in urls]
+            if rest:
+                # no Manager on this PC (or it didn't know them): look the nodes up in its public list instead
+                _setup_step("nodes", "running", "Looking up which add-ons provide %s…" % ", ".join(rest[:3]))
+                try:
+                    urls.update(NM.lookup_public(rest))
+                    looked_up = True
+                except Exception as e:
+                    log.info("public node lookup: %s", e)
             for url in sorted(set(urls.values())):
                 try:
                     jid = CN.start_github(url, DATA, NODES_DIR, comfy_py())
@@ -5704,14 +6048,14 @@ def _setup_run(wid):
             still = after["missing_nodes"]
             core = [n for n in still if n in core_missing]
             other = [n for n in still if n not in core_missing]
-            if core and manager_ok:
-                problems.append("Your ComfyUI doesn't have %s. No node pack provides these, so they come with a newer "
-                                "ComfyUI: update ComfyUI (ComfyUI Manager \u203a Update ComfyUI, or the update script in "
-                                "your ComfyUI folder), then press Set up again." % ", ".join(core[:6]))
+            if core and (manager_ok or looked_up):
+                problems.append("Your ComfyUI is too old for this engine: it doesn't have %s, and no add-on provides "
+                                "them. Update ComfyUI (run update\\update_comfyui.bat in your ComfyUI folder, or "
+                                "ComfyUI Manager \u203a Update ComfyUI), then press Set up again." % ", ".join(core[:6]))
             elif core:
-                problems.append("Comfy Studio couldn't find which node pack provides %s (the workflow doesn't say, and "
-                                "ComfyUI-Manager isn't installed to look it up). Install that pack in ComfyUI, or add it "
-                                "with Workflows \u203a Node packs \u203a From GitHub, then press Set up again."
+                problems.append("Comfy Studio couldn't look up which add-on provides %s (no internet, or the list "
+                                "didn't answer). Check the internet connection and press Set up again. If it still "
+                                "fails, paste the add-on's GitHub link in Workflows \u203a Add-ons \u203a From GitHub."
                                 % ", ".join(core[:6]))
             if other:
                 problems.append("%s still isn't loaded. If ComfyUI wasn't restarted, close it and start it again, then "
@@ -6164,6 +6508,16 @@ class H(BaseHTTPRequestHandler):
             card["lora_family"] = lora_family_for(card)
             card["camera_edit"] = CAMERA.edit_family(card)
             return self.j({"card": card, "options": _wf_model_options(card), "summary": WF.summary(card), "knobs": knobs})
+        if path == "/api/swap/status":
+            try:
+                return self.j(dict(swap_status(), guides=CSW.GUIDE_LABELS, defaults=CSW.DEFAULTS, limits=CSW.LIMITS))
+            except Exception as e:
+                return self.j({"ready": False, "missing": [str(e)], "card": CSW.CARD_ID})
+        if path == "/api/swap/check":
+            txt = (q.get("prompt") or [""])[0]
+            n = int((q.get("n") or ["0"])[0] or 0)
+            return self.j({"swap": CSW.wants_swap(txt, max(2, n)), "body": CSW.body_mode(txt),
+                           "places": CSW.position_words(txt)})
         if path == "/api/install/plan":
             try:
                 return self.j(install_plan((q.get("id") or [""])[0] or None))
@@ -6755,6 +7109,43 @@ class H(BaseHTTPRequestHandler):
             node_sources = {c: src[c] for c in (card.get("missing_nodes") or []) if c in src}
             return self.j({"draft": draft, "card": card, "summary": WF.summary(card), "warnings": warnings,
                            "nodes": nodes, "node_sources": node_sources, "candidates": _wf_candidates(graph), "tasks": WF.TASKS})
+        if path == "/api/swap/people":
+            # find the people in Picture 1 (SAM 3.1) for the Swap sheet
+            try:
+                mp = float(data.get("mp") or CSW.DEFAULTS["mp"])
+            except (TypeError, ValueError):
+                mp = CSW.DEFAULTS["mp"]
+            mp = min(CSW.LIMITS["mp"][1], max(CSW.LIMITS["mp"][0], mp))
+            try:
+                if not comfy_up():
+                    return self.j({"error": "ComfyUI isn't running. Start it first (the app starts it when you press Generate)."}, 409)
+                st = swap_status()
+                if "the BFS Nodes add-on" in st["missing"] or any("SAM" in m for m in st["missing"]):
+                    return self.j({"error": "Character swap isn't set up yet. Open Workflows and press Set up on "
+                                            "\u201cMiniMax H3 \u00b7 Character swap\u201d.", "code": "setup"}, 409)
+                res = swap_people(data.get("image"), mp, data.get("settings"))
+                view = swap_people_view(res)
+                view["auto"] = CSW.auto_pick(res.get("people") or [], int(data.get("refs") or 1), data.get("prompt") or "")
+                return self.j(view)
+            except ValueError as e:
+                return self.j({"error": str(e)}, 400)
+            except Exception as e:
+                log.exception("swap people")
+                return self.j({"error": "Couldn't look for people: %s" % e}, 500)
+        if path == "/api/install/choose":
+            # "I already have this model": use one of the user's own files instead of downloading the wanted one
+            wid, want, use = str(data.get("id") or ""), str(data.get("file") or ""), str(data.get("use") or "")
+            plan = install_plan(wid).get("items") or []
+            if not plan or not want:
+                return self.j({"error": "Unknown engine or file."}, 404)
+            item = next((f for f in plan[0]["files"] if f["file"].lower() == want.lower()), None)
+            if not item:
+                return self.j({"error": "That engine doesn't use %s." % want}, 400)
+            if use and use not in (item.get("alternatives") or []) and use != item.get("using"):
+                return self.j({"error": "%s isn't in that model folder on this PC." % use}, 400)
+            set_file_choice(wid, want, use)
+            _inst_cache["t"] = 0
+            return self.j({"ok": True, "item": (install_plan(wid).get("items") or [None])[0]})
         if path == "/api/install/start":
             wid = str(data.get("id") or "")
             plan = install_plan(wid).get("items") or []

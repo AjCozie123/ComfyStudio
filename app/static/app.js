@@ -1145,6 +1145,7 @@ async function generate() {
   $("go-note").textContent = "";
   $("error").classList.add("hidden");
   let prompt = $("prompt").value.trim();
+  if (!prompt && window.__swapOn && window.__swapOn()) prompt = "Character swap";   // a swap needs no words
   if (!prompt) { showError("Write a prompt first."); return; }
   if (state.mode === "edit" && !state.images.length) {
     showError(state.refMode ? "Add at least one reference image first." : "Add a main image (Picture 1) first.");
@@ -1186,6 +1187,7 @@ async function generate() {
     camera: Object.assign({}, state.camera || {}),
   };
   if (state.mode === "edit") body.images = state.images.map((r) => r.name);
+  if (window.__swapAttach) window.__swapAttach(body);       // character swap (swap.js)
   if (typeof window.__currentLoras === "function") body.loras = window.__currentLoras();
   if (state.mode === "edit" && state.inpaint && state.images[0] && state.inpaint.forName === state.images[0].name) {
     body.inpaint_mask = state.inpaint.mask;
@@ -3930,13 +3932,13 @@ function bindShell() {
   });
 
   /* ---- phone Back button / back-swipe closes the open layer instead of leaving ---- */
-  const LAYERS = ["upscale-pop", "lora-pop", "inpaint-sheet", "wf-sheet", "compare-fs", "vsize-pop", "vlen-pop", "viewer", "pc-preview", "result-fs", "pc-sheet", "camera-sheet", "mark-sheet", "confirm", "copy-sheet", "add-menu",
+  const LAYERS = ["upscale-pop", "lora-pop", "inpaint-sheet", "wf-sheet", "compare-fs", "vsize-pop", "vlen-pop", "viewer", "pc-preview", "result-fs", "pc-sheet", "camera-sheet", "mark-sheet", "swap-sheet", "confirm", "copy-sheet", "add-menu",
     "res-menu", "quality-pop", "kind-pop", "seed-pop", "roles-pop", "help-pop", "settings-pop"];
   let pushed = false, fromPop = false;
   const anyOpen = () => LAYERS.some((id) => { const el = $(id); return el && !el.classList.contains("hidden") && !el.hidden; });
   function closeAll() {
     try { hidePops(); closeResMenu(); } catch (e) {}
-    [closeAddMenu, closeMarkSheet, closeCameraSheet, () => window.closeCompare && window.closeCompare(), () => window.closeWfSheet && window.closeWfSheet(), () => window.closeInpaintEditor && window.closeInpaintEditor(), closeConfirm, closeCopySheet, closeResultFs, closePcPreview].forEach((f) => { try { f(); } catch (e) {} });
+    [closeAddMenu, closeMarkSheet, () => window.closeSwapSheet && window.closeSwapSheet(), closeCameraSheet, () => window.closeCompare && window.closeCompare(), () => window.closeWfSheet && window.closeWfSheet(), () => window.closeInpaintEditor && window.closeInpaintEditor(), closeConfirm, closeCopySheet, closeResultFs, closePcPreview].forEach((f) => { try { f(); } catch (e) {} });
     try { if (!$("pc-sheet").classList.contains("hidden")) closePcPicker(); } catch (e) {}
     try { if (!$("viewer").classList.contains("hidden")) closeViewer(); } catch (e) {}
   }
@@ -5018,6 +5020,7 @@ function bindShell() {
       if (body.edit_intent === "bodyswap" && window.__swapLora("body_swap_v"))   // the BFS recipe: body swap LoRA at 0.5
         body.loras = (body.loras || []).concat([{ name: window.__swapLora("body_swap_v"), strength: 0.5 }]);
     }
+    if (window.__swapAttach) window.__swapAttach(body);       // character swap (swap.js)
     let resp, data;
     try {
       resp = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -5152,13 +5155,14 @@ function bindShell() {
   function taskIcon(t) { return TASK_MEDIA[t] === "video" ? ICON.video : ICON.image; }
 
   /* ---------- install manager: files each engine needs on THIS PC, official downloads the user starts ---------- */
-  let INSTALL = {};
+  let INSTALL = {}, INSTALL_OK = false;
   async function loadInstallPlan() {
     try {
       const d = await api("/api/install/plan");
       INSTALL = {};
       (d.items || []).forEach((i) => { INSTALL[i.id] = i; });
-    } catch (e) { INSTALL = {}; }
+      INSTALL_OK = true;
+    } catch (e) { INSTALL = {}; INSTALL_OK = false; }
   }
   let instTimer = 0;
   async function pollInstall() {
@@ -5199,11 +5203,13 @@ function bindShell() {
     const dl = files.filter((f) => f.url), nolink = files.filter((f) => !f.url);
     const lines = [];
     lines.push("Comfy Studio will do this by itself, one step after another:");
-    lines.push("1. Install the node packs it needs" + ((ip.missing_nodes || []).length ? " (" + ip.missing_nodes.slice(0, 4).join(", ") + (ip.missing_nodes.length > 4 ? "\u2026" : "") + ")" : " (if any are missing)") + ".");
+    lines.push("1. Install the add-ons (ComfyUI node packs) it needs" + ((ip.missing_nodes || []).length ? " (" + ip.missing_nodes.slice(0, 4).join(", ") + (ip.missing_nodes.length > 4 ? "\u2026" : "") + "). These are required: the engine can't run without them" : " (if any are missing)") + ". It finds them by itself, with or without ComfyUI-Manager.");
     lines.push("2. Download " + (dl.length ? dl.length + " model file" + (dl.length === 1 ? "" : "s") + " from the official pages:\n" + dl.map((f) => "   \u2022 " + f.file).join("\n") : "nothing (the files are already here)") + ".");
     lines.push("3. Restart ComfyUI if new node packs were added (about a minute).");
     lines.push("4. Check the engine is ready.");
-    if (nolink.length) lines.push("\nThese have no official download, so add them yourself afterwards: " + nolink.map((f) => f.file).join(", ") + ".");
+    lines.push("\nYou don't need to do anything in ComfyUI. Keep this window open until it says Ready.");
+    if (dl.length) lines.push("\nAlready have one of these models, maybe as another version? Cancel and pick it under “Model files” on the card, so it isn't downloaded.");
+    if (nolink.length) lines.push("\nThese have no official download, so add them yourself afterwards or pick one you have on the card: " + nolink.map((f) => f.file).join(", ") + ".");
     lines.push("\nModel files are often several GB each. Free space on that drive: " + (ip.free_gb != null ? ip.free_gb + " GB" : "unknown") + ".");
     askConfirm({
       title: "Set up " + (w.name || "this engine") + "?",
@@ -5293,6 +5299,21 @@ function bindShell() {
     if (typeof window.renderHwBar === "function") window.renderHwBar();
     const box = $("wf-list");
     box.innerHTML = "";
+    if (!INSTALL_OK) {
+      // without ComfyUI the app can't see which add-ons and files are there, so say that instead of guessing
+      const off = document.createElement("div");
+      off.className = "wf-setup-callout wf-offline";
+      off.innerHTML = '<p class="wf-setup-head">Start ComfyUI to check your engines</p><p class="wf-setup-how">Comfy Studio asks ComfyUI which add-ons and model files are installed. Once it’s running, each engine that still needs something shows a <b>Set up</b> button that installs it all for you.</p>'
+        + '<div class="wf-actions"><button type="button" class="chip-btn primary wf-start-comfy">Start ComfyUI</button><button type="button" class="chip-btn wf-recheck">Check again</button></div>';
+      off.querySelector(".wf-start-comfy").addEventListener("click", async (e) => {
+        e.currentTarget.disabled = true;
+        try { const r = await api("/api/comfy/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); toast((r && r.message) || "Starting ComfyUI…", 4000); }
+        catch (err) { showError(err.message || "Couldn't start ComfyUI."); }
+        setTimeout(() => renderList(), 20000);
+      });
+      off.querySelector(".wf-recheck").addEventListener("click", () => renderList());
+      box.appendChild(off);
+    }
     const groups = {};
     groups[BUILTIN.family] = [Object.assign({}, BUILTIN, { builtinCard: true })];
     list.forEach((w) => { (groups[w.family || "Custom"] = groups[w.family || "Custom"] || []).push(w); });
@@ -5325,7 +5346,6 @@ function bindShell() {
     const tag = (text, cls) => { const s = document.createElement("span"); s.className = "wf-tag" + (cls ? " " + cls : ""); s.textContent = text; meta.appendChild(s); };
     tasks.forEach((t) => tag(TASK_LABEL[t] || t));
     tag(w.builtinCard ? "Built-in" : (w.source === "user" ? "Yours" : "Built-in"));
-    if ((w.missing_nodes || []).length) tag(w.missing_nodes.length + " missing node" + (w.missing_nodes.length === 1 ? "" : "s"), "warn");
     if (inUse) tag("In use", "on");
     const missN = (w.missing_custom || []).length, missM = (w.missing_models || []).length;
     if (missN || missM) {
@@ -5335,24 +5355,54 @@ function bindShell() {
     else if (w.fit === "heavy") { tag("Heavy for your PC", "warn"); }
     else if (w.fit === "no") { tag("Too heavy for your PC", "no"); }
     const ip = INSTALL[w.id];
-    if (ip && (ip.missing_nodes || []).length && !ip.missing) tag("Needs node packs", "warn");
+    const addons = (ip ? ip.missing_nodes : w.missing_nodes) || [];
+    if (needsSetup(ip) && ip.fit !== "no") {
+      // one plain box that says what's wrong and that one button fixes it, so nobody has to go into ComfyUI
+      tag("Not set up yet", "warn");
+      const box = document.createElement("div");
+      box.className = "wf-setup-callout";
+      const parts = [];
+      if (addons.length) parts.push(addons.length + " add-on" + (addons.length === 1 ? "" : "s") + " (ComfyUI node packs)");
+      if (ip.missing) parts.push(ip.missing + " model file" + (ip.missing === 1 ? "" : "s"));
+      box.innerHTML = '<p class="wf-setup-head"></p>'
+        + (addons.length ? '<p class="wf-setup-how"><b>Add-ons are required.</b> The engine can’t run without them and they can’t be swapped for something else, so Set up always installs them.</p>' : "")
+        + (ip.missing ? '<p class="wf-setup-how"><b>Model files:</b> already have one, maybe as another version? Pick it below and it won’t be downloaded.</p>' : "")
+        + '<p class="wf-setup-how">Press <b>Set up</b> and Comfy Studio does the rest' + (addons.length ? ", including restarting ComfyUI" : "") + '. You don’t need to open ComfyUI.</p>';
+      box.querySelector(".wf-setup-head").textContent = "Needs " + parts.join(" and ") + " before it can run.";
+      if (addons.length) {
+        const d = document.createElement("details");
+        d.className = "wf-setup-list";
+        d.innerHTML = "<summary>Which add-ons?</summary><p></p>";
+        d.querySelector("p").textContent = addons.join(", ");
+        box.appendChild(d);
+      }
+      el.insertBefore(box, el.querySelector(".wf-actions"));
+    } else if (!ip && !INSTALL_OK) {
+      tag("Can't check yet", "warn");
+    } else if (!ip && addons.length) {
+      tag("Not set up yet", "warn");
+    }
     if (ip && ip.missing) {
-      tag("Needs " + ip.missing + " file" + (ip.missing === 1 ? "" : "s"), "warn");
-      const det = document.createElement("details");
-      det.className = "fold-block wf-req";
-      det.innerHTML = '<summary><span class="fold-label">Missing files</span></summary><p class="fold-note"></p>';
-      det.querySelector("p").textContent = (ip.files || []).filter((f) => !f.present).map((f) =>
-        f.file + " (" + f.folder + ")" + (f.url ? "" : " \u2014 no official link: add it yourself or pick another file in Settings")).join("\n");
-      el.insertBefore(det, el.querySelector(".wf-actions"));
+      if (!needsSetup(ip) || ip.fit === "no") tag("Needs " + ip.missing + " file" + (ip.missing === 1 ? "" : "s"), "warn");
+      el.insertBefore(fileChoiceBlock(w, ip), el.querySelector(".wf-actions"));
     } else if (ip && (ip.files || []).length) {
       tag("All files here", "ok");
     }
+    const swapped = ((ip && ip.files) || []).filter((f) => f.using);
+    if (swapped.length) el.insertBefore(swappedBlock(w, swapped), el.querySelector(".wf-actions"));
     if (w.requires && ((w.requires.models || []).length || (w.requires.custom_nodes || []).length)) {
       const det = document.createElement("details");
       det.className = "fold-block wf-req";
       det.innerHTML = "<summary><span class=\"fold-label\">What it uses</span></summary><p class=\"fold-note\"></p>";
       const lines = [];
-      if ((w.requires.custom_nodes || []).length) lines.push("Node packs: " + w.requires.custom_nodes.join(", "));
+      if ((w.requires.custom_nodes || []).length) {
+        const miss = new Set(addons);
+        lines.push("Add-ons (node packs): " + w.requires.custom_nodes.map((n) => {
+          const name = typeof n === "string" ? n : (n.module || n.class_type || "");
+          const cls = typeof n === "string" ? n : n.class_type;
+          return name + (miss.has(cls) || miss.has(name) ? " — not installed" : " ✓");
+        }).join(", ") + (addons.length ? "\nSet up installs the missing ones for you." : ""));
+      }
       (w.requires.models || []).forEach((f) => lines.push("LoRA: " + ((w.missing_models || []).indexOf(f) >= 0 ? "missing " : "") + f));
       det.querySelector("p").textContent = lines.join("\n");
       el.insertBefore(det, el.querySelector(".wf-actions"));
@@ -5403,14 +5453,83 @@ function bindShell() {
     return el;
   }
 
+  /* Missing model files: each one can be downloaded (Set up does that) or swapped for a file the user already has,
+     e.g. an fp8 copy instead of bf16, or the same model saved under another name. */
+  async function chooseFile(w, file, use) {
+    try {
+      await api("/api/install/choose", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: w.id, file, use }) });
+      toast(use ? "Using your " + use + " instead" : "Back to " + file, 3500);
+    } catch (e) { showError(e.message || "Couldn't save that."); }
+    renderList();
+  }
+  function fileChoiceBlock(w, ip) {
+    const det = document.createElement("details");
+    det.className = "fold-block wf-req wf-files";
+    det.open = true;
+    det.innerHTML = '<summary><span class="fold-label">Model files</span></summary>'
+      + '<p class="fold-note">Already have this model, maybe as another version (fp8, bf16, fp16) or under another name? Pick it and nothing is downloaded.</p>';
+    (ip.files || []).filter((f) => !f.present).forEach((f) => {
+      const row = document.createElement("div");
+      row.className = "wf-file-row";
+      row.innerHTML = '<div class="wf-file-name"><b></b><small></small></div>';
+      row.querySelector("b").textContent = f.file;
+      row.querySelector("small").textContent = f.folder + (f.size_gb ? " · " + f.size_gb + " GB" : "");
+      const sel = document.createElement("select");
+      sel.className = "wf-file-pick";
+      sel.setAttribute("aria-label", "What to use for " + f.file);
+      const opt = (v, t) => { const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o); };
+      opt("", f.url ? "Download it" : "No download: pick one you have");
+      const alts = f.alternatives || [];
+      if (alts.length) {
+        const g = document.createElement("optgroup");
+        g.label = "Use a file I already have";
+        alts.forEach((a) => { const o = document.createElement("option"); o.value = a; o.textContent = a; g.appendChild(o); });
+        sel.appendChild(g);
+      }
+      sel.disabled = !alts.length;
+      sel.addEventListener("change", () => { if (sel.value) chooseFile(w, f.file, sel.value); });
+      const wrap = document.createElement("label");
+      wrap.className = "field wf-file-field";
+      wrap.appendChild(sel);
+      row.appendChild(wrap);
+      if (!alts.length) {
+        const n = document.createElement("small");
+        n.className = "wf-file-none";
+        n.textContent = "No similar file in your " + f.folder + " folder" + (f.url ? ", so Set up downloads it." : ". Put a copy there, then Check again.");
+        row.appendChild(n);
+      }
+      det.appendChild(row);
+    });
+    return det;
+  }
+  function swappedBlock(w, files) {
+    const box = document.createElement("div");
+    box.className = "wf-swapped";
+    files.forEach((f) => {
+      const row = document.createElement("div");
+      row.className = "wf-file-row";
+      row.innerHTML = '<small class="wf-swap-text"></small><button type="button" class="chip-btn sm">Undo</button>';
+      row.querySelector(".wf-swap-text").textContent = "✓ Using your " + f.using + " instead of " + f.file;
+      row.querySelector("button").addEventListener("click", () => chooseFile(w, f.file, ""));
+      box.appendChild(row);
+    });
+    return box;
+  }
+
   function needsSetup(ip) { return !!(ip && ((ip.missing || 0) > 0 || (ip.missing_nodes || []).length)); }
   window.__needsSetup = needsSetup;
   function useWorkflow(w, force) {
     const ip = INSTALL[w.id];
     if (!force && needsSetup(ip) && ip.fit !== "no") {
       askConfirm({ title: (w.name || "This engine") + " isn't set up yet",
-        body: "It still needs " + setupNeeds(ip) + ". Set it up now? Comfy Studio does every step by itself.",
+        body: "It still needs " + setupNeeds(ip) + ". Set it up now? Comfy Studio does every step by itself, including restarting ComfyUI. You don't need to install anything by hand.",
         yes: "Set up now", onYes: () => window.__setupEngine(w, ip) });
+      return;
+    }
+    if (!force && !ip && (w.missing_nodes || []).length) {
+      askConfirm({ title: (w.name || "This engine") + " needs add-ons",
+        body: "It uses " + w.missing_nodes.length + " add-on" + (w.missing_nodes.length === 1 ? "" : "s") + " that aren't installed. Start ComfyUI, then press Set up on this card and Comfy Studio installs them for you.",
+        yes: "Use anyway", onYes: () => useWorkflow(w, true) });
       return;
     }
     const task = w.builtinCard ? (state.mode === "edit" ? "edit" : "t2i") : w.task;
@@ -8592,8 +8711,9 @@ function bindShell() {
   if (!page) return;
   const det = document.createElement("details");
   det.className = "fold-block wf-nodepacks";
-  det.innerHTML = '<summary><span class="fold-label">Node packs added by Comfy Studio</span></summary>'
-    + '<div class="wf-nodepacks-body"><p class="fold-note">Packs installed here from a GitHub link or a zip. Remove moves a pack to ComfyUI\u2019s custom_nodes_quarantine folder (nothing is deleted); restart ComfyUI afterwards.</p>'
+  det.innerHTML = '<summary><span class="fold-label">Add-ons (node packs) · install by hand</span></summary>'
+    + '<div class="wf-nodepacks-body"><p class="fold-note">You don’t normally need this: <b>Set up</b> on an engine’s card installs its add-ons by itself. Use this only for an add-on Set up couldn’t find (paste its GitHub link) or one you have as a zip.</p>'
+    + '<p class="fold-note">Add-ons installed here from a GitHub link or a zip. Remove moves a pack to ComfyUI\u2019s custom_nodes_quarantine folder (nothing is deleted); restart ComfyUI afterwards.</p>'
     + '<div class="wf-nodepacks-list"></div>'
     + '<div class="wf-pack-add-row"><input type="url" class="wf-gh-url" placeholder="https://github.com/owner/repo" aria-label="GitHub link of a node pack">'
     + '<button type="button" class="chip-btn wf-gh-go">Install</button><button type="button" class="chip-btn wf-zip-go">Add from zip</button>'
@@ -9150,8 +9270,8 @@ let LISTS = {};   // the server's NSFW word lists (synonyms, sizes, undress word
       bindRestart(d);
       return;
     }
-    box.innerHTML = '<p class="np-title">' + miss.length + " node pack" + (miss.length === 1 ? "" : "s") + " missing</p>"
-      + '<p class="pop-note">Some engines need these ComfyUI node packs. Comfy Studio installs the exact versions it was tested with; then it restarts ComfyUI so they load.</p>'
+    box.innerHTML = '<p class="np-title">' + miss.length + " add-on" + (miss.length === 1 ? "" : "s") + " for the built-in engines " + (miss.length === 1 ? "isn’t" : "aren’t") + " installed yet</p>"
+      + '<p class="pop-note">These are ComfyUI node packs the built-in engines use. Press <b>Install</b>: Comfy Studio adds the exact versions it was tested with and restarts ComfyUI so they load. Nothing to do by hand.</p>'
       + '<ul class="np-list">' + miss.map((p) => "<li><b>" + esc(p.folder) + "</b> · " + esc(p.for) + "</li>").join("") + "</ul>"
       + '<div class="np-actions"><button type="button" class="chip-btn primary" id="np-install">Install ' + (miss.length === 1 ? "it" : "all " + miss.length) + '</button>'
       + '<span class="np-status" id="np-status"></span></div>';

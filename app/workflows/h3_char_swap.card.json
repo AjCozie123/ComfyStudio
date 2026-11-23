@@ -1,0 +1,143 @@
+{
+ "id": "h3_char_swap",
+ "name": "MiniMax H3 · Character swap",
+ "family": "MiniMax H3",
+ "task": "edit",
+ "media": "image",
+ "builtin": true,
+ "edit_kind": "char_swap",
+ "description": "Swaps a person in Picture 1 for the person in Picture 2 (up to 3 people: Pictures 2, 3 and 4). Pose, place, lighting and everyone else stay the same.",
+ "picture_min": 2,
+ "picture_max": 4,
+ "profile": "h3",
+ "supports_loras": false,
+ "prompt_style": "h3",
+ "sampling_note": "MiniMax H3 Image: 6 steps, CFG 1 (the model's own schedule).",
+ "slots": {
+  "seed": [
+   {
+    "node": "38",
+    "input": "seed",
+    "label": "Seed"
+   }
+  ],
+  "steps": [
+   {
+    "node": "38",
+    "input": "steps",
+    "label": "Steps"
+   }
+  ],
+  "cfg": [
+   {
+    "node": "38",
+    "input": "cfg",
+    "label": "CFG"
+   }
+  ],
+  "sampler": [
+   {
+    "node": "38",
+    "input": "sampler_name",
+    "label": "Sampler"
+   }
+  ],
+  "scheduler": [
+   {
+    "node": "38",
+    "input": "scheduler",
+    "label": "Scheduler"
+   }
+  ],
+  "images": [
+   {
+    "node": "63",
+    "input": "image",
+    "label": "Picture 1 (the photo to change)"
+   },
+   {
+    "node": "200",
+    "input": "image",
+    "label": "Picture 2 (red: the new person)"
+   }
+  ],
+  "models": [
+   {
+    "node": "29",
+    "input": "unet_name",
+    "label": "Image model",
+    "kind": "model",
+    "class_type": "UNETLoader",
+    "value": "minimax_h3_image_pruned_int8_convrot.safetensors",
+    "title": "H3 Image model"
+   },
+   {
+    "node": "30",
+    "input": "clip_name",
+    "label": "Text encoder",
+    "kind": "text encoder",
+    "class_type": "CLIPLoader",
+    "value": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "title": "H3 text encoder"
+   },
+   {
+    "node": "31",
+    "input": "vae_name",
+    "label": "Image VAE",
+    "kind": "vae",
+    "class_type": "VAELoader",
+    "value": "minimax_h3_image_vae_fp16.safetensors",
+    "title": "H3 Image VAE"
+   },
+   {
+    "node": "115",
+    "input": "lora_name",
+    "label": "Character swap LoRA",
+    "kind": "lora",
+    "class_type": "LoraLoaderModelOnly",
+    "value": "minimax_h3_image_character_swap_multiple_by_color_fro_v0.1.safetensors",
+    "title": "Swap LoRA"
+   },
+   {
+    "node": "84",
+    "input": "ckpt_name",
+    "label": "Person finder (SAM 3.1)",
+    "kind": "model",
+    "class_type": "CheckpointLoaderSimple",
+    "value": "sam3.1_multiplex_fp16.safetensors",
+    "title": "SAM 3.1"
+   },
+   {
+    "node": "250",
+    "input": "model_name",
+    "label": "Body shape model (MoGe)",
+    "kind": "model",
+    "class_type": "LoadMoGeModel",
+    "value": "moge_2_vitl_normal_fp16.safetensors",
+    "title": "MoGe normals"
+   }
+  ]
+ },
+ "outputs": [
+  {
+   "node": "9",
+   "kind": "image",
+   "class_type": "SaveImage"
+  }
+ ],
+ "defaults": {
+  "seed": 0,
+  "steps": 6,
+  "cfg": 1,
+  "sampler": "euler_ancestral",
+  "scheduler": "ddim_uniform",
+  "denoise": 1
+ },
+ "needs": {
+  "vram_gb": 8,
+  "ram_gb": 30,
+  "note": "Uses the 21 GB H3 Image model and a 16 GB text encoder: close other big programs first."
+ },
+ "mp_max": 4,
+ "credit": "BFS Nodes (alisson-anjos): MiniMax H3 Image character swap by color, v0.1"
+}

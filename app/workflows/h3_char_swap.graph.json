@@ -1,0 +1,367 @@
+{
+ "9": {
+  "inputs": {
+   "filename_prefix": "ComfyStudio/wf/h3_char_swap",
+   "images": [
+    "42",
+    0
+   ]
+  },
+  "class_type": "SaveImage",
+  "_meta": {
+   "title": "05 \u00b7 Result",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "29": {
+  "inputs": {
+   "unet_name": "minimax_h3_image_pruned_int8_convrot.safetensors",
+   "weight_dtype": "default"
+  },
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "Load Diffusion Model",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "30": {
+  "inputs": {
+   "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "type": "minimax",
+   "device": "default"
+  },
+  "class_type": "CLIPLoader",
+  "_meta": {
+   "title": "Load CLIP",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "31": {
+  "inputs": {
+   "vae_name": "minimax_h3_image_vae_fp16.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "Load VAE",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "33": {
+  "inputs": {
+   "conditioning": [
+    "203",
+    0
+   ]
+  },
+  "class_type": "ConditioningZeroOut",
+  "_meta": {
+   "title": "Conditioning Zero Out",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "38": {
+  "inputs": {
+   "seed": 0,
+   "steps": 6,
+   "cfg": 1.0,
+   "sampler_name": "euler_ancestral",
+   "scheduler": "ddim_uniform",
+   "denoise": 1.0,
+   "model": [
+    "115",
+    0
+   ],
+   "positive": [
+    "203",
+    0
+   ],
+   "negative": [
+    "33",
+    0
+   ],
+   "latent_image": [
+    "203",
+    1
+   ]
+  },
+  "class_type": "KSampler",
+  "_meta": {
+   "title": "04 \u00b7 Native H3 Image PDD \u00b7 6 steps",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "42": {
+  "inputs": {
+   "samples": [
+    "38",
+    0
+   ],
+   "vae": [
+    "31",
+    0
+   ]
+  },
+  "class_type": "VAEDecode",
+  "_meta": {
+   "title": "VAE Decode",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "48": {
+  "inputs": {
+   "resize_type": "scale to multiple",
+   "resize_type.multiple": 32,
+   "scale_method": "area",
+   "input": [
+    "56",
+    0
+   ]
+  },
+  "class_type": "ResizeImageMaskNode",
+  "_meta": {
+   "title": "Resize Image/Mask",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "56": {
+  "inputs": {
+   "resize_type": "scale total pixels",
+   "resize_type.megapixels": [
+    "258",
+    0
+   ],
+   "scale_method": "lanczos",
+   "input": [
+    "63",
+    0
+   ]
+  },
+  "class_type": "ResizeImageMaskNode",
+  "_meta": {
+   "title": "Source  Resize",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "63": {
+  "inputs": {
+   "image": "example.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "01 \u00b7 Source image",
+   "cnr_id": "comfy-core",
+   "ver": "0.43.0"
+  }
+ },
+ "84": {
+  "inputs": {
+   "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
+  },
+  "class_type": "CheckpointLoaderSimple",
+  "_meta": {
+   "title": "Load Checkpoint",
+   "cnr_id": "comfy-core",
+   "ver": "0.45.0"
+  }
+ },
+ "115": {
+  "inputs": {
+   "lora_name": "minimax_h3_image_character_swap_multiple_by_color_fro_v0.1.safetensors",
+   "strength_model": 1.0,
+   "model": [
+    "29",
+    0
+   ]
+  },
+  "class_type": "LoraLoaderModelOnly",
+  "_meta": {
+   "title": "Load LoRA",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "200": {
+  "inputs": {
+   "image": "[none]",
+   "megapixels": [
+    "258",
+    0
+   ],
+   "scale_method": "lanczos"
+  },
+  "class_type": "BFSOptionalReferenceImage",
+  "_meta": {
+   "title": "Red \u00b7 Reference + Resize 4 MP",
+   "cnr_id": "bfsnodes",
+   "ver": "1.120.0"
+  }
+ },
+ "203": {
+  "inputs": {
+   "width": 0,
+   "height": 0,
+   "prompt_override": "",
+   "clip": [
+    "30",
+    0
+   ],
+   "vae": [
+    "31",
+    0
+   ],
+   "guide_image": [
+    "249",
+    0
+   ],
+   "picker_report": [
+    "276",
+    3
+   ],
+   "red_reference": [
+    "200",
+    0
+   ]
+  },
+  "class_type": "BFSH3ImageAutoCharacterSwapConditioning",
+  "_meta": {
+   "title": "03 \u00b7 Automatic prompt and native conditioning",
+   "cnr_id": "bfsnodes",
+   "ver": "1.120.0"
+  }
+ },
+ "249": {
+  "inputs": {
+   "resize_type": "scale total pixels",
+   "resize_type.megapixels": [
+    "258",
+    0
+   ],
+   "scale_method": "lanczos",
+   "input": [
+    "276",
+    4
+   ]
+  },
+  "class_type": "ResizeImageMaskNode",
+  "_meta": {
+   "title": "Guide \u00b7 Resize 4 MP",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "250": {
+  "inputs": {
+   "model_name": "moge_2_vitl_normal_fp16.safetensors"
+  },
+  "class_type": "LoadMoGeModel",
+  "_meta": {
+   "title": "MoGe \u00b7 Normal-map model",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "251": {
+  "inputs": {
+   "resolution_level": 7,
+   "fov_x_degrees": 0,
+   "batch_size": 1,
+   "force_projection": true,
+   "apply_mask": true,
+   "refine_steps": 3,
+   "moge_model": [
+    "250",
+    0
+   ],
+   "image": [
+    "48",
+    0
+   ]
+  },
+  "class_type": "MoGeInference",
+  "_meta": {
+   "title": "MoGe \u00b7 Source image normals",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "252": {
+  "inputs": {
+   "output": "normal_directx",
+   "moge_geometry": [
+    "251",
+    0
+   ]
+  },
+  "class_type": "MoGeRender",
+  "_meta": {
+   "title": "MoGe \u00b7 Render normal_directx",
+   "cnr_id": "comfy-core",
+   "ver": "0.44.0"
+  }
+ },
+ "258": {
+  "inputs": {
+   "value": 4.0
+  },
+  "class_type": "PrimitiveFloat",
+  "_meta": {
+   "title": "Reference Resolution",
+   "cnr_id": "comfy-core",
+   "ver": "0.45.0"
+  }
+ },
+ "276": {
+  "inputs": {
+   "concepts": "person, character",
+   "threshold": 0.4,
+   "max_per_concept": 8,
+   "min_area": 0.002,
+   "mark_color": "#FF00FF",
+   "mark_opacity": 1.0,
+   "selection": "{}",
+   "track": false,
+   "normals_convention": "normal_directx",
+   "mark_style": "colored hatching + contour",
+   "hybrid_grow": 0.0,
+   "strip_frames": 2,
+   "free_after": "unload SAM 3 from the GPU",
+   "pose_region": "person outline",
+   "pose_gray_opacity": 1.0,
+   "max_subjects": "3",
+   "propagate_scope": "all frames",
+   "propagation_method": "Molmo2 (classic)",
+   "molmo_descriptions": "",
+   "edge_feather": 0.01,
+   "hatch_width": 1.0,
+   "hatch_spacing": 1.0,
+   "clean_masks": 0.5,
+   "image": [
+    "48",
+    0
+   ],
+   "sam3_model": [
+    "84",
+    0
+   ],
+   "sam3_clip": [
+    "84",
+    1
+   ]
+  },
+  "class_type": "BFSVideoSegmentPicker",
+  "_meta": {
+   "title": "02 \u00b7 Select red / blue / green subjects",
+   "cnr_id": "bfsnodes",
+   "ver": "1.120.0"
+  }
+ }
+}

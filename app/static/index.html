@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261122v">
+  <link rel="stylesheet" href="/static/app.css?v=20261124a">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -206,7 +206,7 @@
       </div>
     </div>
     <nav class="gd-jump" aria-label="Guide sections">
-      <a href="#gd-start">Start here</a><a href="#gd-screen">The screen</a><a href="#gd-box">Prompt box</a><a href="#gd-pics">Adding pictures</a><a href="#gd-pills">The pills</a><a href="#gd-video">Video</a><a href="#gd-settings">Settings</a><a href="#gd-result">After it's made</a><a href="#gd-library">Library</a><a href="#gd-paint">Inpaint</a><a href="#gd-workflows">Workflows</a><a href="#gd-updates">Updates</a><a href="#gd-recipes">Recipes</a><a href="#gd-pc">Your PC</a><a href="#gd-help">Problems</a>
+      <a href="#gd-start">Start here</a><a href="#gd-screen">The screen</a><a href="#gd-box">Prompt box</a><a href="#gd-pics">Adding pictures</a><a href="#gd-pills">The pills</a><a href="#gd-video">Video</a><a href="#gd-settings">Settings</a><a href="#gd-result">After it's made</a><a href="#gd-library">Library</a><a href="#gd-paint">Inpaint</a><a href="#gd-swap">Swap a person</a><a href="#gd-workflows">Workflows</a><a href="#gd-updates">Updates</a><a href="#gd-recipes">Recipes</a><a href="#gd-pc">Your PC</a><a href="#gd-help">Problems</a>
     </nav>
 
     <section class="gd-sec" id="gd-start">
@@ -388,6 +388,26 @@
       </ol>
     </section>
 
+    <section class="gd-sec" id="gd-swap">
+      <h2>Swap a person (character swap)</h2>
+      <p class="gd-lead">Puts someone from another picture in place of a person in your photo. Their pose, the place, the light and everyone else stay the same.</p>
+      <ol class="gd-steps">
+        <li><b>Picture 1 = the photo to change.</b> Press <span class="gd-k">+</span> and pick it first.</li>
+        <li><b>Picture 2 = the new person.</b> Add them second. A clear, full-body picture works best. (Swapping two or three people? Add Pictures 3 and 4.)</li>
+        <li><b>Say it in your own words</b>, e.g. "swap her with picture 2", "put pic 2 in his place", "replace the guy on the left with picture 2". A red line under the box confirms: <i>Character swap</i>.</li>
+        <li><b>Press send.</b> The app finds the people, picks the right one and makes the swap (about a minute at 2 MP on an 8 GB card).</li>
+      </ol>
+      <div class="gd-table">
+        <div><span class="gd-k">Swap</span><p><b>The Swap pill</b> (in the row above the box, shows when 2+ pictures are added) opens the swap sheet.</p></div>
+        <div><span class="gd-k">Auto · Always · Off</span><p><b>When to swap.</b> Auto swaps when your words ask for it. Always makes every edit with 2+ pictures a swap (no words needed). Off never swaps.</p></div>
+        <div><span class="gd-k">Person 1 · 2 · 3</span><p><b>Who gets replaced.</b> Tap Person 1, then tap someone on the photo: they turn red and become Picture 2. Person 2 (blue) becomes Picture 3, Person 3 (green) becomes Picture 4. Tap a person again to unpick. Pick nobody and the app chooses (the biggest person, or the one your words point to: "on the left", "in the middle").</p></div>
+        <div><span class="gd-k">Whose body?</span><p><b>The new person's body</b> (default): face, hair, body and clothes all come from the new picture. <b>Keep this body shape</b>: keeps the figure of the person in your photo and only changes face, hair, skin and clothes. Saying "keep her figure" in your words does the same.</p></div>
+        <div><span class="gd-k">Size</span><p><b>1–4 MP.</b> Bigger is sharper but slower.</p></div>
+        <div><span class="gd-k">Manual</span><p>With Settings on <b>Manual</b>, the sheet also shows how people are marked, swap strength, steps, the marked area's edges and your own prompt. Each one says what it does.</p></div>
+      </div>
+      <p class="gd-tip">First time? If the sheet says <b>Set up</b>, press it once: the app downloads the swap add-on and models for you (Workflows → MiniMax H3 · Character swap).</p>
+    </section>
+
     <section class="gd-sec" id="gd-workflows">
       <h2>Workflows (engines)</h2>
       <ul class="gd-list">
@@ -555,6 +575,9 @@
           <button type="button" class="pill edit-only mm-only" id="inpaint-pill" aria-haspopup="dialog">
             <span class="pill-k">Inpaint</span><span id="inpaint-pill-label">Paint</span>
           </button>
+          <button type="button" class="pill edit-only swap-pill hidden" id="swap-pill" aria-haspopup="dialog" title="Character swap: put the person from Picture 2 in place of someone in Picture 1">
+            <span class="pill-k">Swap</span><span id="swap-pill-label">Auto</span>
+          </button>
           <button type="button" class="pill edit-only mm-only" id="mark-pill" aria-haspopup="dialog">
             <span class="pill-k">Mark</span><span>Area</span>
           </button>
@@ -591,6 +614,7 @@
         <p id="prompt-hint" class="hidden"></p>
         <div id="size-warn" class="size-warn hidden" role="status"><span class="size-warn-text"></span><button type="button" class="chip-btn">Use Original</button></div>
         <p id="krea-hint" class="krea-hint hidden" aria-live="polite"></p>
+        <div id="swap-hint" class="swap-hint hidden" aria-live="polite"><span class="swap-hint-dot" aria-hidden="true"></span><span id="swap-hint-text"></span><button type="button" class="link-btn hidden" id="swap-hint-btn">Choose who</button></div>
 
         <div class="composer-extras">
           <div id="inpaint-chip" class="inpaint-chip hidden">
@@ -1028,6 +1052,110 @@
     </div>
   </div>
 
+  <div id="swap-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="swap-title">
+    <div class="sheet-backdrop" id="swap-backdrop"></div>
+    <div class="sheet-card swap-card">
+      <div class="sheet-top">
+        <div class="sheet-head">
+          <button type="button" class="icon-btn sm" id="swap-close" aria-label="Close">✕</button>
+          <h2 id="swap-title">Character swap</h2>
+          <button type="button" class="send-text" id="swap-done">Done</button>
+        </div>
+        <p class="sheet-lead">Puts the person from <b>Picture 2</b> in place of someone in <b>Picture 1</b>. Their pose, the
+          place, the light and everyone else stay the same. Up to 3 people: Pictures 2, 3 and 4.</p>
+      </div>
+      <div class="swap-body">
+        <div id="swap-setup" class="swap-setup hidden">
+          <p id="swap-setup-text"></p>
+          <button type="button" class="chip-btn primary" id="swap-setup-go">Set up (downloads everything)</button>
+        </div>
+
+        <section class="swap-sec">
+          <h3><span class="swap-step">1</span>When should the app swap?</h3>
+          <div class="seg swap-seg" id="swap-route" role="group" aria-label="When to swap">
+            <button type="button" data-route="auto">Auto</button>
+            <button type="button" data-route="on">Always</button>
+            <button type="button" data-route="off">Off</button>
+          </div>
+          <p class="swap-note" id="swap-route-note"></p>
+        </section>
+
+        <section class="swap-sec">
+          <h3><span class="swap-step">2</span>Who gets replaced?</h3>
+          <ol class="swap-howto">
+            <li>Pick a person below (each one becomes a different picture).</li>
+            <li>Tap that person on the photo. Tap them again to unpick.</li>
+            <li>Pick nobody and the app chooses for you.</li>
+          </ol>
+          <div class="swap-colors" id="swap-colors"></div>
+          <div class="swap-stage" id="swap-stage">
+            <img id="swap-img" alt="Picture 1">
+            <canvas id="swap-canvas" aria-hidden="true"></canvas>
+          </div>
+          <p class="swap-note swap-stage-note" id="swap-stage-note"></p>
+          <div class="swap-row">
+            <button type="button" class="chip-btn" id="swap-find">Find people again</button>
+            <button type="button" class="chip-btn" id="swap-clear">Let the app choose</button>
+          </div>
+        </section>
+
+        <section class="swap-sec">
+          <h3><span class="swap-step">3</span>Whose body?</h3>
+          <div class="swap-opts" id="swap-body">
+            <button type="button" class="opt-card" data-body="new"><strong>The new person's body</strong>
+              <small>Face, hair, body and clothes all come from the new picture. Best likeness (how the swap was trained).</small></button>
+            <button type="button" class="opt-card" data-body="keep"><strong>Keep this body shape</strong>
+              <small>Keeps the figure and proportions of the person in Picture 1; the face, hair, skin and clothes change.</small></button>
+          </div>
+          <p class="swap-note" id="swap-body-note"></p>
+        </section>
+
+        <section class="swap-sec">
+          <h3><span class="swap-step">4</span>Size</h3>
+          <div class="seg swap-seg" id="swap-size" role="group" aria-label="Size">
+            <button type="button" data-mp="1">1 MP</button>
+            <button type="button" data-mp="2">2 MP</button>
+            <button type="button" data-mp="3">3 MP</button>
+            <button type="button" data-mp="4">4 MP</button>
+          </div>
+          <p class="swap-note">Bigger is sharper but slower. On an 8 GB card: 2 MP takes about a minute, 4 MP about 2½ minutes.</p>
+        </section>
+
+        <p class="swap-note swap-auto-note" id="swap-auto-note">Fine-tuning (how people are marked, swap strength, steps,
+          your own prompt) appears here when Settings is on <b>Manual</b>. Auto already uses the workflow's tested values.</p>
+
+        <section class="swap-sec hidden" id="swap-manual">
+          <h3><span class="swap-step">5</span>Manual settings</h3>
+          <label class="swap-field"><span>How people are marked<small>Lines is what the swap was trained on. Body shape draws
+            the person's 3D surface (good for keeping a figure).</small></span>
+            <select id="swap-guide"></select></label>
+          <div id="swap-lines">
+            <label class="swap-field"><span>Line thickness <b id="swap-v-hatch_width"></b><small>Thicker lines hide more of
+              the old person.</small></span><input type="range" min="0.25" max="4" step="0.05" data-k="hatch_width"></label>
+            <label class="swap-field"><span>Line spacing <b id="swap-v-hatch_spacing"></b><small>Wider spacing shows more of
+              the original pose and light.</small></span><input type="range" min="0.25" max="4" step="0.05" data-k="hatch_spacing"></label>
+          </div>
+          <label class="swap-field"><span>Swap strength <b id="swap-v-lora"></b><small>How strongly the swap LoRA works.
+            1.0 is what it was made for.</small></span><input type="range" min="0" max="1.5" step="0.05" data-k="lora"></label>
+          <label class="swap-field"><span>Steps <b id="swap-v-steps"></b><small>6 is the model's own number. More is slower,
+            rarely better.</small></span><input type="range" min="4" max="12" step="1" data-k="steps"></label>
+          <label class="swap-field"><span>Room around the person <b id="swap-v-margin"></b><small>Grows the marked area, for
+            new hair or clothes that are bigger than the old ones.</small></span><input type="range" min="0" max="0.3" step="0.01" data-k="margin"></label>
+          <label class="swap-field"><span>Soft edge <b id="swap-v-feather"></b><small>Blends the edge of the marked area.</small></span>
+            <input type="range" min="0" max="0.1" step="0.005" data-k="feather"></label>
+          <label class="swap-field"><span>Tidy the outlines <b id="swap-v-clean"></b><small>Cleans stray bits where people
+            touch (0 = off).</small></span><input type="range" min="0" max="5" step="0.1" data-k="clean"></label>
+          <label class="swap-field"><span>Finder sensitivity <b id="swap-v-threshold"></b><small>Lower finds more (also
+            things that aren't people). Press “Find people again” after changing it.</small></span>
+            <input type="range" min="0.1" max="0.9" step="0.05" data-k="threshold"></label>
+          <label class="swap-check"><input type="checkbox" id="swap-own"> Use my own prompt instead of the swap prompt</label>
+          <textarea id="swap-own-text" class="hidden" rows="5" placeholder="Your whole prompt. Picture 1 = the marked photo, Picture 2 = red, Picture 3 = blue, Picture 4 = green."></textarea>
+          <button type="button" class="link-btn" id="swap-reset">Reset swap settings</button>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div id="mark-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="mark-title">
     <div class="sheet-backdrop" id="mark-backdrop"></div>
     <div class="sheet-card">
@@ -1269,7 +1397,8 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261122w"></script>
-  <script src="/static/app.js?v=20261122v"></script>
+  <script src="/static/app.js?v=20261124a"></script>
   <script src="/static/tour.js?v=20261122v"></script>
+  <script src="/static/swap.js?v=20261124a"></script>
 </body>
 </html>

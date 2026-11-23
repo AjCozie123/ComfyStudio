@@ -85,6 +85,13 @@
    "bundled": "nodes/ComfyStudio-Krea2Edit-V2",
    "probe": "Krea2EditGroundedEncodeV2",
    "for": "Krea 2 Edit"
+  },
+  {
+   "folder": "ComfyUI-BFSNodes",
+   "repo": "alisson-anjos/ComfyUI-BFSNodes",
+   "commit": "83199758b1027f70951820ce24265e9d23ef9aab",
+   "probe": "BFSVideoSegmentPicker",
+   "for": "MiniMax H3 Character swap (finds and marks the people)"
   }
  ]
 }

@@ -5204,7 +5204,12 @@ function bindShell() {
     const lines = [];
     lines.push("Comfy Studio will do this by itself, one step after another:");
     lines.push("1. Install the add-ons (ComfyUI node packs) it needs" + ((ip.missing_nodes || []).length ? " (" + ip.missing_nodes.slice(0, 4).join(", ") + (ip.missing_nodes.length > 4 ? "\u2026" : "") + "). These are required: the engine can't run without them" : " (if any are missing)") + ". It finds them by itself, with or without ComfyUI-Manager.");
-    lines.push("2. Download " + (dl.length ? dl.length + " model file" + (dl.length === 1 ? "" : "s") + " from the official pages:\n" + dl.map((f) => "   \u2022 " + f.file).join("\n") : "nothing (the files are already here)") + ".");
+    const gbTxt = (v) => v >= 1 ? v.toFixed(1) + " GB" : Math.round(v * 1000) + " MB";
+    const dlTotal = dl.reduce((n, f) => n + (f.size_gb || 0), 0);
+    lines.push("2. Download " + (dl.length ? dl.length + " model file" + (dl.length === 1 ? "" : "s")
+      + (dlTotal ? " (about " + gbTxt(dlTotal) + " in total)" : "") + " from the official pages:\n"
+      + dl.map((f) => "   \u2022 " + (f.what || "Model file") + ": " + f.file + (f.size_gb ? " (" + gbTxt(f.size_gb) + ")" : "")).join("\n")
+      + "\n   You can watch each one in Downloads (\u2b07 at the top right)" : "nothing (the files are already here)") + ".");
     lines.push("3. Restart ComfyUI if new node packs were added (about a minute).");
     lines.push("4. Check the engine is ready.");
     lines.push("\nYou don't need to do anything in ComfyUI. Keep this window open until it says Ready.");
@@ -5219,6 +5224,7 @@ function bindShell() {
         try {
           await api("/api/setup/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: w.id }) });
           pollSetup();
+          if (window.__pollDownloads) setTimeout(window.__pollDownloads, 800);   // the Downloads chip shows at once
         } catch (e) { showError(e.message || "Couldn't start the setup."); }
       },
     });

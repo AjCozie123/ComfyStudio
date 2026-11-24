@@ -208,6 +208,13 @@ def explain_http(code, url, token=None):
     return "Hugging Face answered with error %d. Try again later." % code
 
 
+META_KEYS = ("what", "for", "for_id", "size_gb")
+
+
+def _meta(job):
+    return {k: job[k] for k in META_KEYS if job.get(k) is not None}
+
+
 def start(items, opener=None, token=None):
     """Queue downloads. items: [{file, url, target_dir}]. Only official links; one worker thread.
     token: the user's own Hugging Face token (optional; only needed for licence-gated models)."""
@@ -218,7 +225,9 @@ def start(items, opener=None, token=None):
         known = {q["file"] for q in STATE["queue"]} | ({STATE["active"]["file"]} if STATE["active"] else set())
         for i in items:
             if i["file"] not in known:
-                STATE["queue"].append({"file": i["file"], "url": i["url"], "target_dir": i["target_dir"]})
+                # what it is and what it's for travel with the download (shown in the app's Downloads panel)
+                STATE["queue"].append(dict({"file": i["file"], "url": i["url"], "target_dir": i["target_dir"]},
+                                           **{k: i[k] for k in META_KEYS if i.get(k) is not None}))
         STATE["cancel"] = False
         STATE["token"] = token or None
         running = STATE["active"] is not None
@@ -305,10 +314,10 @@ def _worker(opener):
                               "from where it stopped." % (os.path.getsize(part) / 1e9, total / 1e9))
             os.replace(part, dest)
             with _state_lock:
-                STATE["done"].append({"file": job["file"], "path": dest, "t": time.time()})
+                STATE["done"].append(dict({"file": job["file"], "path": dest, "t": time.time()}, **_meta(job)))
         except FileExistsError:
             with _state_lock:
-                STATE["done"].append({"file": job["file"], "path": dest, "t": time.time(), "note": "already there"})
+                STATE["done"].append(dict({"file": job["file"], "path": dest, "t": time.time(), "note": "already there"}, **_meta(job)))
         except Exception as e:
             # a cancelled or failed download keeps its .part so the next try resumes; only a refused one is removed
             try:
@@ -317,4 +326,4 @@ def _worker(opener):
             except OSError:
                 pass
             with _state_lock:
-                STATE["errors"].append({"file": job["file"], "error": str(e)[:600], "t": time.time()})
+                STATE["errors"].append(dict({"file": job["file"], "error": str(e)[:600], "t": time.time()}, **_meta(job)))

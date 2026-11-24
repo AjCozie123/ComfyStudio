@@ -151,6 +151,7 @@
   }
   function closeSheet() { el("swap-sheet").classList.add("hidden"); renderPill(); }
   window.closeSwapSheet = closeSheet;
+  window.openSwapSheet = openSheet;
 
   function renderSheet() {
     const st = S.status;
@@ -192,8 +193,10 @@
   function renderColors() {
     const box = el("swap-colors");
     box.innerHTML = "";
+    let more = 0;
     COLORS.forEach((c, i) => {
       const ref = pics()[i + 1];
+      if (!ref && i > 0) { more++; return; }       // unused people: one short line below instead of empty rows
       const b = document.createElement("button");
       b.type = "button";
       b.className = "swap-color" + (S.color === c.key ? " is-on" : "") + (ref ? "" : " is-off");
@@ -207,6 +210,14 @@
       b.addEventListener("click", () => { S.color = c.key; renderColors(); drawOverlay(); stageNote(); });
       box.appendChild(b);
     });
+    if (more) {
+      const n = document.createElement("p");
+      n.className = "swap-note swap-more";
+      const first = pics().length + 1;
+      n.textContent = "Swapping more people? Add Picture " + first + (first < 4 ? " (and " + (first + 1) + ")" : "")
+        + " with +: each extra picture replaces one more person.";
+      box.appendChild(n);
+    }
   }
 
   function stageNote(extra) {

@@ -34,7 +34,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
-  <link rel="stylesheet" href="/static/app.css?v=20261124d">
+  <link rel="stylesheet" href="/static/app.css?v=20261124h">
 </head>
 <body class="cs media-image mode-t2i view-create">
 
@@ -49,6 +49,9 @@
       <button type="button" data-view="library">Library</button>
       <button type="button" data-view="guide" title="Guide: how to use the pills" aria-label="Guide">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg><span class="nav-label">Guide</span>
+      </button>
+      <button type="button" data-view="news" title="News: what's new, all updates and new workflows" aria-label="News">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2.2 5.3L20 9l-4.4 3.8L17 19l-5-3-5 3 1.4-6.2L4 9l5.8-.7z"/></svg><span class="nav-label">News</span><span class="nav-dot hidden" id="news-dot" aria-hidden="true"></span>
       </button>
       <button type="button" data-view="workflows" title="Workflows" aria-label="Workflows">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3.5" width="7" height="6" rx="1.6"/><rect x="14" y="14.5" width="7" height="6" rx="1.6"/><rect x="14" y="3.5" width="7" height="6" rx="1.6"/><path d="M10 6.5h4M17.5 9.5v5"/></svg><span class="nav-label">Workflows</span>
@@ -198,6 +201,42 @@
 
 
   <!-- ============ Guide view ============ -->
+  <main id="view-news" class="page news-page hidden">
+    <div class="wf-head">
+      <div>
+        <h1>News</h1>
+        <p class="muted">What's new in Comfy Studio, how to try it, and what's coming. <span id="news-version"></span></p>
+      </div>
+    </div>
+    <nav class="gd-jump" aria-label="News sections">
+      <a href="#nw-new">What's new</a><a href="#nw-workflows">New workflows</a><a href="#nw-soon">Coming soon</a><a href="#nw-updates">All updates</a>
+    </nav>
+    <section class="gd-sec" id="nw-new">
+      <h2>What's new</h2>
+      <p class="gd-lead">The latest additions. Each one says where to find it, how to try it, and what Auto and Manual do.</p>
+      <div id="news-list" class="news-list"></div>
+    </section>
+    <section class="gd-sec" id="nw-workflows">
+      <h2>New workflows</h2>
+      <p class="gd-lead">Engines added recently. Tap one to open it on the Workflows page (Set up installs what it needs).</p>
+      <div id="news-wf" class="news-wf"></div>
+    </section>
+    <section class="gd-sec" id="nw-soon">
+      <h2>Coming soon</h2>
+      <p class="gd-lead">What's being worked on. Plans, not promises: they may change.</p>
+      <div id="news-soon" class="news-soon"></div>
+    </section>
+    <section class="gd-sec" id="nw-updates">
+      <h2>All updates</h2>
+      <p class="gd-lead">Every release and change, newest first (from the app's GitHub page).</p>
+      <div class="seg news-seg" id="news-tabs" role="group" aria-label="Show">
+        <button type="button" class="is-on" data-tab="releases">Releases</button>
+        <button type="button" data-tab="commits">Every change</button>
+      </div>
+      <div id="news-remote" class="news-remote"><p class="muted">Loading…</p></div>
+    </section>
+  </main>
+
   <main id="view-guide" class="page guide-page hidden">
     <div class="wf-head">
       <div>
@@ -1397,9 +1436,11 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/lora_match.js?v=20261122w"></script>
-  <script src="/static/app.js?v=20261124b"></script>
+  <script src="/static/app.js?v=20261124c"></script>
   <script src="/static/tour.js?v=20261122v"></script>
-  <script src="/static/swap.js?v=20261124a"></script>
+  <script src="/static/swap.js?v=20261124c"></script>
   <script src="/static/ux_hints.js?v=20261124c"></script>
+  <script src="/static/news.js?v=20261124b"></script>
+  <script src="/static/downloads.js?v=20261124c"></script>
 </body>
 </html>

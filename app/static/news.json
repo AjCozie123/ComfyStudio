@@ -1,0 +1,119 @@
+{
+  "note": "What's new in Comfy Studio. Shown on the News page and as 'New' pop-ups (each id once per browser). Newest first. kind: workflow | feature | fix. try: swap | create | edit | workflows:<card id> | guide:<section id>.",
+  "items": [
+    {
+      "id": "downloads-v1",
+      "version": "0.2.60",
+      "date": "2026-11-24",
+      "kind": "feature",
+      "title": "Downloads panel: see exactly what's downloading",
+      "summary": "Every file Comfy Studio downloads shows what it is (Main model, Text encoder, Swap LoRA ...), which workflow needs it, its size, live progress with speed and time left, and what finished or failed.",
+      "where": "The ⬇ chip at the top right (shows while something downloads). Set up on any workflow now lists each file with its size first.",
+      "how": [
+        "Open Workflows and press Set up on a workflow that isn't ready: the box lists each file, what it's for and its size.",
+        "Press Set up: a ⬇ chip appears at the top right with the progress. Tap it for the full list.",
+        "Didn't finish? The panel says why and has a Try again button."
+      ],
+      "auto": "Set up downloads everything a workflow needs by itself.",
+      "manual": "Already have a model? Pick it under “Model files” on the card instead of downloading.",
+      "try": "downloads",
+      "try_label": "Open Downloads"
+    },
+    {
+      "id": "enhancer-v1",
+      "version": "0.2.60",
+      "date": "2026-11-24",
+      "kind": "feature",
+      "title": "Enhance shows (and gets) its models",
+      "summary": "The Enhance pop-up says whether this PC has the Fast and Quality enhancer models, and downloads the one that's missing with one press.",
+      "where": "Create: the Enhance pill",
+      "how": [
+        "Tap the Enhance pill. Under “Enhancer models” you see Fast and Quality, each ✓ on this PC or not.",
+        "Fast missing? Press Download (5.2 GB). Without it, Fast uses the big Quality model, which is slow on some cards.",
+        "Pick Fast or Quality and send as usual."
+      ],
+      "auto": "Fast picks the small model when it's here; otherwise it falls back to Quality.",
+      "manual": "Settings → Manual lets you choose which enhancer model to use.",
+      "try": "enhance",
+      "try_label": "Open Enhance"
+    },
+    {
+      "id": "enhance-fix-v1",
+      "version": "0.2.59",
+      "date": "2026-11-24",
+      "kind": "fix",
+      "title": "Enhance can't freeze a generation",
+      "summary": "If the Prompt Enhancer takes too long on your PC (2.5 min Fast, 6 min Quality), it's stopped and your picture is made from the prompt you typed. Jobs behind it no longer get stuck.",
+      "where": "Every engine, whenever Enhance is on",
+      "how": [
+        "Nothing to do: it works by itself.",
+        "If you see “Enhance took longer than … so your own prompt was used”, open the Enhance pill and download the Fast model."
+      ],
+      "auto": "Same in Auto and Manual.",
+      "manual": "Same in Auto and Manual."
+    },
+    {
+      "id": "swap-v1",
+      "version": "0.2.57",
+      "date": "2026-11-24",
+      "kind": "workflow",
+      "title": "Character swap",
+      "summary": "Put someone from another picture in place of a person in your photo. Their pose, the place, the light and everyone else stay the same.",
+      "workflow": "h3_char_swap",
+      "where": "Create → Edit, the Swap pill (shows when 2 pictures are added)",
+      "how": [
+        "Add your photo with + (it becomes Picture 1), then add the new person (Picture 2).",
+        "Type it your way: “swap her with picture 2” or “put pic 2 in his place”. A red line under the box confirms it.",
+        "Press send. The app finds the people and picks the right one."
+      ],
+      "auto": "Auto picks who to swap (the biggest person, or the one your words point to: “on the left”) and uses the tested settings. You only choose whose body and the size.",
+      "manual": "Switch Settings to Manual: the Swap sheet also shows how people are marked, swap strength, steps, edge settings and your own prompt.",
+      "setup": "First time: Workflows → MiniMax H3 · Character swap → Set up (downloads what's missing).",
+      "try": "swap",
+      "try_label": "Try Character swap"
+    },
+    {
+      "id": "guidance-v1",
+      "version": "0.2.58",
+      "date": "2026-11-24",
+      "kind": "feature",
+      "title": "Clearer guidance everywhere",
+      "summary": "Every pill explains itself, arrows show pills hidden off the side, and the prompt box suggests what to type.",
+      "where": "Create: the pill row above the prompt box",
+      "how": [
+        "Point at any pill (Engine, Size, Enhance, Camera, LoRA, Seed …) to read what it does.",
+        "If the row is wider than the screen, tap ‹ › at its edges to see the rest.",
+        "Empty prompt box? Its grey text suggests something to type for what you're doing."
+      ],
+      "auto": "Nothing to switch on: it's always there.",
+      "manual": "Same in Manual.",
+      "try": "create",
+      "try_label": "Show me"
+    },
+    {
+      "id": "setup-v2",
+      "version": "0.2.57",
+      "date": "2026-11-23",
+      "kind": "feature",
+      "title": "One-press Set up for workflows",
+      "summary": "Each workflow card says what it needs, and Set up installs add-ons and models for you, including add-ons ComfyUI-Manager doesn't know.",
+      "where": "Workflows page, on each card",
+      "how": [
+        "Open Workflows. A card that isn't ready says “Not set up yet” and what's missing.",
+        "Press Set up: it installs the add-ons, downloads the models and restarts ComfyUI if needed.",
+        "Already have a model in another folder? Under “Model files”, pick “Use a file I already have”."
+      ],
+      "auto": "Set up does everything; nothing to choose.",
+      "manual": "Pick your own model files per card instead of downloading.",
+      "try": "workflows",
+      "try_label": "Open Workflows"
+    }
+  ],
+  "soon": [
+    {"title": "Auto LoRA", "text": "A switch that adds the right LoRAs from your words, using the LoRAs you have, for any engine."},
+    {"title": "Inpaint for more engines", "text": "Paint an area to change on Krea 2, Qwen, FLUX Klein and MOSS too, not only MiniMax H3."},
+    {"title": "Update installs what workflows need", "text": "The Update button also sets up add-ons and LoRAs that new built-in workflows use."},
+    {"title": "Video edit tools", "text": "LTX video edits: remove an object, subtitles or a watermark, restore and extend a video."},
+    {"title": "Comfy Studio as its own app window", "text": "Opens like a normal app on the PC, without the browser."}
+  ]
+}

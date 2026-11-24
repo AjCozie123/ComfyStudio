@@ -4815,6 +4815,46 @@ def swap_prepare(job):
     job["width"], job["height"] = res.get("width"), res.get("height")
 
 
+
+# ------------------------------------------------------------------ News page: releases + commits from GitHub
+NEWS_REPO_DEFAULT = "AjCozie123/ComfyStudio"
+_news_cache = {"t": 0, "data": None}
+
+
+def news_remote():
+    """The app's GitHub releases and latest commits (read-only, public API, cached 30 min). Never installs anything."""
+    if _news_cache["data"] and time.time() - _news_cache["t"] < 1800:
+        return _news_cache["data"]
+    try:
+        repo = UPD.release_repo() or NEWS_REPO_DEFAULT
+    except Exception:
+        repo = NEWS_REPO_DEFAULT
+    out = {"repo": repo, "releases": [], "commits": [], "error": ""}
+
+    def get(path):
+        req = urllib.request.Request("https://api.github.com/repos/" + repo + path,
+                                     headers={"Accept": "application/vnd.github+json", "User-Agent": "ComfyStudio-news"})
+        with urllib.request.urlopen(req, timeout=8) as f:
+            return json.loads(f.read().decode("utf-8", "replace"))
+    try:
+        for r in get("/releases?per_page=15") or []:
+            out["releases"].append({"tag": r.get("tag_name"), "name": r.get("name") or r.get("tag_name"),
+                                    "date": (r.get("published_at") or "")[:10], "url": r.get("html_url"),
+                                    "body": (r.get("body") or "")[:4000]})
+        for c in get("/commits?per_page=25") or []:
+            msg = ((c.get("commit") or {}).get("message") or "").split("\n")[0]
+            out["commits"].append({"sha": (c.get("sha") or "")[:7], "msg": msg[:200],
+                                   "date": (((c.get("commit") or {}).get("author") or {}).get("date") or "")[:10],
+                                   "url": c.get("html_url")})
+    except Exception as e:
+        out["error"] = "Couldn't reach GitHub just now (%s). The list fills in when the PC is online." % type(e).__name__
+        if _news_cache["data"]:
+            return _news_cache["data"]
+        return out
+    _news_cache.update(t=time.time(), data=out)
+    return out
+
+
 def submit_job(data):
     _clean_request(data)
     try:
@@ -5825,6 +5865,129 @@ def _builtin_plan_item(idx, fp, hw, oi):
             "free_gb": INST.free_gb(tgt)}
 
 
+
+_FOLDER_WHAT = {"diffusion_models": "Main model", "unet": "Main model", "checkpoints": "Model", "text_encoders": "Text encoder",
+                "clip": "Text encoder", "vae": "VAE (turns the result into a picture)", "loras": "LoRA (add-on)",
+                "upscale_models": "Upscaler", "latent_upscale_models": "Upscaler", "geometry_estimation": "Body shape model",
+                "model_patches": "Model add-on", "controlnet": "ControlNet", "clip_vision": "Picture reader",
+                "audio_encoders": "Audio model", "sams": "Person finder"}
+
+
+def _describe_files(files, card):
+    """Add 'what' (plain words: Main model, Text encoder, Swap LoRA ...), 'for' (the workflow's name) and 'for_id' to
+    each file of a setup plan, so the Set up box and the Downloads panel can say what is being downloaded and why."""
+    labels = {}
+    for m in ((card or {}).get("slots") or {}).get("models") or []:
+        v = str(m.get("value") or "")
+        if v:
+            labels[re.split(r"[\\/]", v)[-1].lower()] = m.get("label") or m.get("title") or ""
+    for f in files or []:
+        base = re.split(r"[\\/]", str(f.get("file") or ""))[-1].lower()
+        f["what"] = labels.get(base) or _FOLDER_WHAT.get(str(f.get("folder") or "").split("/")[0], "Model file")
+        f["for"] = (card or {}).get("name") or "Comfy Studio"
+        f["for_id"] = (card or {}).get("id") or ""
+    return files
+
+
+_SIZES_FILE = os.path.join(DATA, "model_sizes.json")
+_sizes_lock = threading.Lock()
+
+
+def _sizes():
+    try:
+        return json.load(open(_SIZES_FILE, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def remote_size_gb(url):
+    """Size of a download in GB from its official link without downloading it (cached in data/model_sizes.json)."""
+    if not url:
+        return None
+    cache = _sizes()
+    if url in cache:
+        return cache[url]
+    try:
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "ComfyStudio"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            n = r.headers.get("X-Linked-Size") or r.headers.get("Content-Length")
+        gb = round(int(n) / 1e9, 2) if n else None
+    except Exception:
+        return None
+    if gb:
+        with _sizes_lock:
+            c = _sizes()
+            c[url] = gb
+            try:
+                json.dump(c, open(_SIZES_FILE, "w", encoding="utf-8"))
+            except OSError:
+                pass
+    return gb
+
+
+def fill_sizes(files, wait=True):
+    """size_gb for the missing files of a plan: from the cache at once; the rest asked in parallel (wait) or later."""
+    cache = _sizes()
+    todo = []
+    for f in files or []:
+        if f.get("present") or not f.get("url"):
+            continue
+        if cache.get(f["url"]):
+            f["size_gb"] = cache[f["url"]]
+        elif not f.get("size_gb"):
+            todo.append(f)
+    if not todo:
+        return files
+
+    def one(f):
+        gb = remote_size_gb(f["url"])
+        if gb:
+            f["size_gb"] = gb
+    threads = [threading.Thread(target=one, args=(f,), daemon=True) for f in todo[:12]]
+    for th in threads:
+        th.start()
+    if wait:
+        for th in threads:
+            th.join(12)
+    return files
+
+
+ENHANCER_FILES = (
+    ("fast", "Prompt Enhancer: Fast (Qwen3-VL 4B)", "qwen3vl_4b_fp8_scaled.safetensors"),
+    ("quality", "Prompt Enhancer: Quality (Qwen 3.5 9B)", "qwen3.5_9b_w4a8_gptq.safetensors"),
+)
+
+
+def _enhancer_plan_item(idx, fp, oi):
+    """The Enhance pill's models as a setup item: Fast (small, quick) and Quality (bigger). A PC without the Fast model
+    runs Fast on the Quality one, which is slow on some cards, so this says which is here and offers the download."""
+    try:
+        have = combo_list(oi, "CLIPLoader", "clip_name") or []
+    except Exception:
+        have = []
+    fast_name, fast_ok = PE.pick_fast_clip(have)
+    base = lambda n: re.split(r"[\\/]", str(n)).pop().lower()
+    quality_ok = any(base(n) == base(graphs.DEFAULTS["pe_clip_name"]) for n in have)
+    files = []
+    for key, what, name in ENHANCER_FILES:
+        link = INST.links().get(name.lower()) or {}
+        present = fast_ok if key == "fast" else quality_ok
+        dirs = sorted((fp or {}).get(link.get("directory") or "text_encoders") or [],
+                      key=lambda d: (os.path.basename(os.path.normpath(d)).lower() != "text_encoders",
+                                     os.path.basename(os.path.dirname(os.path.normpath(d))).lower() != "models"))
+        tgt = dirs[0] if dirs else None
+        files.append({"file": name, "folder": link.get("directory") or "text_encoders", "present": bool(present),
+                      "size_gb": 5.2 if key == "fast" else 7.3, "url": link.get("url"), "target_dir": tgt,
+                      "what": what, "for": "Enhance pill", "for_id": "enhancer", "key": key,
+                      "using": fast_name if (key == "fast" and fast_ok) else None})
+    missing = [f for f in files if not f["present"]]
+    return {"id": "enhancer", "name": "Prompt Enhancer (Enhance pill)", "family": "", "media": "text", "fit": "ok",
+            "fit_reason": "", "files": files, "missing": len(missing),
+            "downloadable": sum(1 for f in missing if f.get("url") and f.get("target_dir")),
+            "no_source": [f["file"] for f in missing if not f.get("url")], "missing_nodes": [],
+            "free_gb": INST.free_gb(next((f["target_dir"] for f in files if f.get("target_dir")), None) or COMFY_ROOT)}
+
+
 def install_plan(wid=None):
     """For each engine: fit for this PC, files present / missing (with official links), node packs, free space."""
     fp, idx = install_index()
@@ -5836,7 +5999,9 @@ def install_plan(wid=None):
     out = []
     if not wid or wid == "builtin":
         try:
-            out.append(_builtin_plan_item(idx, fp, hw, oi))
+            _b = _builtin_plan_item(idx, fp, hw, oi)
+            _describe_files(_b.get("files"), {"name": _b.get("name") or "MiniMax H3 (built-in)", "id": "builtin"})
+            out.append(_b)
         except Exception as e:
             log.info("install plan (built-in): %s", e)
     for card in WF.list_cards():
@@ -5846,7 +6011,7 @@ def install_plan(wid=None):
             card, graph = WF.get(card["id"])
         except Exception:
             continue
-        files = INST.plan_for(graph, idx, fp, file_choices(card["id"]))
+        files = _describe_files(INST.plan_for(graph, idx, fp, file_choices(card["id"])), card)
         missing = [f for f in files if not f["present"]]
         nodes = sorted({n.get("class_type") for n in graph.values() if n.get("class_type") and oi and n.get("class_type") not in oi})
         verdict = fit_verdict(apply_effective(card, hw), hw)
@@ -5858,6 +6023,16 @@ def install_plan(wid=None):
             "no_source": [f["file"] for f in missing if not f.get("url")], "missing_nodes": nodes,
             "free_gb": INST.free_gb(tgt),
         })
+    if not wid or wid == "enhancer":
+        try:
+            out.append(_enhancer_plan_item(idx, fp, oi))
+        except Exception as e:
+            log.info("install plan (enhancer): %s", e)
+    for it in out:          # sizes of what's still to download: one engine asked = wait; the full list = warm the cache
+        try:
+            fill_sizes(it.get("files"), wait=bool(wid))
+        except Exception as e:
+            log.info("plan sizes: %s", e)
     return {"hardware": {k: hw.get(k) for k in ("gpu", "vram_gb", "ram_gb", "profile")}, "items": out}
 
 
@@ -6547,6 +6722,8 @@ class H(BaseHTTPRequestHandler):
             card["lora_family"] = lora_family_for(card)
             card["camera_edit"] = CAMERA.edit_family(card)
             return self.j({"card": card, "options": _wf_model_options(card), "summary": WF.summary(card), "knobs": knobs})
+        if path == "/api/news/remote":
+            return self.j(dict(news_remote(), version=UPD.app_version()))
         if path == "/api/swap/status":
             try:
                 return self.j(dict(swap_status(), guides=CSW.GUIDE_LABELS, defaults=CSW.DEFAULTS, limits=CSW.LIMITS))
@@ -7194,6 +7371,9 @@ class H(BaseHTTPRequestHandler):
             if it["fit"] == "no":
                 return self.j({"error": "This engine is too big for this PC, so nothing was downloaded. " + (it.get("fit_reason") or "")}, 400)
             todo = [f for f in it["files"] if not f["present"] and f.get("url") and f.get("target_dir")]
+            only = data.get("files")
+            if isinstance(only, list) and only:
+                todo = [f for f in todo if f["file"] in only]
             if not todo:
                 return self.j({"error": "Nothing to download: " + ("every file is already here." if not it["missing"] else
                                                                   "the missing files have no official link; add them yourself.")}, 400)

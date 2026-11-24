@@ -1603,13 +1603,44 @@ def _prompt_lost(pid, st):
     return None
 
 
+PE_LIMIT_FAST = int(os.environ.get("CS_PE_LIMIT_FAST") or 150)         # seconds Enhance may run in ComfyUI (Fast), then your own prompt is used
+PE_LIMIT_QUALITY = int(os.environ.get("CS_PE_LIMIT_QUALITY") or 360)      # ... Quality (and Fast running on the big model)
+
+
 def _wait_for_pe(job):
     """Wait until the PE-only prompt finishes. Does not touch the library."""
     pid = job["prompt_id"]
     t0 = time.time()
     lost = {}
+    # Enhance only rewrites the prompt: it must never hold up the picture (or every job queued behind it). Once ComfyUI
+    # is running it, Fast gets 2.5 minutes and Quality 6; after that it is taken back out of ComfyUI and the user's own
+    # prompt is used. (A PC without the small Fast model runs Fast on the 9B Quality model, which can crawl on some cards.)
+    limit = PE_LIMIT_QUALITY if job.get("pe_mode") == "quality" or not job.get("pe_small_model") else PE_LIMIT_FAST
+    started = None
+    q_check = 0.0
     while time.time() - t0 < 60 * 40:
         if job["status"] == "cancelled":
+            _withdraw_prompt(pid)
+            return None
+        now = time.time()
+        if started is None and (live.get("prompt_id") == pid or now - q_check > 3):
+            if live.get("prompt_id") == pid:
+                started = now
+            else:
+                q_check = now
+                try:
+                    run = comfy_queue().get("queue_running") or []
+                    if any(isinstance(it, (list, tuple)) and len(it) > 1 and str(it[1]) == pid for it in run):
+                        started = now
+                except Exception:
+                    pass
+        if started is not None and now - started > limit:
+            _withdraw_prompt(pid)
+            job["pe_timeout"] = True
+            took = ("%d seconds" % limit) if limit < 90 else ("%g minutes" % (round(limit / 30) / 2))
+            job["pe_error"] = ("Enhance took longer than %s on this PC, so it was stopped and your own prompt was "
+                               "used." % took)
+            log.info("job %s: prompt enhancer stopped after %.0f s (limit %d s)", job.get("id"), now - started, limit)
             return None
         gone = _prompt_lost(pid, lost)
         if gone:
@@ -1732,9 +1763,17 @@ def run_prompt_enhancer(job):
     if not caption:
         job["pe_fallback"] = True
         job["pe_raw"] = text or ""
-        job["pe_error"] = job.get("pe_error") or "Prompt Enhancer did not return usable JSON."
-        job["message"] = ("Prompt Enhancer did not return usable JSON, so your original prompt was used."
-                          + (" It may have run out of room: raise the Tokens dial under Enhance." if job.get("pe_tokens") else ""))
+        if job.get("pe_timeout"):
+            msg = job["pe_error"] + (" Tip: Fast is much quicker with the small enhancer model (Qwen3-VL 4B); without "
+                                     "it, Fast uses the big 9B one." if not job.get("pe_small_model") else "")
+        elif job.get("pe_error") and text is None:
+            msg = "Enhance didn't finish (%s), so your own prompt was used." % str(job["pe_error"])[:160]
+        else:
+            job["pe_error"] = job.get("pe_error") or "Prompt Enhancer did not return usable JSON."
+            msg = ("Prompt Enhancer did not return usable JSON, so your original prompt was used."
+                   + (" It may have run out of room: raise the Tokens dial under Enhance." if job.get("pe_tokens") else ""))
+        job["message"] = msg
+        job["note"] = (str(job.get("note") or "") + " " + msg).strip()
         return False
     try:
         caption = PE.route_polish(job.get("pe_route") or "", caption)
